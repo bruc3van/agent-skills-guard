@@ -923,3 +923,10 @@ repositories:
             zh: "为 Claude Code 添加双向文档转换能力。将 Word/Excel/PPT/PDF 转换为 AI 友好的 Markdown 格式，并将 Markdown 导出为排版精美的 Word 文档，支持自动依赖安装。"
           tags: ["conversion", "office", "pdf", "markdown"]
           featured: true
+        - url: "https://github.com/joeseesun/qiaomu-design-advisor"
+          name: "joeseesun"
+          description:
+            en: "Uncompromising UI/UX design advisor skill for Claude Code, combining Jobs-style product intuition with Rams-style functional purism. Delivers three-tiered design solutions through a structured diagnosis-proposal-implementation workflow."
+            zh: "偏执型设计顾问 Claude Code 技能，融合 Jobs 式产品直觉与 Rams 式功能纯粹主义。通过诊断、提案、实施三阶段工作流，提供渐进优化、结构重设计和理想方案三层设计解决方案。"
+          tags: ["design", "ui-ux", "product-design"]
+          featured: true
