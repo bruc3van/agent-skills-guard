@@ -867,6 +867,27 @@ repositories:
         en: "High-quality community-contributed skill repositories"
         zh: "社区贡献的高质量技能仓库"
       repositories:
+        - url: "https://github.com/brucevanfdm/docugenius-converter-skill"
+          name: "brucevanfdm"
+          description:
+            en: "Bidirectional document conversion skill for Claude Code. Converts Word/Excel/PPT/PDF to AI-friendly Markdown and exports Markdown to professionally formatted Word documents with auto-dependency installation."
+            zh: "为 Claude Code 添加双向文档转换能力。将 Word/Excel/PPT/PDF 转换为 AI 友好的 Markdown 格式，并将 Markdown 导出为排版精美的 Word 文档，支持自动依赖安装。"
+          tags: ["conversion", "office", "pdf", "markdown"]
+          featured: true
+        - url: "https://github.com/joeseesun/qiaomu-design-advisor"
+          name: "joeseesun"
+          description:
+            en: "Uncompromising UI/UX design advisor skill for Claude Code, combining Jobs-style product intuition with Rams-style functional purism. Delivers three-tiered design solutions through a structured diagnosis-proposal-implementation workflow."
+            zh: "偏执型设计顾问 Claude Code 技能，融合 Jobs 式产品直觉与 Rams 式功能纯粹主义。通过诊断、提案、实施三阶段工作流，提供渐进优化、结构重设计和理想方案三层设计解决方案。"
+          tags: ["design", "ui-ux", "product-design"]
+          featured: true
+        - url: "https://github.com/op7418/Humanizer-zh"
+          name: "op7418"
+          description:
+            en: "Chinese version of Humanizer - a Claude Code skill that removes AI-generated traces from text, making it sound more natural and human-written. Detects and fixes 24 AI writing patterns across content, language, style, and communication categories."
+            zh: "来自歸藏的 Humanizer 中文版 - 用于去除文本中 AI 生成的痕迹，使文本更自然、更像人类书写。可检测并修复 24 种 AI 写作模式，涵盖内容、语言、风格和交流四大类别。"
+          tags: ["writing", "text-processing", "humanizer"]
+          featured: true
         - url: "https://github.com/GBSOSS/skill-from-masters"
           name: "GBSOSS"
           description:
@@ -888,20 +909,6 @@ repositories:
             zh: "从可视化工作流到 AI 原生技能：一键将 14 款精选 n8n 自动化模板导入 Claude Code，让你的 AI 助手瞬间掌握营销、SEO 和市场调研的专家级实战能力。"
           tags: ["n8n", "workflow", "automation"]
           featured: true
-        - url: "https://github.com/lxfater/nano-image-generator-skill"
-          name: "lxfater"
-          description:
-            en: "Image generation skill using Gemini API with reference image support and multiple aspect ratios"
-            zh: "基于 Gemini API 的图像生成技能，支持参考图像和多种宽高比"
-          tags: ["image-generation", "gemini", "ai-art"]
-          featured: true
-        - url: "https://github.com/op7418/Humanizer-zh"
-          name: "op7418"
-          description:
-            en: "Chinese version of Humanizer - a Claude Code skill that removes AI-generated traces from text, making it sound more natural and human-written. Detects and fixes 24 AI writing patterns across content, language, style, and communication categories."
-            zh: "来自歸藏的 Humanizer 中文版 - 用于去除文本中 AI 生成的痕迹，使文本更自然、更像人类书写。可检测并修复 24 种 AI 写作模式，涵盖内容、语言、风格和交流四大类别。"
-          tags: ["writing", "text-processing", "humanizer"]
-          featured: true
         - url: "https://github.com/zarazhangrui/frontend-slides"
           name: "zarazhangrui"
           description:
@@ -916,17 +923,4 @@ repositories:
             zh: "面向常见任务的 Agent Skills 合集，兼容 Claude Code 等符合 Agent Skills Standard 的工具。"
           tags: ["agent-skills", "productivity", "automation"]
           featured: true
-        - url: "https://github.com/brucevanfdm/docugenius-converter-skill"
-          name: "brucevanfdm"
-          description:
-            en: "Bidirectional document conversion skill for Claude Code. Converts Word/Excel/PPT/PDF to AI-friendly Markdown and exports Markdown to professionally formatted Word documents with auto-dependency installation."
-            zh: "为 Claude Code 添加双向文档转换能力。将 Word/Excel/PPT/PDF 转换为 AI 友好的 Markdown 格式，并将 Markdown 导出为排版精美的 Word 文档，支持自动依赖安装。"
-          tags: ["conversion", "office", "pdf", "markdown"]
-          featured: true
-        - url: "https://github.com/joeseesun/qiaomu-design-advisor"
-          name: "joeseesun"
-          description:
-            en: "Uncompromising UI/UX design advisor skill for Claude Code, combining Jobs-style product intuition with Rams-style functional purism. Delivers three-tiered design solutions through a structured diagnosis-proposal-implementation workflow."
-            zh: "偏执型设计顾问 Claude Code 技能，融合 Jobs 式产品直觉与 Rams 式功能纯粹主义。通过诊断、提案、实施三阶段工作流，提供渐进优化、结构重设计和理想方案三层设计解决方案。"
-          tags: ["design", "ui-ux", "product-design"]
-          featured: true
+
