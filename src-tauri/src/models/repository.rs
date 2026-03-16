@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
-use anyhow::{Result, anyhow};
+use serde::{Deserialize, Serialize};
 
 /// GitHub 仓库配置
 #[derive(Debug, Clone, Serialize, Deserialize)]

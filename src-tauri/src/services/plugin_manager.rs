@@ -1,15 +1,8 @@
-use crate::models::{
-    FeaturedMarketplacesConfig,
-    FeaturedMarketplace,
-    FeaturedMarketplaceOwner,
-    LocalizedText,
-    Plugin,
-    Repository,
-    SecurityLevel,
-    SecurityReport,
-    Skill,
-};
 use crate::i18n::validate_locale;
+use crate::models::{
+    FeaturedMarketplace, FeaturedMarketplaceOwner, FeaturedMarketplacesConfig, LocalizedText,
+    Plugin, Repository, SecurityLevel, SecurityReport, Skill,
+};
 use crate::security::{ScanOptions, SecurityScanner};
 use crate::services::claude_cli::{ClaudeCli, ClaudeCommand};
 use crate::services::{Database, GitHubService};
@@ -54,7 +47,10 @@ struct PluginManifest {
 #[serde(untagged)]
 enum AuthorField {
     Simple(String),
-    Detailed { name: Option<String>, email: Option<String> },
+    Detailed {
+        name: Option<String>,
+        email: Option<String>,
+    },
 }
 
 impl AuthorField {
@@ -178,7 +174,11 @@ struct ClaudeAvailablePluginEntry {
     #[serde(rename = "pluginId", alias = "plugin_id")]
     plugin_id: String,
     name: Option<String>,
-    #[serde(rename = "marketplaceName", alias = "marketplace_name", alias = "marketplace")]
+    #[serde(
+        rename = "marketplaceName",
+        alias = "marketplace_name",
+        alias = "marketplace"
+    )]
     marketplace_name: Option<String>,
     version: Option<String>,
 }
@@ -206,7 +206,11 @@ impl PluginManager {
         }
     }
 
-    pub fn scan_cached_repository_plugins(&self, cache_path: &Path, repo_url: &str) -> Result<Vec<Plugin>> {
+    pub fn scan_cached_repository_plugins(
+        &self,
+        cache_path: &Path,
+        repo_url: &str,
+    ) -> Result<Vec<Plugin>> {
         let repo_root = find_repo_root(cache_path)?;
         let manifest = match read_marketplace_manifest(&repo_root) {
             Ok(Some(manifest)) => manifest,
@@ -269,7 +273,10 @@ impl PluginManager {
                 plugin.installed_at = existing.installed_at;
                 plugin.installed_version = existing.installed_version.clone();
                 plugin.claude_id = existing.claude_id.clone().or(plugin.claude_id);
-                plugin.discovery_source = existing.discovery_source.clone().or(plugin.discovery_source);
+                plugin.discovery_source = existing
+                    .discovery_source
+                    .clone()
+                    .or(plugin.discovery_source);
                 plugin.claude_scope = existing.claude_scope.clone();
                 plugin.claude_enabled = existing.claude_enabled;
                 plugin.claude_install_path = existing.claude_install_path.clone();
@@ -326,27 +333,36 @@ impl PluginManager {
         ];
 
         let cli_result = claude_cli.run(&commands)?;
-        let marketplace_output = cli_result.outputs.get(0).map(|o| o.output.as_str()).unwrap_or_default();
-        let plugins_output = cli_result.outputs.get(1).map(|o| o.output.as_str()).unwrap_or_default();
+        let marketplace_output = cli_result
+            .outputs
+            .get(0)
+            .map(|o| o.output.as_str())
+            .unwrap_or_default();
+        let plugins_output = cli_result
+            .outputs
+            .get(1)
+            .map(|o| o.output.as_str())
+            .unwrap_or_default();
 
-        let marketplaces: Vec<ClaudeMarketplaceListEntry> = match parse_json_output(marketplace_output) {
-            Ok(v) => v,
-            Err(e) => {
-                log::warn!(
-                    "解析 `claude plugin marketplace list --json` 失败，尝试解析文本输出: {}",
-                    e
-                );
-                parse_marketplace_list_text(marketplace_output)
-                    .into_iter()
-                    .map(|m| ClaudeMarketplaceListEntry {
-                        name: m.name,
-                        source: m.source,
-                        repo: m.repo,
-                        install_location: m.install_location,
-                    })
-                    .collect()
-            }
-        };
+        let marketplaces: Vec<ClaudeMarketplaceListEntry> =
+            match parse_json_output(marketplace_output) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!(
+                        "解析 `claude plugin marketplace list --json` 失败，尝试解析文本输出: {}",
+                        e
+                    );
+                    parse_marketplace_list_text(marketplace_output)
+                        .into_iter()
+                        .map(|m| ClaudeMarketplaceListEntry {
+                            name: m.name,
+                            source: m.source,
+                            repo: m.repo,
+                            install_location: m.install_location,
+                        })
+                        .collect()
+                }
+            };
         let installed_plugins: Vec<ClaudeInstalledPluginEntry> = parse_json_output(plugins_output)
             .context("解析 `claude plugin list --json` 输出失败")?;
 
@@ -443,7 +459,10 @@ impl PluginManager {
         Ok(())
     }
 
-    pub async fn get_claude_marketplaces(&self, claude_command: Option<String>) -> Result<Vec<ClaudeMarketplace>> {
+    pub async fn get_claude_marketplaces(
+        &self,
+        claude_command: Option<String>,
+    ) -> Result<Vec<ClaudeMarketplace>> {
         let cli_command = claude_command.unwrap_or_else(|| "claude".to_string());
         if which(&cli_command).is_err() {
             return Ok(Vec::new());
@@ -461,7 +480,11 @@ impl PluginManager {
         }];
 
         let cli_result = claude_cli.run(&commands)?;
-        let output = cli_result.outputs.first().map(|o| o.output.as_str()).unwrap_or_default();
+        let output = cli_result
+            .outputs
+            .first()
+            .map(|o| o.output.as_str())
+            .unwrap_or_default();
         let entries: Vec<ClaudeMarketplaceListEntry> = match parse_json_output(output) {
             Ok(v) => v,
             Err(e) => {
@@ -494,8 +517,12 @@ impl PluginManager {
     }
 
     /// 检查已安装 plugins 的更新：返回 Vec<(plugin_db_id, latest_version)>
-    pub async fn check_plugins_updates(&self, claude_command: Option<String>) -> Result<Vec<(String, String)>> {
-        self.sync_claude_installed_state(claude_command.clone()).await?;
+    pub async fn check_plugins_updates(
+        &self,
+        claude_command: Option<String>,
+    ) -> Result<Vec<(String, String)>> {
+        self.sync_claude_installed_state(claude_command.clone())
+            .await?;
 
         let cli_command = claude_command.unwrap_or_else(|| "claude".to_string());
         if which(&cli_command).is_err() {
@@ -514,7 +541,11 @@ impl PluginManager {
         }];
 
         let cli_result = claude_cli.run(&commands)?;
-        let output = cli_result.outputs.first().map(|o| o.output.as_str()).unwrap_or_default();
+        let output = cli_result
+            .outputs
+            .first()
+            .map(|o| o.output.as_str())
+            .unwrap_or_default();
         let payload = parse_claude_plugin_list_with_available(output)
             .context("解析 `claude plugin list --json --available` 输出失败")?;
 
@@ -558,7 +589,11 @@ impl PluginManager {
     }
 
     /// 更新单个 plugin（调用 Claude Code CLI），并写回日志/状态
-    pub async fn update_plugin(&self, plugin_id: &str, claude_command: Option<String>) -> Result<PluginUpdateResult> {
+    pub async fn update_plugin(
+        &self,
+        plugin_id: &str,
+        claude_command: Option<String>,
+    ) -> Result<PluginUpdateResult> {
         let plugin = self
             .db
             .get_plugins()?
@@ -575,7 +610,10 @@ impl PluginManager {
             anyhow::bail!("未找到 Claude Code CLI: {}", cli_command);
         }
 
-        let scope = plugin.claude_scope.clone().unwrap_or_else(|| "user".to_string());
+        let scope = plugin
+            .claude_scope
+            .clone()
+            .unwrap_or_else(|| "user".to_string());
         let plugin_spec = plugin
             .claude_id
             .clone()
@@ -594,7 +632,11 @@ impl PluginManager {
         }];
 
         let cli_result = claude_cli.run(&commands)?;
-        let output = cli_result.outputs.first().map(|o| o.output.clone()).unwrap_or_default();
+        let output = cli_result
+            .outputs
+            .first()
+            .map(|o| o.output.clone())
+            .unwrap_or_default();
         let status = parse_plugin_update_output(&output);
 
         // 写回日志与状态；并再次同步以获取最新 installed_version 等字段
@@ -614,7 +656,10 @@ impl PluginManager {
     }
 
     /// 检查 marketplace 更新：返回 Vec<(marketplace_name, latest_head_short_sha)>
-    pub async fn check_marketplaces_updates(&self, claude_command: Option<String>) -> Result<Vec<(String, String)>> {
+    pub async fn check_marketplaces_updates(
+        &self,
+        claude_command: Option<String>,
+    ) -> Result<Vec<(String, String)>> {
         if which("git").is_err() {
             return Ok(Vec::new());
         }
@@ -642,10 +687,16 @@ impl PluginManager {
 
             let local_head = git_output(&["-C", install_location, "rev-parse", "HEAD"]).ok();
             let remote_head = git_output(&["ls-remote", &remote_url, "HEAD"]).ok();
-            let (Some(local_head), Some(remote_head)) = (local_head, remote_head) else { continue };
+            let (Some(local_head), Some(remote_head)) = (local_head, remote_head) else {
+                continue;
+            };
 
             let local_head = local_head.trim().to_string();
-            let remote_head_full = remote_head.split_whitespace().next().unwrap_or("").to_string();
+            let remote_head_full = remote_head
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string();
             if local_head.is_empty() || remote_head_full.is_empty() {
                 continue;
             }
@@ -660,7 +711,11 @@ impl PluginManager {
     }
 
     /// 更新单个 marketplace（调用 Claude Code CLI）
-    pub async fn update_marketplace(&self, marketplace_name: &str, claude_command: Option<String>) -> Result<MarketplaceUpdateResult> {
+    pub async fn update_marketplace(
+        &self,
+        marketplace_name: &str,
+        claude_command: Option<String>,
+    ) -> Result<MarketplaceUpdateResult> {
         let cli_command = claude_command.unwrap_or_else(|| "claude".to_string());
         if which(&cli_command).is_err() {
             anyhow::bail!("未找到 Claude Code CLI: {}", cli_command);
@@ -678,7 +733,11 @@ impl PluginManager {
         }];
 
         let cli_result = claude_cli.run(&commands)?;
-        let output = cli_result.outputs.first().map(|o| o.output.clone()).unwrap_or_default();
+        let output = cli_result
+            .outputs
+            .first()
+            .map(|o| o.output.clone())
+            .unwrap_or_default();
         let success = parse_marketplace_update_output(&output);
 
         Ok(MarketplaceUpdateResult {
@@ -701,8 +760,11 @@ impl PluginManager {
         }
 
         // 拉取 marketplaces（用于给出 marketplace add 的 repo 参数）
-        let marketplaces = self.get_claude_marketplaces(Some(cli_command.clone())).await?;
-        let mut marketplace_repo_by_name: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+        let marketplaces = self
+            .get_claude_marketplaces(Some(cli_command.clone()))
+            .await?;
+        let mut marketplace_repo_by_name: HashMap<String, (Option<String>, Option<String>)> =
+            HashMap::new();
         for mp in marketplaces {
             marketplace_repo_by_name.insert(
                 mp.name.clone(),
@@ -725,16 +787,21 @@ impl PluginManager {
         // 拉取 installed plugins（用于过滤：已安装的不提示）
         let claude_cli = ClaudeCli::new(cli_command.clone());
         let installed_output = claude_cli.run(&[ClaudeCommand {
-            args: vec!["plugin".to_string(), "list".to_string(), "--json".to_string()],
+            args: vec![
+                "plugin".to_string(),
+                "list".to_string(),
+                "--json".to_string(),
+            ],
             timeout: Duration::from_secs(20),
         }])?;
-        let installed_text = installed_output.outputs.first().map(|o| o.output.as_str()).unwrap_or_default();
+        let installed_text = installed_output
+            .outputs
+            .first()
+            .map(|o| o.output.as_str())
+            .unwrap_or_default();
         let installed_plugins: Vec<ClaudeInstalledPluginEntry> = parse_json_output(installed_text)
             .context("解析 `claude plugin list --json` 输出失败")?;
-        let installed_ids: HashSet<String> = installed_plugins
-            .into_iter()
-            .map(|p| p.id)
-            .collect();
+        let installed_ids: HashSet<String> = installed_plugins.into_iter().map(|p| p.id).collect();
 
         // 拉取 available plugins（用于匹配 skill->plugin）
         let available_output = claude_cli.run(&[ClaudeCommand {
@@ -746,7 +813,11 @@ impl PluginManager {
             ],
             timeout: Duration::from_secs(30),
         }])?;
-        let available_text = available_output.outputs.first().map(|o| o.output.as_str()).unwrap_or_default();
+        let available_text = available_output
+            .outputs
+            .first()
+            .map(|o| o.output.as_str())
+            .unwrap_or_default();
         let payload = parse_claude_plugin_list_with_available(available_text)
             .context("解析 `claude plugin list --json --available` 输出失败")?;
 
@@ -780,7 +851,10 @@ impl PluginManager {
         }
 
         let skills: Vec<Skill> = self.db.get_skills().unwrap_or_default();
-        let installed_skills = skills.into_iter().filter(|s| s.installed).collect::<Vec<_>>();
+        let installed_skills = skills
+            .into_iter()
+            .filter(|s| s.installed)
+            .collect::<Vec<_>>();
 
         let mut candidates = Vec::new();
         for skill in installed_skills {
@@ -790,7 +864,9 @@ impl PluginManager {
             }
 
             let key = skill_name.to_lowercase();
-            let Some(best) = best_by_name.get(&key) else { continue };
+            let Some(best) = best_by_name.get(&key) else {
+                continue;
+            };
 
             let (plugin_name, marketplace_name) = match parse_claude_plugin_id(&best.plugin_id) {
                 Some(v) => v,
@@ -806,9 +882,8 @@ impl PluginManager {
                 .cloned()
                 .unwrap_or((None, None));
 
-            let marketplace_add_command = marketplace_add_cmd_by_name
-                .get(&marketplace_name)
-                .cloned();
+            let marketplace_add_command =
+                marketplace_add_cmd_by_name.get(&marketplace_name).cloned();
 
             candidates.push(SkillPluginUpgradeCandidate {
                 skill_id: skill.id,
@@ -853,13 +928,17 @@ impl PluginManager {
 
         let mut result = HashMap::new();
         for marketplace in marketplaces {
-            let Some(featured) = featured_by_name.get(&marketplace.name) else { continue };
+            let Some(featured) = featured_by_name.get(&marketplace.name) else {
+                continue;
+            };
 
             let install_location = marketplace
                 .install_location
                 .clone()
                 .or_else(|| default_marketplace_install_location(&marketplace.name));
-            let Some(install_location) = install_location else { continue };
+            let Some(install_location) = install_location else {
+                continue;
+            };
 
             let repo_root = PathBuf::from(&install_location);
             if !repo_root.exists() {
@@ -884,9 +963,10 @@ impl PluginManager {
                 continue;
             }
 
-            let repo_url = featured.repository_url.clone().unwrap_or_else(|| {
-                format!("https://github.com/{}", featured.marketplace_repo)
-            });
+            let repo_url = featured
+                .repository_url
+                .clone()
+                .unwrap_or_else(|| format!("https://github.com/{}", featured.marketplace_repo));
 
             let resolved = match resolve_marketplace_plugins(&repo_root, &repo_url, false) {
                 Ok(list) => list,
@@ -942,19 +1022,22 @@ impl PluginManager {
                 let plugins_to_sync: Vec<Plugin> = if let Some(manifest_plugins) =
                     installed_marketplace_plugins.get(&marketplace_name)
                 {
-                    let config_plugins_by_name: HashMap<String, &crate::models::FeaturedMarketplacePlugin> =
-                        marketplace
-                            .plugins
-                            .iter()
-                            .map(|plugin| (plugin.name.to_lowercase(), plugin))
-                            .collect();
+                    let config_plugins_by_name: HashMap<
+                        String,
+                        &crate::models::FeaturedMarketplacePlugin,
+                    > = marketplace
+                        .plugins
+                        .iter()
+                        .map(|plugin| (plugin.name.to_lowercase(), plugin))
+                        .collect();
 
                     manifest_plugins
                         .iter()
                         .cloned()
                         .map(|mut plugin| {
                             plugin.discovery_source = Some("featured_marketplace".to_string());
-                            plugin.marketplace_add_command = marketplace.marketplace_add_command.clone();
+                            plugin.marketplace_add_command =
+                                marketplace.marketplace_add_command.clone();
 
                             if let Some(config_entry) =
                                 config_plugins_by_name.get(&plugin.name.to_lowercase())
@@ -971,13 +1054,17 @@ impl PluginManager {
                                         .author
                                         .as_ref()
                                         .and_then(author_to_display)
-                                        .or_else(|| marketplace.owner.as_ref().and_then(author_to_display));
+                                        .or_else(|| {
+                                            marketplace.owner.as_ref().and_then(author_to_display)
+                                        });
                                 }
                                 if plugin.plugin_install_command.is_none() {
-                                    plugin.plugin_install_command = config_entry.install_command.clone();
+                                    plugin.plugin_install_command =
+                                        config_entry.install_command.clone();
                                 }
                             } else if plugin.author.is_none() {
-                                plugin.author = marketplace.owner.as_ref().and_then(author_to_display);
+                                plugin.author =
+                                    marketplace.owner.as_ref().and_then(author_to_display);
                             }
 
                             plugin
@@ -1004,7 +1091,8 @@ impl PluginManager {
                                 .as_ref()
                                 .and_then(author_to_display)
                                 .or_else(|| marketplace.owner.as_ref().and_then(author_to_display));
-                            plugin.marketplace_add_command = marketplace.marketplace_add_command.clone();
+                            plugin.marketplace_add_command =
+                                marketplace.marketplace_add_command.clone();
                             plugin.plugin_install_command = entry.install_command.clone();
 
                             plugin
@@ -1015,7 +1103,8 @@ impl PluginManager {
                 for mut plugin in plugins_to_sync {
                     if let Some(existing) = existing_map.get(&plugin.id) {
                         if plugin.marketplace_add_command.is_none() {
-                            plugin.marketplace_add_command = existing.marketplace_add_command.clone();
+                            plugin.marketplace_add_command =
+                                existing.marketplace_add_command.clone();
                         }
                         if plugin.plugin_install_command.is_none() {
                             plugin.plugin_install_command = existing.plugin_install_command.clone();
@@ -1062,14 +1151,21 @@ impl PluginManager {
         Ok(())
     }
 
-    pub async fn prepare_plugin_installation(&self, plugin_id: &str, locale: &str) -> Result<SecurityReport> {
-        let plugin = self.db.get_plugins()?
+    pub async fn prepare_plugin_installation(
+        &self,
+        plugin_id: &str,
+        locale: &str,
+    ) -> Result<SecurityReport> {
+        let plugin = self
+            .db
+            .get_plugins()?
             .into_iter()
             .find(|p| p.id == plugin_id)
             .context("未找到该插件")?;
 
         let repositories = self.db.get_repositories()?;
-        let repo = repositories.iter()
+        let repo = repositories
+            .iter()
             .find(|r| r.url == plugin.repository_url)
             .context("未找到对应的仓库记录")?
             .clone();
@@ -1079,17 +1175,19 @@ impl PluginManager {
             if cache_path_buf.exists() {
                 cache_path_buf
             } else {
-                self.download_and_cache_repository(&repo.id, &plugin.repository_url).await?
+                self.download_and_cache_repository(&repo.id, &plugin.repository_url)
+                    .await?
             }
         } else {
-            self.download_and_cache_repository(&repo.id, &plugin.repository_url).await?
+            self.download_and_cache_repository(&repo.id, &plugin.repository_url)
+                .await?
         };
 
         let repo_root = find_repo_root(&cache_path)?;
         let mut resolved_plugins = resolve_marketplace_plugins(
             &repo_root,
             &plugin.repository_url,
-            false,  // 不强制要求 plugin.json 存在
+            false, // 不强制要求 plugin.json 存在
         )?;
 
         if resolved_plugins.is_empty() {
@@ -1107,8 +1205,14 @@ impl PluginManager {
                 resolved.plugin.installed = existing.installed;
                 resolved.plugin.installed_at = existing.installed_at;
                 resolved.plugin.installed_version = existing.installed_version.clone();
-                resolved.plugin.claude_id = existing.claude_id.clone().or(resolved.plugin.claude_id.clone());
-                resolved.plugin.discovery_source = existing.discovery_source.clone().or(resolved.plugin.discovery_source.clone());
+                resolved.plugin.claude_id = existing
+                    .claude_id
+                    .clone()
+                    .or(resolved.plugin.claude_id.clone());
+                resolved.plugin.discovery_source = existing
+                    .discovery_source
+                    .clone()
+                    .or(resolved.plugin.discovery_source.clone());
                 resolved.plugin.claude_scope = existing.claude_scope.clone();
                 resolved.plugin.claude_enabled = existing.claude_enabled;
                 resolved.plugin.claude_install_path = existing.claude_install_path.clone();
@@ -1144,14 +1248,18 @@ impl PluginManager {
             updated.security_score = Some(report.score);
             updated.security_level = Some(report.level.as_str().to_string());
             updated.security_issues = Some(
-                report.issues.iter()
+                report
+                    .issues
+                    .iter()
                     .map(|i| {
-                        let file_info = i.file_path.as_ref()
+                        let file_info = i
+                            .file_path
+                            .as_ref()
                             .map(|f| format!("[{}] ", f))
                             .unwrap_or_default();
                         format!("{}{:?}: {}", file_info, i.severity, i.description)
                     })
-                    .collect()
+                    .collect(),
             );
             updated.scanned_at = Some(now);
             updated.staging_path = Some(repo_root.to_string_lossy().to_string());
@@ -1162,7 +1270,8 @@ impl PluginManager {
         }
 
         if blocked {
-            let mut error_msg = "安全检测发现严重威胁，已禁止安装。\n\n检测到以下高危操作：\n".to_string();
+            let mut error_msg =
+                "安全检测发现严重威胁，已禁止安装。\n\n检测到以下高危操作：\n".to_string();
             for (idx, issue) in merged_report.hard_trigger_issues.iter().enumerate() {
                 error_msg.push_str(&format!("{}. {}\n", idx + 1, issue));
             }
@@ -1178,7 +1287,9 @@ impl PluginManager {
         plugin_id: &str,
         claude_command: Option<String>,
     ) -> Result<PluginInstallResult> {
-        let plugin = self.db.get_plugins()?
+        let plugin = self
+            .db
+            .get_plugins()?
             .into_iter()
             .find(|p| p.id == plugin_id)
             .context("未找到该插件")?;
@@ -1249,10 +1360,7 @@ impl PluginManager {
         let cli_result = claude_cli.run(&commands)?;
         let mut outputs = cli_result.outputs.into_iter();
 
-        let marketplace_output = outputs
-            .next()
-            .map(|o| o.output)
-            .unwrap_or_default();
+        let marketplace_output = outputs.next().map(|o| o.output).unwrap_or_default();
 
         let marketplace_outcome = parse_marketplace_add_output(&marketplace_output);
         let marketplace_status = if marketplace_outcome.success {
@@ -1308,7 +1416,9 @@ impl PluginManager {
     }
 
     pub fn cancel_plugin_installation(&self, plugin_id: &str) -> Result<()> {
-        let plugin = self.db.get_plugins()?
+        let plugin = self
+            .db
+            .get_plugins()?
             .into_iter()
             .find(|p| p.id == plugin_id)
             .context("未找到该插件")?;
@@ -1327,7 +1437,9 @@ impl PluginManager {
         plugin_id: &str,
         claude_command: Option<String>,
     ) -> Result<PluginUninstallResult> {
-        let plugin = self.db.get_plugins()?
+        let plugin = self
+            .db
+            .get_plugins()?
             .into_iter()
             .find(|p| p.id == plugin_id)
             .context("未找到该插件")?;
@@ -1342,19 +1454,18 @@ impl PluginManager {
         }
         let claude_cli = ClaudeCli::new(cli_command);
 
-        let commands = vec![
-            ClaudeCommand {
-                args: vec![
-                    "plugin".to_string(),
-                    "uninstall".to_string(),
-                    plugin.plugin_spec(),
-                ],
-                timeout: Duration::from_secs(60),
-            },
-        ];
+        let commands = vec![ClaudeCommand {
+            args: vec![
+                "plugin".to_string(),
+                "uninstall".to_string(),
+                plugin.plugin_spec(),
+            ],
+            timeout: Duration::from_secs(60),
+        }];
 
         let cli_result = claude_cli.run(&commands)?;
-        let output = cli_result.outputs
+        let output = cli_result
+            .outputs
             .first()
             .map(|o| o.output.clone())
             .unwrap_or_default();
@@ -1428,20 +1539,19 @@ impl PluginManager {
 
         let claude_cli = ClaudeCli::new(cli_command);
 
-        let commands = vec![
-            ClaudeCommand {
-                args: vec![
-                    "plugin".to_string(),
-                    "marketplace".to_string(),
-                    "remove".to_string(),
-                    marketplace_name.to_string(),
-                ],
-                timeout: Duration::from_secs(60),
-            },
-        ];
+        let commands = vec![ClaudeCommand {
+            args: vec![
+                "plugin".to_string(),
+                "marketplace".to_string(),
+                "remove".to_string(),
+                marketplace_name.to_string(),
+            ],
+            timeout: Duration::from_secs(60),
+        }];
 
         let cli_result = claude_cli.run(&commands)?;
-        let output = cli_result.outputs
+        let output = cli_result
+            .outputs
             .first()
             .map(|o| o.output.clone())
             .unwrap_or_default();
@@ -1469,25 +1579,27 @@ impl PluginManager {
         })
     }
 
-    async fn download_and_cache_repository(&self, repo_id: &str, repo_url: &str) -> Result<PathBuf> {
+    async fn download_and_cache_repository(
+        &self,
+        repo_id: &str,
+        repo_url: &str,
+    ) -> Result<PathBuf> {
         let (owner, repo_name) = Repository::from_github_url(repo_url)?;
         let cache_base_dir = dirs::cache_dir()
             .context("无法获取系统缓存目录")?
             .join("agent-skills-guard")
             .join("repositories");
 
-        let (extract_dir, commit_sha) = self.github
+        let (extract_dir, commit_sha) = self
+            .github
             .download_repository_archive(&owner, &repo_name, &cache_base_dir)
             .await
             .context("下载仓库压缩包失败")?;
 
         let cache_path_str = extract_dir.to_string_lossy().to_string();
-        self.db.update_repository_cache(
-            repo_id,
-            &cache_path_str,
-            Utc::now(),
-            Some(&commit_sha),
-        ).context("更新仓库缓存信息失败")?;
+        self.db
+            .update_repository_cache(repo_id, &cache_path_str, Utc::now(), Some(&commit_sha))
+            .context("更新仓库缓存信息失败")?;
 
         Ok(extract_dir)
     }
@@ -1516,11 +1628,7 @@ fn parse_slash_command_args(command: &str) -> Option<Vec<String>> {
 
 fn extract_marketplace_repo_from_command(command: &str) -> Option<String> {
     let parts = parse_slash_command_args(command)?;
-    if parts.len() >= 4
-        && parts[0] == "plugin"
-        && parts[1] == "marketplace"
-        && parts[2] == "add"
-    {
+    if parts.len() >= 4 && parts[0] == "plugin" && parts[1] == "marketplace" && parts[2] == "add" {
         return Some(parts[3].clone());
     }
     None
@@ -1544,9 +1652,7 @@ fn parse_datetime(value: &Option<String>) -> Option<DateTime<Utc>> {
     value.as_ref().and_then(|s| s.parse().ok())
 }
 
-fn parse_claude_plugin_list_with_available(
-    output: &str,
-) -> Result<ClaudePluginListWithAvailable> {
+fn parse_claude_plugin_list_with_available(output: &str) -> Result<ClaudePluginListWithAvailable> {
     let cleaned = strip_terminal_escapes(output);
 
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(&cleaned) {
@@ -1618,9 +1724,7 @@ fn parse_first_json_value<T: for<'de> Deserialize<'de>>(output: &str) -> Result<
 
         // 只取 JSON 值本体，忽略后续的任何噪声输出
         let payload = &slice[..end];
-        match serde_json::from_str::<T>(payload)
-            .or_else(|_| serde_json::from_value::<T>(value))
-        {
+        match serde_json::from_str::<T>(payload).or_else(|_| serde_json::from_value::<T>(value)) {
             Ok(parsed) => return Ok(parsed),
             Err(_) => {
                 pos = start + end;
@@ -1777,9 +1881,15 @@ PS C:\Users\Bruce> "#;
 
         let payload: ClaudePluginListWithAvailable = parse_json_output(output).unwrap();
         assert_eq!(payload.installed.len(), 1);
-        assert_eq!(payload.installed[0].id, "superpowers@superpowers-marketplace");
+        assert_eq!(
+            payload.installed[0].id,
+            "superpowers@superpowers-marketplace"
+        );
         assert_eq!(payload.available.len(), 1);
-        assert_eq!(payload.available[0].plugin_id, "superpowers@claude-plugins-official");
+        assert_eq!(
+            payload.available[0].plugin_id,
+            "superpowers@claude-plugins-official"
+        );
         assert_eq!(
             payload.available[0].marketplace_name.as_deref(),
             Some("claude-plugins-official")
@@ -1813,10 +1923,16 @@ noise after json..."#;
 
         let payload: ClaudePluginListWithAvailable = parse_json_output(output).unwrap();
         assert_eq!(payload.installed.len(), 1);
-        assert_eq!(payload.installed[0].install_path.as_deref(), Some("/Users/a/.claude/plugins/cache/bar/foo/1.0.0"));
+        assert_eq!(
+            payload.installed[0].install_path.as_deref(),
+            Some("/Users/a/.claude/plugins/cache/bar/foo/1.0.0")
+        );
         assert_eq!(payload.available.len(), 1);
         assert_eq!(payload.available[0].plugin_id, "foo@bar");
-        assert_eq!(payload.available[0].marketplace_name.as_deref(), Some("bar"));
+        assert_eq!(
+            payload.available[0].marketplace_name.as_deref(),
+            Some("bar")
+        );
         assert_eq!(payload.available[0].version.as_deref(), Some("1.0.1"));
     }
 
@@ -1902,13 +2018,14 @@ fn parse_marketplace_list_text(output: &str) -> Vec<ClaudeMarketplace> {
             if !value.is_empty() {
                 // GitHub: owner/repo; URL/Local: value as-is
                 results[idx].repo = Some(value.to_string());
-                results[idx].repository_url = if value.starts_with("http://") || value.starts_with("https://") {
-                    Some(value.to_string())
-                } else if value.contains('/') {
-                    Some(format!("https://github.com/{}", value))
-                } else {
-                    None
-                };
+                results[idx].repository_url =
+                    if value.starts_with("http://") || value.starts_with("https://") {
+                        Some(value.to_string())
+                    } else if value.contains('/') {
+                        Some(format!("https://github.com/{}", value))
+                    } else {
+                        None
+                    };
             }
         }
     }
@@ -1978,11 +2095,18 @@ fn parse_marketplace_add_output(output: &str) -> CommandOutcome {
     let text = output.to_lowercase();
 
     // 检查是否已存在（优先判断，因为 Claude Code 输出可能是 "Failed to add: already installed"）
-    let already = text.contains("already") && (text.contains("marketplace") || text.contains("exists") || text.contains("added") || text.contains("installed"));
+    let already = text.contains("already")
+        && (text.contains("marketplace")
+            || text.contains("exists")
+            || text.contains("added")
+            || text.contains("installed"));
 
     // 如果已存在，直接视为成功
     if already {
-        return CommandOutcome { success: true, already: true };
+        return CommandOutcome {
+            success: true,
+            already: true,
+        };
     }
 
     // 检查是否有明确的失败信息
@@ -1993,14 +2117,18 @@ fn parse_marketplace_add_output(output: &str) -> CommandOutcome {
         || text.contains("could not");
 
     // 检查成功情况（排除错误情况）
-    let success = !has_error && (
-        text.contains("marketplace added")
-        || text.contains("added marketplace")
-        || text.contains("successfully added")
-        || (text.contains("marketplace") && text.contains("added") && !text.contains("not added"))
-    );
+    let success = !has_error
+        && (text.contains("marketplace added")
+            || text.contains("added marketplace")
+            || text.contains("successfully added")
+            || (text.contains("marketplace")
+                && text.contains("added")
+                && !text.contains("not added")));
 
-    CommandOutcome { success, already: false }
+    CommandOutcome {
+        success,
+        already: false,
+    }
 }
 
 fn parse_plugin_install_output(output: &str) -> CommandOutcome {
@@ -2020,15 +2148,15 @@ fn parse_plugin_install_output(output: &str) -> CommandOutcome {
     let already = text.contains("already installed") || text.contains("already exists");
 
     // 检查成功情况（排除错误和否定情况）
-    let success = !has_error && !not_installed && (
-        already
+    let success = !has_error
+        && !not_installed
+        && (already
         || text.contains("successfully installed")
         || text.contains("installation complete")
         || text.contains("install success")
         || text.contains("plugin installed")
         // 只有当 "installed" 不是在否定上下文中出现时才算成功
-        || (text.contains("installed") && !text.contains("not installed") && !text.contains("isn't installed"))
-    );
+        || (text.contains("installed") && !text.contains("not installed") && !text.contains("isn't installed")));
 
     CommandOutcome { success, already }
 }
@@ -2044,25 +2172,26 @@ fn parse_plugin_uninstall_output(output: &str) -> CommandOutcome {
         || (text.contains("not found") && text.contains("installed plugins"));
 
     // 检查是否有明确的失败信息（排除 "not found" 的情况）
-    let has_error = !not_installed && (
-        text.contains("error")
-        || text.contains("failed")
-        || text.contains("failure")
-        || text.contains("unable to")
-        || text.contains("could not")
-    );
+    let has_error = !not_installed
+        && (text.contains("error")
+            || text.contains("failed")
+            || text.contains("failure")
+            || text.contains("unable to")
+            || text.contains("could not"));
 
     // 检查成功情况
-    let success = !has_error && (
-        not_installed  // 本来就不存在，视为成功
+    let success = !has_error
+        && (not_installed  // 本来就不存在，视为成功
         || text.contains("successfully uninstalled")
         || text.contains("uninstall success")
         || text.contains("plugin uninstalled")
         || text.contains("removed")
-        || (text.contains("uninstalled") && !text.contains("not uninstalled"))
-    );
+        || (text.contains("uninstalled") && !text.contains("not uninstalled")));
 
-    CommandOutcome { success, already: not_installed }
+    CommandOutcome {
+        success,
+        already: not_installed,
+    }
 }
 
 fn parse_marketplace_remove_output(output: &str) -> CommandOutcome {
@@ -2074,25 +2203,26 @@ fn parse_marketplace_remove_output(output: &str) -> CommandOutcome {
         || (text.contains("marketplace") && text.contains("not found"));
 
     // 检查是否有明确的失败信息（排除 "not found" 的情况）
-    let has_error = !not_found && (
-        text.contains("error")
-        || text.contains("failed")
-        || text.contains("failure")
-        || text.contains("unable to")
-        || text.contains("could not")
-    );
+    let has_error = !not_found
+        && (text.contains("error")
+            || text.contains("failed")
+            || text.contains("failure")
+            || text.contains("unable to")
+            || text.contains("could not"));
 
     // 检查成功情况
-    let success = !has_error && (
-        not_found  // 本来就不存在，视为成功
+    let success = !has_error
+        && (not_found  // 本来就不存在，视为成功
         || text.contains("successfully removed")
         || text.contains("marketplace removed")
         || text.contains("removed marketplace")
         || text.contains("uninstalled")
-        || (text.contains("removed") && !text.contains("not removed"))
-    );
+        || (text.contains("removed") && !text.contains("not removed")));
 
-    CommandOutcome { success, already: not_found }
+    CommandOutcome {
+        success,
+        already: not_found,
+    }
 }
 
 fn read_marketplace_manifest(repo_root: &Path) -> Result<Option<MarketplaceManifest>> {
@@ -2104,8 +2234,8 @@ fn read_marketplace_manifest(repo_root: &Path) -> Result<Option<MarketplaceManif
     let content = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("无法读取 marketplace.json: {:?}", manifest_path))?;
 
-    let manifest: MarketplaceManifest = serde_json::from_str(&content)
-        .context("解析 marketplace.json 失败")?;
+    let manifest: MarketplaceManifest =
+        serde_json::from_str(&content).context("解析 marketplace.json 失败")?;
 
     Ok(Some(manifest))
 }
@@ -2114,8 +2244,8 @@ fn read_plugin_manifest(source_path: &Path) -> Result<PluginManifest> {
     let manifest_path = source_path.join(".claude-plugin").join("plugin.json");
     let content = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("无法读取 plugin.json: {:?}", manifest_path))?;
-    let manifest: PluginManifest = serde_json::from_str(&content)
-        .context("解析 plugin.json 失败")?;
+    let manifest: PluginManifest =
+        serde_json::from_str(&content).context("解析 plugin.json 失败")?;
     Ok(manifest)
 }
 
@@ -2129,7 +2259,10 @@ fn normalize_source(source: &str) -> String {
         trimmed = trimmed.trim_start_matches("./").to_string();
     }
 
-    trimmed = trimmed.trim_end_matches('/').trim_end_matches('\\').to_string();
+    trimmed = trimmed
+        .trim_end_matches('/')
+        .trim_end_matches('\\')
+        .to_string();
     if trimmed.is_empty() {
         ".".to_string()
     } else {
@@ -2157,9 +2290,7 @@ fn resolve_source_path(repo_root: &Path, source: &str) -> Result<PathBuf> {
 }
 
 fn find_repo_root(extract_dir: &Path) -> Result<PathBuf> {
-    for entry in std::fs::read_dir(extract_dir)
-        .context("无法读取解压目录")?
-    {
+    for entry in std::fs::read_dir(extract_dir).context("无法读取解压目录")? {
         let entry = entry.context("无法读取目录条目")?;
         if entry.file_type()?.is_dir() {
             return Ok(entry.path());
@@ -2220,7 +2351,10 @@ fn resolve_marketplace_plugins(
             .and_then(|m| m.author.as_ref().and_then(|a| a.to_display()))
             .or(entry.author.as_ref().and_then(|a| a.to_display()));
 
-        resolved.push(ResolvedPlugin { plugin, source_path });
+        resolved.push(ResolvedPlugin {
+            plugin,
+            source_path,
+        });
     }
 
     Ok(resolved)

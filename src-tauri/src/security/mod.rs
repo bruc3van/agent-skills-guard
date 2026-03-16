@@ -1,8 +1,8 @@
-mod scanner;
 mod rules;
+mod scanner;
 
-pub use scanner::{ScanOptions, SecurityScanner};
 pub use rules::SecurityRules;
+pub use scanner::{ScanOptions, SecurityScanner};
 
 use crate::models::security::*;
 use anyhow::Result;

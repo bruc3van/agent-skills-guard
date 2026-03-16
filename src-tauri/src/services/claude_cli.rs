@@ -1,9 +1,13 @@
 use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
+#[cfg(windows)]
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
+#[cfg(windows)]
+use which::which;
 
 pub struct ClaudeCommand {
     pub args: Vec<String>,
@@ -55,8 +59,7 @@ impl ClaudeCli {
             })
             .context("无法创建 PTY")?;
 
-        let mut cmd = CommandBuilder::new(&self.command);
-        cmd.args(command.args.iter());
+        let cmd = self.build_command_builder(command);
         let mut child = pair
             .slave
             .spawn_command(cmd)
@@ -85,12 +88,8 @@ impl ClaudeCli {
             }
         });
 
-        let output = read_until_exit_with_prompts(
-            &rx,
-            &mut writer,
-            child.as_mut(),
-            command.timeout,
-        )?;
+        let output =
+            read_until_exit_with_prompts(&rx, &mut writer, child.as_mut(), command.timeout)?;
 
         drop(writer);
         let _ = child.kill();
@@ -117,6 +116,46 @@ impl ClaudeCli {
 
         Ok(output)
     }
+
+    fn build_command_builder(&self, command: &ClaudeCommand) -> CommandBuilder {
+        #[cfg(windows)]
+        {
+            let resolved = resolve_command_path(&self.command);
+            if is_cmd_script(&resolved) {
+                let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
+                let mut cmd = CommandBuilder::new(comspec);
+                cmd.arg("/d");
+                cmd.arg("/c");
+                cmd.arg(&resolved);
+                cmd.args(command.args.iter());
+                return cmd;
+            }
+
+            let mut cmd = CommandBuilder::new(resolved);
+            cmd.args(command.args.iter());
+            return cmd;
+        }
+
+        #[cfg(not(windows))]
+        {
+            let mut cmd = CommandBuilder::new(&self.command);
+            cmd.args(command.args.iter());
+            cmd
+        }
+    }
+}
+
+#[cfg(windows)]
+fn resolve_command_path(command: &str) -> PathBuf {
+    which(command).unwrap_or_else(|_| PathBuf::from(command))
+}
+
+#[cfg(windows)]
+fn is_cmd_script(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "cmd" | "bat"))
+        .unwrap_or(false)
 }
 
 fn read_until_exit_with_prompts(
@@ -194,5 +233,39 @@ fn line_ending() -> &'static [u8] {
         b"\r\n"
     } else {
         b"\n"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn wraps_cmd_script_with_cmd_exe() {
+        let cli = ClaudeCli::new(r"C:\Users\Bruce\AppData\Roaming\npm\claude.cmd".to_string());
+        let command = ClaudeCommand {
+            args: vec![
+                "plugin".to_string(),
+                "list".to_string(),
+                "--json".to_string(),
+            ],
+            timeout: Duration::from_secs(1),
+        };
+
+        let builder = cli.build_command_builder(&command);
+        let argv = builder
+            .get_argv()
+            .iter()
+            .map(|value| value.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(argv[0].to_ascii_lowercase().ends_with("cmd.exe"));
+        assert_eq!(argv[1], "/d");
+        assert_eq!(argv[2], "/c");
+        assert!(argv[3].to_ascii_lowercase().ends_with("claude.cmd"));
+        assert_eq!(argv[4], "plugin");
+        assert_eq!(argv[5], "list");
+        assert_eq!(argv[6], "--json");
     }
 }

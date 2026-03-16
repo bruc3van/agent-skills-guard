@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Skill 信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -8,28 +8,24 @@ pub struct Skill {
     pub name: String,
     pub description: Option<String>,
     pub repository_url: String,
-    pub repository_owner: Option<String>,  // 仓库所有者，如 "anthropics" 或 "local"
+    pub repository_owner: Option<String>, // 仓库所有者，如 "anthropics" 或 "local"
     pub file_path: String,
     pub version: Option<String>,
     pub author: Option<String>,
     pub installed: bool,
     pub installed_at: Option<DateTime<Utc>>,
-    pub local_path: Option<String>,  // 向后兼容,保留单个路径字段
-    pub local_paths: Option<Vec<String>>,  // 新增:支持多个安装路径
+    pub local_path: Option<String>,       // 向后兼容,保留单个路径字段
+    pub local_paths: Option<Vec<String>>, // 新增:支持多个安装路径
     pub checksum: Option<String>,
     pub security_score: Option<i32>,
     pub security_issues: Option<Vec<String>>,
-    pub security_level: Option<String>,      // 安全等级：Safe/Low/Medium/High/Critical
-    pub scanned_at: Option<DateTime<Utc>>,   // 扫描时间戳
+    pub security_level: Option<String>, // 安全等级：Safe/Low/Medium/High/Critical
+    pub scanned_at: Option<DateTime<Utc>>, // 扫描时间戳
     pub installed_commit_sha: Option<String>, // 安装时对应的仓库 commit SHA
 }
 
 impl Skill {
-    pub fn new(
-        name: String,
-        repository_url: String,
-        file_path: String,
-    ) -> Self {
+    pub fn new(name: String, repository_url: String, file_path: String) -> Self {
         // 自动解析 repository_owner
         let repository_owner = Self::parse_repository_owner(&repository_url);
 

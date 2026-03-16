@@ -1,8 +1,8 @@
-pub mod security;
-pub mod plugins;
 pub mod featured_marketplaces;
+pub mod plugins;
+pub mod security;
 
-use crate::models::{Repository, Skill, FeaturedRepositoriesConfig};
+use crate::models::{FeaturedRepositoriesConfig, Repository, Skill};
 use crate::services::{Database, GitHubService, PluginManager, SkillManager};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -26,28 +26,23 @@ pub async fn add_repository(
 ) -> Result<String, String> {
     let repo = Repository::new(url, name);
     let repo_id = repo.id.clone();
-    state.db.add_repository(&repo)
-        .map_err(|e| e.to_string())?;
+    state.db.add_repository(&repo).map_err(|e| e.to_string())?;
     Ok(repo_id)
 }
 
 /// 获取所有仓库
 #[tauri::command]
-pub async fn get_repositories(
-    state: State<'_, AppState>,
-) -> Result<Vec<Repository>, String> {
-    state.db.get_repositories()
-        .map_err(|e| e.to_string())
+pub async fn get_repositories(state: State<'_, AppState>) -> Result<Vec<Repository>, String> {
+    state.db.get_repositories().map_err(|e| e.to_string())
 }
 
 /// 删除仓库（同时删除未安装的技能和清理缓存）
 #[tauri::command]
-pub async fn delete_repository(
-    state: State<'_, AppState>,
-    repo_id: String,
-) -> Result<(), String> {
+pub async fn delete_repository(state: State<'_, AppState>, repo_id: String) -> Result<(), String> {
     // 1. 获取仓库信息
-    let repo = state.db.get_repository(&repo_id)
+    let repo = state
+        .db
+        .get_repository(&repo_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "仓库不存在".to_string())?;
 
@@ -55,15 +50,27 @@ pub async fn delete_repository(
     let cache_path = repo.cache_path.clone();
 
     // 2. 删除未安装的技能（使用事务）
-    let deleted_skills_count = state.db.delete_uninstalled_skills_by_repository_url(&repository_url)
+    let deleted_skills_count = state
+        .db
+        .delete_uninstalled_skills_by_repository_url(&repository_url)
         .map_err(|e| e.to_string())?;
 
-    log::info!("删除仓库 {} 的 {} 个未安装技能", repo.name, deleted_skills_count);
+    log::info!(
+        "删除仓库 {} 的 {} 个未安装技能",
+        repo.name,
+        deleted_skills_count
+    );
 
-    let deleted_plugins_count = state.db.delete_uninstalled_plugins_by_repository_url(&repository_url)
+    let deleted_plugins_count = state
+        .db
+        .delete_uninstalled_plugins_by_repository_url(&repository_url)
         .map_err(|e| e.to_string())?;
 
-    log::info!("删除仓库 {} 的 {} 个未安装插件", repo.name, deleted_plugins_count);
+    log::info!(
+        "删除仓库 {} 的 {} 个未安装插件",
+        repo.name,
+        deleted_plugins_count
+    );
 
     // 3. 清理缓存目录（失败不中断）
     if let Some(cache_path_str) = cache_path {
@@ -71,7 +78,11 @@ pub async fn delete_repository(
         if cache_path_buf.exists() {
             match std::fs::remove_dir_all(&cache_path_buf) {
                 Ok(_) => log::info!("成功删除缓存目录: {:?}", cache_path_buf),
-                Err(e) => log::warn!("删除缓存目录失败，但不影响仓库删除: {:?}, 错误: {}", cache_path_buf, e),
+                Err(e) => log::warn!(
+                    "删除缓存目录失败，但不影响仓库删除: {:?}, 错误: {}",
+                    cache_path_buf,
+                    e
+                ),
             }
         } else {
             log::info!("缓存目录不存在，跳过清理: {:?}", cache_path_buf);
@@ -79,7 +90,9 @@ pub async fn delete_repository(
     }
 
     // 4. 删除仓库记录
-    state.db.delete_repository(&repo_id)
+    state
+        .db
+        .delete_repository(&repo_id)
         .map_err(|e| e.to_string())?;
 
     log::info!("成功删除仓库: {}", repo.name);
@@ -95,12 +108,13 @@ pub async fn scan_repository(
     use chrono::Utc;
 
     // 获取仓库信息
-    let repo = state.db.get_repository(&repo_id)
+    let repo = state
+        .db
+        .get_repository(&repo_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "仓库不存在".to_string())?;
 
-    let (owner, repo_name) = Repository::from_github_url(&repo.url)
-        .map_err(|e| e.to_string())?;
+    let (owner, repo_name) = Repository::from_github_url(&repo.url).map_err(|e| e.to_string())?;
 
     // 确定缓存基础目录
     let cache_base_dir = dirs::cache_dir()
@@ -117,18 +131,22 @@ pub async fn scan_repository(
         } else {
             // 缓存路径不存在，重新下载
             log::warn!("缓存路径不存在，重新下载: {:?}", cache_path_buf);
-            let (extract_dir, commit_sha) = state.github
+            let (extract_dir, commit_sha) = state
+                .github
                 .download_repository_archive(&owner, &repo_name, &cache_base_dir)
                 .await
                 .map_err(|e| format!("下载仓库压缩包失败: {}", e))?;
 
             // 更新数据库缓存信息
-            state.db.update_repository_cache(
-                &repo_id,
-                &extract_dir.to_string_lossy(),
-                Utc::now(),
-                Some(&commit_sha),
-            ).map_err(|e| e.to_string())?;
+            state
+                .db
+                .update_repository_cache(
+                    &repo_id,
+                    &extract_dir.to_string_lossy(),
+                    Utc::now(),
+                    Some(&commit_sha),
+                )
+                .map_err(|e| e.to_string())?;
 
             extract_dir
         }
@@ -136,23 +154,28 @@ pub async fn scan_repository(
         // 首次扫描: 下载压缩包并缓存(1次API请求)
         log::info!("首次扫描，下载仓库压缩包: {}", repo.name);
 
-        let (extract_dir, commit_sha) = state.github
+        let (extract_dir, commit_sha) = state
+            .github
             .download_repository_archive(&owner, &repo_name, &cache_base_dir)
             .await
             .map_err(|e| format!("下载仓库压缩包失败: {}", e))?;
 
         // 更新数据库缓存信息
-        state.db.update_repository_cache(
-            &repo_id,
-            &extract_dir.to_string_lossy(),
-            Utc::now(),
-            Some(&commit_sha),
-        ).map_err(|e| e.to_string())?;
+        state
+            .db
+            .update_repository_cache(
+                &repo_id,
+                &extract_dir.to_string_lossy(),
+                Utc::now(),
+                Some(&commit_sha),
+            )
+            .map_err(|e| e.to_string())?;
 
         extract_dir
     };
 
-    let skills = state.github
+    let skills = state
+        .github
         .scan_cached_repository(&cache_path_for_scan, &repo.url, repo.scan_subdirs)
         .map_err(|e| format!("扫描缓存失败: {}", e))?;
 
@@ -164,15 +187,19 @@ pub async fn scan_repository(
             continue;
         }
 
-        state.db.save_skill(skill)
-            .map_err(|e| e.to_string())?;
+        state.db.save_skill(skill).map_err(|e| e.to_string())?;
     }
 
-    let deleted_plugins_count = state.db
+    let deleted_plugins_count = state
+        .db
         .delete_uninstalled_plugins_by_repository_url(&repo.url)
         .map_err(|e| e.to_string())?;
     if deleted_plugins_count > 0 {
-        log::info!("清理仓库 {} 的 {} 个未安装插件", repo.name, deleted_plugins_count);
+        log::info!(
+            "清理仓库 {} 的 {} 个未安装插件",
+            repo.name,
+            deleted_plugins_count
+        );
     }
 
     Ok(skills)
@@ -180,22 +207,16 @@ pub async fn scan_repository(
 
 /// 获取所有 skills
 #[tauri::command]
-pub async fn get_skills(
-    state: State<'_, AppState>,
-) -> Result<Vec<Skill>, String> {
+pub async fn get_skills(state: State<'_, AppState>) -> Result<Vec<Skill>, String> {
     let manager = state.skill_manager.lock().await;
-    manager.get_all_skills()
-        .map_err(|e| e.to_string())
+    manager.get_all_skills().map_err(|e| e.to_string())
 }
 
 /// 获取已安装的 skills
 #[tauri::command]
-pub async fn get_installed_skills(
-    state: State<'_, AppState>,
-) -> Result<Vec<Skill>, String> {
+pub async fn get_installed_skills(state: State<'_, AppState>) -> Result<Vec<Skill>, String> {
     let manager = state.skill_manager.lock().await;
-    manager.get_installed_skills()
-        .map_err(|e| e.to_string())
+    manager.get_installed_skills().map_err(|e| e.to_string())
 }
 
 /// 安装 skill
@@ -206,7 +227,9 @@ pub async fn install_skill(
     install_path: Option<String>,
 ) -> Result<(), String> {
     let manager = state.skill_manager.lock().await;
-    manager.install_skill(&skill_id, install_path).await
+    manager
+        .install_skill(&skill_id, install_path)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -218,7 +241,9 @@ pub async fn prepare_skill_installation(
     locale: String,
 ) -> Result<crate::models::security::SecurityReport, String> {
     let manager = state.skill_manager.lock().await;
-    manager.prepare_skill_installation(&skill_id, &locale).await
+    manager
+        .prepare_skill_installation(&skill_id, &locale)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -230,7 +255,8 @@ pub async fn confirm_skill_installation(
     install_path: Option<String>,
 ) -> Result<(), String> {
     let manager = state.skill_manager.lock().await;
-    manager.confirm_skill_installation(&skill_id, install_path)
+    manager
+        .confirm_skill_installation(&skill_id, install_path)
         .map_err(|e| e.to_string())
 }
 
@@ -241,18 +267,17 @@ pub async fn cancel_skill_installation(
     skill_id: String,
 ) -> Result<(), String> {
     let manager = state.skill_manager.lock().await;
-    manager.cancel_skill_installation(&skill_id)
+    manager
+        .cancel_skill_installation(&skill_id)
         .map_err(|e| e.to_string())
 }
 
 /// 卸载 skill
 #[tauri::command]
-pub async fn uninstall_skill(
-    state: State<'_, AppState>,
-    skill_id: String,
-) -> Result<(), String> {
+pub async fn uninstall_skill(state: State<'_, AppState>, skill_id: String) -> Result<(), String> {
     let manager = state.skill_manager.lock().await;
-    manager.uninstall_skill(&skill_id)
+    manager
+        .uninstall_skill(&skill_id)
         .map_err(|e| e.to_string())
 }
 
@@ -264,28 +289,22 @@ pub async fn uninstall_skill_path(
     path: String,
 ) -> Result<(), String> {
     let manager = state.skill_manager.lock().await;
-    manager.uninstall_skill_path(&skill_id, &path)
+    manager
+        .uninstall_skill_path(&skill_id, &path)
         .map_err(|e| e.to_string())
 }
 
 /// 删除 skill 记录
 #[tauri::command]
-pub async fn delete_skill(
-    state: State<'_, AppState>,
-    skill_id: String,
-) -> Result<(), String> {
-    state.db.delete_skill(&skill_id)
-        .map_err(|e| e.to_string())
+pub async fn delete_skill(state: State<'_, AppState>, skill_id: String) -> Result<(), String> {
+    state.db.delete_skill(&skill_id).map_err(|e| e.to_string())
 }
 
 /// 扫描本地技能目录并导入未追踪的技能
 #[tauri::command]
-pub async fn scan_local_skills(
-    state: State<'_, AppState>,
-) -> Result<Vec<Skill>, String> {
+pub async fn scan_local_skills(state: State<'_, AppState>) -> Result<Vec<Skill>, String> {
     let manager = state.skill_manager.lock().await;
-    manager.scan_local_skills()
-        .map_err(|e| e.to_string())
+    manager.scan_local_skills().map_err(|e| e.to_string())
 }
 
 /// 清理指定仓库的缓存
@@ -294,7 +313,9 @@ pub async fn clear_repository_cache(
     state: State<'_, AppState>,
     repo_id: String,
 ) -> Result<(), String> {
-    let repo = state.db.get_repository(&repo_id)
+    let repo = state
+        .db
+        .get_repository(&repo_id)
         .map_err(|e| e.to_string())?
         .ok_or("仓库不存在")?;
 
@@ -315,13 +336,19 @@ pub async fn clear_repository_cache(
             }
 
             // 先清除数据库中的缓存信息
-            state.db.clear_repository_cache_metadata(&repo_id)
+            state
+                .db
+                .clear_repository_cache_metadata(&repo_id)
                 .map_err(|e| e.to_string())?;
 
             // 然后删除文件（即使失败也不影响数据库一致性）
             if parent.exists() {
                 if let Err(e) = std::fs::remove_dir_all(parent) {
-                    log::warn!("删除缓存目录失败，但数据库已清理: {:?}，错误: {}", parent, e);
+                    log::warn!(
+                        "删除缓存目录失败，但数据库已清理: {:?}，错误: {}",
+                        parent,
+                        e
+                    );
                     // 不返回错误，因为数据库已经一致
                 } else {
                     log::info!("已删除缓存目录: {:?}", parent);
@@ -351,8 +378,7 @@ pub async fn refresh_repository_cache(
 pub async fn clear_all_repository_caches(
     state: State<'_, AppState>,
 ) -> Result<ClearAllCachesResult, String> {
-    let repos = state.db.get_repositories()
-        .map_err(|e| e.to_string())?;
+    let repos = state.db.get_repositories().map_err(|e| e.to_string())?;
 
     let mut cleared_count = 0;
     let mut failed_count = 0;
@@ -417,8 +443,12 @@ pub async fn clear_all_repository_caches(
         }
     }
 
-    log::info!("清除所有缓存完成: 成功 {}, 失败 {}, 释放 {} 字节",
-        cleared_count, failed_count, total_size_freed);
+    log::info!(
+        "清除所有缓存完成: 成功 {}, 失败 {}, 释放 {} 字节",
+        cleared_count,
+        failed_count,
+        total_size_freed
+    );
 
     Ok(ClearAllCachesResult {
         total_repositories: repos.len(),
@@ -430,11 +460,8 @@ pub async fn clear_all_repository_caches(
 
 /// 获取缓存统计信息
 #[tauri::command]
-pub async fn get_cache_stats(
-    state: State<'_, AppState>,
-) -> Result<CacheStats, String> {
-    let repos = state.db.get_repositories()
-        .map_err(|e| e.to_string())?;
+pub async fn get_cache_stats(state: State<'_, AppState>) -> Result<CacheStats, String> {
+    let repos = state.db.get_repositories().map_err(|e| e.to_string())?;
 
     let mut total_cached = 0;
     let mut total_size: u64 = 0;
@@ -543,7 +570,8 @@ pub async fn get_default_install_path() -> Result<String, String> {
 pub async fn select_custom_install_path(app: tauri::AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let folder_path = app.dialog()
+    let folder_path = app
+        .dialog()
         .file()
         .set_title("选择技能安装目录")
         .blocking_pick_folder();
@@ -559,7 +587,7 @@ pub async fn select_custom_install_path(app: tauri::AppHandle) -> Result<Option<
                 let _ = std::fs::remove_file(&test_file);
                 Ok(Some(path.to_string_lossy().to_string()))
             }
-            Err(_) => Err("选择的目录不可写，请检查权限".to_string())
+            Err(_) => Err("选择的目录不可写，请检查权限".to_string()),
         }
     } else {
         Ok(None)
@@ -588,7 +616,9 @@ struct FeaturedRepositoriesWrapper {
     repositories: Option<FeaturedRepositoriesConfig>,
 }
 
-fn parse_featured_repositories_yaml(yaml_content: &str) -> Result<FeaturedRepositoriesConfig, String> {
+fn parse_featured_repositories_yaml(
+    yaml_content: &str,
+) -> Result<FeaturedRepositoriesConfig, String> {
     let wrapper: FeaturedRepositoriesWrapper = serde_yaml::from_str(yaml_content)
         .map_err(|e| format!("Failed to parse featured repositories wrapper: {}", e))?;
     if let Some(config) = wrapper.repositories {
@@ -601,7 +631,9 @@ fn parse_featured_repositories_yaml(yaml_content: &str) -> Result<FeaturedReposi
 
 /// 获取精选仓库列表
 #[tauri::command]
-pub async fn get_featured_repositories(app: tauri::AppHandle) -> Result<FeaturedRepositoriesConfig, String> {
+pub async fn get_featured_repositories(
+    app: tauri::AppHandle,
+) -> Result<FeaturedRepositoriesConfig, String> {
     // 1) 优先读取 app_data_dir 下的缓存文件（支持在线刷新后持久化）
     let cache_path = featured_repositories_cache_path(&app)?;
     if let Ok(cached_yaml) = std::fs::read_to_string(&cache_path) {
@@ -682,7 +714,8 @@ pub async fn import_featured_repositories(
     state: State<'_, AppState>,
     category_ids: Option<Vec<String>>,
 ) -> Result<ImportFeaturedRepositoriesResult, String> {
-    let category_ids = category_ids.unwrap_or_else(|| vec!["official".to_string(), "community".to_string()]);
+    let category_ids =
+        category_ids.unwrap_or_else(|| vec!["official".to_string(), "community".to_string()]);
 
     let config = get_featured_repositories(app).await?;
     let mut existing_urls: std::collections::HashSet<String> = state
@@ -697,7 +730,11 @@ pub async fn import_featured_repositories(
     let mut added_count = 0usize;
     let mut skipped_count = 0usize;
 
-    for category in config.categories.into_iter().filter(|c| category_ids.contains(&c.id)) {
+    for category in config
+        .categories
+        .into_iter()
+        .filter(|c| category_ids.contains(&c.id))
+    {
         for repo in category.repositories {
             total_count += 1;
 
@@ -727,7 +764,10 @@ pub async fn import_featured_repositories(
 ///
 /// 注意：不会删除用户自定义的技能安装目录中的文件，只会清空应用自身的索引/缓存。
 #[tauri::command]
-pub async fn reset_app_data(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn reset_app_data(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     // 1) 清空数据库内容（保留表结构与迁移）
     state
         .db
@@ -777,12 +817,8 @@ pub async fn reset_app_data(app: tauri::AppHandle, state: State<'_, AppState>) -
 
 /// 检查仓库是否已添加
 #[tauri::command]
-pub async fn is_repository_added(
-    state: State<'_, AppState>,
-    url: String,
-) -> Result<bool, String> {
-    let repos = state.db.get_repositories()
-        .map_err(|e| e.to_string())?;
+pub async fn is_repository_added(state: State<'_, AppState>, url: String) -> Result<bool, String> {
+    let repos = state.db.get_repositories().map_err(|e| e.to_string())?;
 
     Ok(repos.iter().any(|r| r.url == url))
 }
@@ -794,8 +830,7 @@ pub async fn check_skills_updates(
     state: State<'_, AppState>,
 ) -> Result<Vec<(String, String)>, String> {
     let manager = state.skill_manager.lock().await;
-    let installed_skills = manager.get_installed_skills()
-        .map_err(|e| e.to_string())?;
+    let installed_skills = manager.get_installed_skills().map_err(|e| e.to_string())?;
 
     let mut updates = Vec::new();
 
@@ -815,7 +850,8 @@ pub async fn check_skills_updates(
         };
 
         // 检查更新
-        match state.github
+        match state
+            .github
             .check_skill_update(
                 &owner,
                 &repo,
@@ -849,7 +885,9 @@ pub async fn prepare_skill_update(
     locale: String,
 ) -> Result<(crate::models::security::SecurityReport, Vec<String>), String> {
     let manager = state.skill_manager.lock().await;
-    manager.prepare_skill_update(&skill_id, &locale).await
+    manager
+        .prepare_skill_update(&skill_id, &locale)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -861,7 +899,8 @@ pub async fn confirm_skill_update(
     force_overwrite: bool,
 ) -> Result<(), String> {
     let manager = state.skill_manager.lock().await;
-    manager.confirm_skill_update(&skill_id, force_overwrite)
+    manager
+        .confirm_skill_update(&skill_id, force_overwrite)
         .map_err(|e| e.to_string())
 }
 
@@ -872,7 +911,8 @@ pub async fn cancel_skill_update(
     skill_id: String,
 ) -> Result<(), String> {
     let manager = state.skill_manager.lock().await;
-    manager.cancel_skill_update(&skill_id)
+    manager
+        .cancel_skill_update(&skill_id)
         .map_err(|e| e.to_string())
 }
 
@@ -882,7 +922,9 @@ pub async fn auto_scan_unscanned_repositories(
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
     // 获取所有未扫描的仓库
-    let unscanned_repos = state.db.get_unscanned_repositories()
+    let unscanned_repos = state
+        .db
+        .get_unscanned_repositories()
         .map_err(|e| e.to_string())?;
 
     if unscanned_repos.is_empty() {
@@ -890,7 +932,10 @@ pub async fn auto_scan_unscanned_repositories(
         return Ok(vec![]);
     }
 
-    log::info!("发现 {} 个未扫描的仓库，开始自动扫描...", unscanned_repos.len());
+    log::info!(
+        "发现 {} 个未扫描的仓库，开始自动扫描...",
+        unscanned_repos.len()
+    );
 
     let mut scanned_repos = Vec::new();
 

@@ -1,8 +1,8 @@
 use crate::commands::AppState;
-use crate::models::security::{SecurityReport, SkillScanResult, SecurityLevel};
+use crate::i18n::validate_locale;
+use crate::models::security::{SecurityLevel, SecurityReport, SkillScanResult};
 use crate::models::Skill;
 use crate::security::{ScanOptions, SecurityScanner};
-use crate::i18n::validate_locale;
 use anyhow::Result;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -37,7 +37,8 @@ pub async fn scan_all_installed_skills(
 ) -> Result<Vec<SkillScanResult>, String> {
     let locale = validate_locale(&locale);
     let skills = state.db.get_skills().map_err(|e| e.to_string())?;
-    let installed_skills: Vec<Skill> = skills.into_iter()
+    let installed_skills: Vec<Skill> = skills
+        .into_iter()
         .filter(|s| s.installed && s.local_path.is_some())
         .collect();
 
@@ -55,7 +56,9 @@ pub async fn scan_all_installed_skills(
             .par_iter()
             .enumerate()
             .filter_map(|(index, skill)| {
-                let Some(local_path) = &skill.local_path else { return None };
+                let Some(local_path) = &skill.local_path else {
+                    return None;
+                };
                 let path = PathBuf::from(local_path);
                 if !path.exists() || !path.is_dir() {
                     log::warn!("Skill directory does not exist: {:?}", path);
@@ -217,7 +220,10 @@ pub async fn scan_installed_skill(
 
 /// 统计目录内可扫描的文件数量（用于前端进度条预估）
 #[tauri::command]
-pub async fn count_scan_files(dir_path: String, skip_readme: Option<bool>) -> Result<usize, String> {
+pub async fn count_scan_files(
+    dir_path: String,
+    skip_readme: Option<bool>,
+) -> Result<usize, String> {
     let path = PathBuf::from(&dir_path);
     if !path.exists() || !path.is_dir() {
         return Err(format!("Directory does not exist: {}", dir_path));
@@ -235,55 +241,67 @@ pub async fn count_scan_files(dir_path: String, skip_readme: Option<bool>) -> Re
 
 /// 获取缓存的扫描结果
 #[tauri::command]
-pub async fn get_scan_results(
-    state: State<'_, AppState>,
-) -> Result<Vec<SkillScanResult>, String> {
-    use crate::models::security::{SecurityIssue, IssueSeverity, IssueCategory};
+pub async fn get_scan_results(state: State<'_, AppState>) -> Result<Vec<SkillScanResult>, String> {
+    use crate::models::security::{IssueCategory, IssueSeverity, SecurityIssue};
 
     let skills = state.db.get_skills().map_err(|e| e.to_string())?;
 
-    let results: Vec<SkillScanResult> = skills.into_iter()
+    let results: Vec<SkillScanResult> = skills
+        .into_iter()
         .filter(|s| s.installed && s.security_score.is_some())
         .map(|s| {
             // 解析 security_issues 字符串为 SecurityIssue 对象
             let issues = if let Some(issue_strings) = &s.security_issues {
-                issue_strings.iter().filter_map(|issue_str| {
-                    // 解析格式: "[filename] Severity: description"
-                    // 先提取文件路径
-                    let (file_path, remaining) = if issue_str.starts_with('[') {
-                        if let Some(end_bracket) = issue_str.find(']') {
-                            let file = issue_str[1..end_bracket].to_string();
-                            let rest = issue_str[end_bracket + 1..].trim();
-                            (Some(file), rest)
+                issue_strings
+                    .iter()
+                    .filter_map(|issue_str| {
+                        // 解析格式: "[filename] Severity: description"
+                        // 先提取文件路径
+                        let (file_path, remaining) = if issue_str.starts_with('[') {
+                            if let Some(end_bracket) = issue_str.find(']') {
+                                let file = issue_str[1..end_bracket].to_string();
+                                let rest = issue_str[end_bracket + 1..].trim();
+                                (Some(file), rest)
+                            } else {
+                                (None, issue_str.as_str())
+                            }
                         } else {
                             (None, issue_str.as_str())
-                        }
-                    } else {
-                        (None, issue_str.as_str())
-                    };
-
-                    // 然后解析 Severity: description
-                    let parts: Vec<&str> = remaining.splitn(2, ": ").collect();
-                    if parts.len() == 2 {
-                        let severity = match parts[0] {
-                            "Critical" => Some(IssueSeverity::Critical),
-                            "Error" => Some(IssueSeverity::Error),
-                            "Warning" => Some(IssueSeverity::Warning),
-                            "Info" => Some(IssueSeverity::Info),
-                            _ => None,
                         };
 
-                        if let Some(severity) = severity {
-                            Some(SecurityIssue {
-                                severity,
-                                category: IssueCategory::Other,
-                                description: parts[1].to_string(),
-                                line_number: None,
-                                code_snippet: None,
-                                file_path,
-                            })
+                        // 然后解析 Severity: description
+                        let parts: Vec<&str> = remaining.splitn(2, ": ").collect();
+                        if parts.len() == 2 {
+                            let severity = match parts[0] {
+                                "Critical" => Some(IssueSeverity::Critical),
+                                "Error" => Some(IssueSeverity::Error),
+                                "Warning" => Some(IssueSeverity::Warning),
+                                "Info" => Some(IssueSeverity::Info),
+                                _ => None,
+                            };
+
+                            if let Some(severity) = severity {
+                                Some(SecurityIssue {
+                                    severity,
+                                    category: IssueCategory::Other,
+                                    description: parts[1].to_string(),
+                                    line_number: None,
+                                    code_snippet: None,
+                                    file_path,
+                                })
+                            } else {
+                                // 兼容旧格式（没有 Severity 前缀）：保留原始文本，避免丢失规则名等信息
+                                Some(SecurityIssue {
+                                    severity: IssueSeverity::Info,
+                                    category: IssueCategory::Other,
+                                    description: remaining.to_string(),
+                                    line_number: None,
+                                    code_snippet: None,
+                                    file_path,
+                                })
+                            }
                         } else {
-                            // 兼容旧格式（没有 Severity 前缀）：保留原始文本，避免丢失规则名等信息
+                            // 兼容无法解析的格式：保留原始文本
                             Some(SecurityIssue {
                                 severity: IssueSeverity::Info,
                                 category: IssueCategory::Other,
@@ -293,18 +311,8 @@ pub async fn get_scan_results(
                                 file_path,
                             })
                         }
-                    } else {
-                        // 兼容无法解析的格式：保留原始文本
-                        Some(SecurityIssue {
-                            severity: IssueSeverity::Info,
-                            category: IssueCategory::Other,
-                            description: remaining.to_string(),
-                            line_number: None,
-                            code_snippet: None,
-                            file_path,
-                        })
-                    }
-                }).collect()
+                    })
+                    .collect()
             } else {
                 vec![]
             };
@@ -326,8 +334,14 @@ pub async fn get_scan_results(
                 skill_id: s.id.clone(),
                 skill_name: s.name.clone(),
                 score: s.security_score.unwrap_or(0),
-                level: s.security_level.clone().unwrap_or_else(|| "Unknown".to_string()),
-                scanned_at: s.scanned_at.map(|d| d.to_rfc3339()).unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+                level: s
+                    .security_level
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                scanned_at: s
+                    .scanned_at
+                    .map(|d| d.to_rfc3339())
+                    .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
                 report,
             }
         })
@@ -356,26 +370,44 @@ pub async fn scan_skill_archive(
     // 验证文件存在性
     let path = std::path::Path::new(&archive_path);
     if !path.exists() {
-        return Err(t!("common.errors.file_not_found", locale = locale, path = &archive_path).to_string());
+        return Err(t!(
+            "common.errors.file_not_found",
+            locale = locale,
+            path = &archive_path
+        )
+        .to_string());
     }
     if !path.is_file() {
-        return Err(t!("common.errors.path_not_file", locale = locale, path = &archive_path).to_string());
+        return Err(t!(
+            "common.errors.path_not_file",
+            locale = locale,
+            path = &archive_path
+        )
+        .to_string());
     }
 
     // 读取文件内容
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| t!("common.errors.read_failed",
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        t!(
+            "common.errors.read_failed",
             locale = locale,
             path = &archive_path,
             error = e.to_string()
-        ).to_string())?;
+        )
+        .to_string()
+    })?;
 
-    let report = scanner.scan_file(&content, &archive_path, &locale)
-        .map_err(|e| t!("common.errors.scan_failed",
-            locale = locale,
-            path = &archive_path,
-            error = e.to_string()
-        ).to_string())?;
+    let report = scanner
+        .scan_file(&content, &archive_path, &locale)
+        .map_err(|e| {
+            t!(
+                "common.errors.scan_failed",
+                locale = locale,
+                path = &archive_path,
+                error = e.to_string()
+            )
+            .to_string()
+        })?;
 
     Ok(report)
 }

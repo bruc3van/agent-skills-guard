@@ -1,5 +1,5 @@
-use regex::{Regex, RegexSet};
 use lazy_static::lazy_static;
+use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
 
 /// 风险严重程度
@@ -14,22 +14,22 @@ pub enum Severity {
 /// 风险类别
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Category {
-    Destructive,      // 破坏性操作
-    RemoteExec,       // 远程执行
-    CmdInjection,     // 命令注入
-    Network,          // 网络外传
-    Privilege,        // 权限提升
-    Secrets,          // 敏感泄露
-    Persistence,      // 持久化
-    SensitiveFileAccess,  // 敏感文件访问
+    Destructive,         // 破坏性操作
+    RemoteExec,          // 远程执行
+    CmdInjection,        // 命令注入
+    Network,             // 网络外传
+    Privilege,           // 权限提升
+    Secrets,             // 敏感泄露
+    Persistence,         // 持久化
+    SensitiveFileAccess, // 敏感文件访问
 }
 
 /// 置信度等级
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Confidence {
-    High,    // 高置信度，误报可能性低
-    Medium,  // 中等置信度
-    Low,     // 低置信度，可能误报
+    High,   // 高置信度，误报可能性低
+    Medium, // 中等置信度
+    Low,    // 低置信度，可能误报
 }
 
 /// 危险模式规则
@@ -43,9 +43,9 @@ pub struct PatternRule {
     pub weight: i32,
     pub description: &'static str,
     pub hard_trigger: bool,
-    pub confidence: Confidence,           // 新增
-    pub remediation: &'static str,        // 新增：修复建议
-    pub cwe_id: Option<&'static str>,     // 新增：CWE 编号
+    pub confidence: Confidence,       // 新增
+    pub remediation: &'static str,    // 新增：修复建议
+    pub cwe_id: Option<&'static str>, // 新增：CWE 编号
 }
 
 impl PatternRule {
@@ -58,9 +58,9 @@ impl PatternRule {
         weight: i32,
         description: &'static str,
         hard_trigger: bool,
-        confidence: Confidence,           // 新增
-        remediation: &'static str,        // 新增
-        cwe_id: Option<&'static str>,     // 新增
+        confidence: Confidence,       // 新增
+        remediation: &'static str,    // 新增
+        cwe_id: Option<&'static str>, // 新增
     ) -> Self {
         Self {
             id,
@@ -71,9 +71,9 @@ impl PatternRule {
             weight,
             description,
             hard_trigger,
-            confidence,      // 新增
-            remediation,     // 新增
-            cwe_id,          // 新增
+            confidence,  // 新增
+            remediation, // 新增
+            cwe_id,      // 新增
         }
     }
 }
@@ -1243,7 +1243,8 @@ impl SecurityRules {
 
     /// 根据索引获取匹配的规则
     pub fn get_matched_rules(indices: Vec<usize>) -> Vec<&'static PatternRule> {
-        indices.iter()
+        indices
+            .iter()
             .filter_map(|&i| PATTERN_RULES.get(i))
             .collect()
     }

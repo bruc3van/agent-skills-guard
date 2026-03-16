@@ -1,17 +1,12 @@
-use crate::commands::AppState;
-use crate::models::{Plugin, SecurityReport};
-use crate::services::plugin_manager::{
-    ClaudeMarketplace,
-    MarketplaceRemoveResult,
-    MarketplaceUpdateResult,
-    PluginInstallResult,
-    PluginUninstallResult,
-    PluginUpdateResult,
-    SkillPluginUpgradeCandidate,
-};
 use crate::commands::featured_marketplaces;
-use crate::security::{ScanOptions, SecurityScanner};
+use crate::commands::AppState;
 use crate::i18n::validate_locale;
+use crate::models::{Plugin, SecurityReport};
+use crate::security::{ScanOptions, SecurityScanner};
+use crate::services::plugin_manager::{
+    ClaudeMarketplace, MarketplaceRemoveResult, MarketplaceUpdateResult, PluginInstallResult,
+    PluginUninstallResult, PluginUpdateResult, SkillPluginUpgradeCandidate,
+};
 use chrono::Utc;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -35,7 +30,9 @@ pub async fn get_plugins(
     locale: Option<String>,
 ) -> Result<Vec<Plugin>, String> {
     let locale = validate_locale(locale.as_deref().unwrap_or("en"));
-    let featured_config = featured_marketplaces::get_featured_marketplaces(app).await.ok();
+    let featured_config = featured_marketplaces::get_featured_marketplaces(app)
+        .await
+        .ok();
 
     // 通过 Claude CLI 同步本地安装状态（包含非本程序安装的 plugins/marketplaces）
     // 同步失败不阻塞 UI：回退到 DB 缓存
@@ -71,9 +68,7 @@ pub async fn get_plugins(
 
 /// 获取 plugins（不触发 CLI 同步，仅读取 DB）
 #[tauri::command]
-pub async fn get_plugins_cached(
-    state: State<'_, AppState>,
-) -> Result<Vec<Plugin>, String> {
+pub async fn get_plugins_cached(state: State<'_, AppState>) -> Result<Vec<Plugin>, String> {
     state.db.get_plugins().map_err(|e| e.to_string())
 }
 
@@ -106,7 +101,9 @@ pub async fn prepare_plugin_installation(
     locale: String,
 ) -> Result<SecurityReport, String> {
     let manager = state.plugin_manager.lock().await;
-    manager.prepare_plugin_installation(&plugin_id, &locale).await
+    manager
+        .prepare_plugin_installation(&plugin_id, &locale)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -118,7 +115,9 @@ pub async fn confirm_plugin_installation(
     claude_command: Option<String>,
 ) -> Result<PluginInstallResult, String> {
     let manager = state.plugin_manager.lock().await;
-    manager.confirm_plugin_installation(&plugin_id, claude_command).await
+    manager
+        .confirm_plugin_installation(&plugin_id, claude_command)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -129,7 +128,8 @@ pub async fn cancel_plugin_installation(
     plugin_id: String,
 ) -> Result<(), String> {
     let manager = state.plugin_manager.lock().await;
-    manager.cancel_plugin_installation(&plugin_id)
+    manager
+        .cancel_plugin_installation(&plugin_id)
         .map_err(|e| e.to_string())
 }
 
@@ -141,7 +141,9 @@ pub async fn uninstall_plugin(
     claude_command: Option<String>,
 ) -> Result<PluginUninstallResult, String> {
     let manager = state.plugin_manager.lock().await;
-    manager.uninstall_plugin(&plugin_id, claude_command).await
+    manager
+        .uninstall_plugin(&plugin_id, claude_command)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -154,7 +156,9 @@ pub async fn remove_marketplace(
     claude_command: Option<String>,
 ) -> Result<MarketplaceRemoveResult, String> {
     let manager = state.plugin_manager.lock().await;
-    manager.remove_marketplace(&marketplace_name, &marketplace_repo, claude_command).await
+    manager
+        .remove_marketplace(&marketplace_name, &marketplace_repo, claude_command)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -282,7 +286,9 @@ pub async fn scan_all_installed_plugins(
             .par_iter()
             .enumerate()
             .filter_map(|(index, plugin)| {
-                let Some(install_path) = plugin.claude_install_path.clone() else { return None };
+                let Some(install_path) = plugin.claude_install_path.clone() else {
+                    return None;
+                };
                 let path = PathBuf::from(&install_path);
                 if !path.exists() || !path.is_dir() {
                     log::warn!("Plugin directory does not exist: {:?}", path);

@@ -10,12 +10,12 @@ pub mod services;
 use commands::security::{get_scan_results, scan_all_installed_skills, scan_skill_archive};
 use commands::AppState;
 use services::{Database, PluginManager, SkillManager};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder};
 use tauri::Manager;
 use tokio::sync::Mutex;
-use std::path::PathBuf;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const MENU_SHOW: &str = "show";
@@ -144,25 +144,27 @@ fn ensure_cli_path() {
 
     #[cfg(target_os = "macos")]
     {
-        candidates.extend([
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin",
-            "/usr/sbin",
-            "/sbin",
-        ].iter().map(PathBuf::from));
+        candidates.extend(
+            [
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+                "/usr/bin",
+                "/bin",
+                "/usr/sbin",
+                "/sbin",
+            ]
+            .iter()
+            .map(PathBuf::from),
+        );
     }
 
     #[cfg(target_os = "linux")]
     {
-        candidates.extend([
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin",
-            "/usr/sbin",
-            "/sbin",
-        ].iter().map(PathBuf::from));
+        candidates.extend(
+            ["/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+                .iter()
+                .map(PathBuf::from),
+        );
     }
 
     if let Some(home) = dirs::home_dir() {
@@ -208,7 +210,11 @@ fn ensure_cli_path() {
         // fnm (Linux)
         #[cfg(target_os = "linux")]
         {
-            let fnm_versions = home.join(".local").join("share").join("fnm").join("node-versions");
+            let fnm_versions = home
+                .join(".local")
+                .join("share")
+                .join("fnm")
+                .join("node-versions");
             if fnm_versions.is_dir() {
                 if let Ok(entries) = std::fs::read_dir(&fnm_versions) {
                     for entry in entries.flatten() {

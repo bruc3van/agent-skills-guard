@@ -1,12 +1,12 @@
 use crate::models::{GitHubContent, Repository, Skill};
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::Deserialize;
-use std::future::Future;
-use std::pin::Pin;
-use std::path::{Path, PathBuf};
 use std::fs::{self, File};
+use std::future::Future;
 use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use zip::ZipArchive;
 
 /// GitHub Commit API 响应
@@ -50,8 +50,8 @@ impl GitHubService {
         Self {
             client: Client::builder()
                 .user_agent("agent-skills-guard")
-                .timeout(std::time::Duration::from_secs(30))  // 30秒超时
-                .connect_timeout(std::time::Duration::from_secs(10))  // 10秒连接超时
+                .timeout(std::time::Duration::from_secs(30)) // 30秒超时
+                .connect_timeout(std::time::Duration::from_secs(10)) // 10秒连接超时
                 .build()
                 .unwrap(),
             api_base: "https://api.github.com".to_string(),
@@ -64,17 +64,29 @@ impl GitHubService {
         let mut skills = Vec::new();
 
         // 获取仓库根目录内容
-        let contents = self.fetch_directory_contents(&owner, &repo_name, "").await?;
+        let contents = self
+            .fetch_directory_contents(&owner, &repo_name, "")
+            .await?;
 
         for item in contents {
             if item.content_type == "dir" {
                 // 检查文件夹是否为 skill（包含 SKILL.md）
-                if self.is_skill_directory(&owner, &repo_name, &item.path).await? {
+                if self
+                    .is_skill_directory(&owner, &repo_name, &item.path)
+                    .await?
+                {
                     // 获取 skill 的元数据（name 和 description）
-                    let (name, description) = match self.fetch_skill_metadata(&owner, &repo_name, &item.path).await {
+                    let (name, description) = match self
+                        .fetch_skill_metadata(&owner, &repo_name, &item.path)
+                        .await
+                    {
                         Ok(metadata) => metadata,
                         Err(e) => {
-                            log::warn!("Failed to fetch metadata for {}: {}, using fallback", item.path, e);
+                            log::warn!(
+                                "Failed to fetch metadata for {}: {}, using fallback",
+                                item.path,
+                                e
+                            );
                             (item.name.clone(), None)
                         }
                     };
@@ -87,16 +99,15 @@ impl GitHubService {
                         item.path.clone()
                     };
 
-                    let mut skill = Skill::new(
-                        name,
-                        repo.url.clone(),
-                        file_path,
-                    );
+                    let mut skill = Skill::new(name, repo.url.clone(), file_path);
                     skill.description = description;
                     skills.push(skill);
                 } else if repo.scan_subdirs {
                     // 递归扫描子目录
-                    match self.scan_directory(&owner, &repo_name, &item.path, &repo.url).await {
+                    match self
+                        .scan_directory(&owner, &repo_name, &item.path, &repo.url)
+                        .await
+                    {
                         Ok(mut sub_skills) => skills.append(&mut sub_skills),
                         Err(e) => log::warn!("Failed to scan subdirectory {}: {}", item.path, e),
                     }
@@ -124,13 +135,18 @@ impl GitHubService {
                     // 检查文件夹是否为 skill（包含 SKILL.md）
                     if self.is_skill_directory(owner, repo, &item.path).await? {
                         // 获取 skill 的元数据（name 和 description）
-                        let (name, description) = match self.fetch_skill_metadata(owner, repo, &item.path).await {
-                            Ok(metadata) => metadata,
-                            Err(e) => {
-                                log::warn!("Failed to fetch metadata for {}: {}, using fallback", item.path, e);
-                                (item.name.clone(), None)
-                            }
-                        };
+                        let (name, description) =
+                            match self.fetch_skill_metadata(owner, repo, &item.path).await {
+                                Ok(metadata) => metadata,
+                                Err(e) => {
+                                    log::warn!(
+                                        "Failed to fetch metadata for {}: {}, using fallback",
+                                        item.path,
+                                        e
+                                    );
+                                    (item.name.clone(), None)
+                                }
+                            };
 
                         // 如果路径为空（在根目录），设置为 "."
                         let file_path = if item.path.trim().is_empty() {
@@ -140,18 +156,16 @@ impl GitHubService {
                             item.path.clone()
                         };
 
-                        let mut skill = Skill::new(
-                            name,
-                            repo_url.to_string(),
-                            file_path,
-                        );
+                        let mut skill = Skill::new(name, repo_url.to_string(), file_path);
                         skill.description = description;
                         skills.push(skill);
                     } else if path.split('/').count() < 5 {
                         // 递归扫描（限制深度避免无限递归）
                         match self.scan_directory(owner, repo, &item.path, repo_url).await {
                             Ok(mut sub_skills) => skills.append(&mut sub_skills),
-                            Err(e) => log::warn!("Failed to scan subdirectory {}: {}", item.path, e),
+                            Err(e) => {
+                                log::warn!("Failed to scan subdirectory {}: {}", item.path, e)
+                            }
                         }
                     }
                 }
@@ -171,10 +185,14 @@ impl GitHubService {
         let url = if path.is_empty() {
             format!("{}/repos/{}/{}/contents", self.api_base, owner, repo)
         } else {
-            format!("{}/repos/{}/{}/contents/{}", self.api_base, owner, repo, path)
+            format!(
+                "{}/repos/{}/{}/contents/{}",
+                self.api_base, owner, repo, path
+            )
         };
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -196,7 +214,8 @@ impl GitHubService {
                                         let now = std::time::SystemTime::now()
                                             .duration_since(std::time::UNIX_EPOCH)
                                             .unwrap()
-                                            .as_secs() as i64;
+                                            .as_secs()
+                                            as i64;
                                         let wait_seconds = reset_timestamp - now;
 
                                         if wait_seconds > 0 {
@@ -239,7 +258,8 @@ impl GitHubService {
 
     /// 下载文件内容
     pub async fn download_file(&self, download_url: &str) -> Result<Vec<u8>> {
-        let response = self.client
+        let response = self
+            .client
             .get(download_url)
             .send()
             .await
@@ -266,10 +286,7 @@ impl GitHubService {
             }
         }
 
-        let bytes = response
-            .bytes()
-            .await
-            .context("读取文件内容失败")?;
+        let bytes = response.bytes().await.context("读取文件内容失败")?;
 
         Ok(bytes.to_vec())
     }
@@ -292,7 +309,12 @@ impl GitHubService {
     }
 
     /// 下载并解析 SKILL.md 的 frontmatter
-    pub async fn fetch_skill_metadata(&self, owner: &str, repo: &str, skill_path: &str) -> Result<(String, Option<String>)> {
+    pub async fn fetch_skill_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        skill_path: &str,
+    ) -> Result<(String, Option<String>)> {
         // 尝试多个分支获取 SKILL.md
         let branches = ["main", "master"];
         let mut last_error = None;
@@ -306,18 +328,17 @@ impl GitHubService {
             log::info!("尝试从分支 {} 获取 SKILL.md: {}", branch, download_url);
 
             match self.download_file(&download_url).await {
-                Ok(content) => {
-                    match String::from_utf8(content) {
-                        Ok(content_str) => {
-                            log::info!("成功从分支 {} 获取 SKILL.md", branch);
-                            return self.parse_skill_frontmatter(&content_str);
-                        }
-                        Err(e) => {
-                            last_error = Some(anyhow::anyhow!("Failed to decode SKILL.md as UTF-8: {}", e));
-                            continue;
-                        }
+                Ok(content) => match String::from_utf8(content) {
+                    Ok(content_str) => {
+                        log::info!("成功从分支 {} 获取 SKILL.md", branch);
+                        return self.parse_skill_frontmatter(&content_str);
                     }
-                }
+                    Err(e) => {
+                        last_error =
+                            Some(anyhow::anyhow!("Failed to decode SKILL.md as UTF-8: {}", e));
+                        continue;
+                    }
+                },
                 Err(e) => {
                     log::info!("分支 {} 不存在或获取失败: {}", branch, e);
                     last_error = Some(e);
@@ -339,7 +360,8 @@ impl GitHubService {
         }
 
         // 找到第二个 "---"
-        let end_index = lines.iter()
+        let end_index = lines
+            .iter()
             .skip(1)
             .position(|&line| line == "---")
             .context("Invalid SKILL.md format: frontmatter not closed")?;
@@ -356,11 +378,17 @@ impl GitHubService {
     }
 
     /// 获取目录下的所有文件（不递归）
-    pub async fn get_directory_files(&self, owner: &str, repo: &str, path: &str) -> Result<Vec<GitHubContent>> {
+    pub async fn get_directory_files(
+        &self,
+        owner: &str,
+        repo: &str,
+        path: &str,
+    ) -> Result<Vec<GitHubContent>> {
         let contents = self.fetch_directory_contents(owner, repo, path).await?;
 
         // 只返回文件，过滤掉子目录
-        let files: Vec<GitHubContent> = contents.into_iter()
+        let files: Vec<GitHubContent> = contents
+            .into_iter()
             .filter(|item| item.content_type == "file")
             .collect();
 
@@ -377,8 +405,7 @@ impl GitHubService {
     ) -> Result<(PathBuf, String)> {
         // 1. 创建仓库专属缓存目录
         let repo_cache_dir = cache_base_dir.join(format!("{}_{}", owner, repo));
-        fs::create_dir_all(&repo_cache_dir)
-            .context("无法创建缓存目录")?;
+        fs::create_dir_all(&repo_cache_dir).context("无法创建缓存目录")?;
 
         // 2. 尝试下载压缩包（先尝试 main，如果 404 则尝试 master）
         let branches = ["main", "master"];
@@ -386,7 +413,10 @@ impl GitHubService {
         let mut response = None;
 
         for branch in branches.iter() {
-            let url = format!("{}/repos/{}/{}/zipball/{}", self.api_base, owner, repo, branch);
+            let url = format!(
+                "{}/repos/{}/{}/zipball/{}",
+                self.api_base, owner, repo, branch
+            );
             log::info!("正在尝试下载仓库压缩包 (分支: {}): {}", branch, url);
 
             match self.client.get(&url).send().await {
@@ -405,10 +435,8 @@ impl GitHubService {
                         last_error = Some(anyhow::anyhow!("分支 {} 不存在", branch));
                         continue;
                     } else {
-                        last_error = Some(anyhow::anyhow!(
-                            "下载失败，HTTP状态码: {}",
-                            resp.status()
-                        ));
+                        last_error =
+                            Some(anyhow::anyhow!("下载失败，HTTP状态码: {}", resp.status()));
                         continue;
                     }
                 }
@@ -420,21 +448,21 @@ impl GitHubService {
             }
         }
 
-        let response = response.ok_or_else(|| {
-            last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支均下载失败"))
-        })?;
+        let response = response
+            .ok_or_else(|| last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支均下载失败")))?;
 
         // 3. 保存压缩包到本地
         let archive_path = repo_cache_dir.join("archive.zip");
-        let bytes = response.bytes().await
-            .context("读取压缩包内容失败")?;
+        let bytes = response.bytes().await.context("读取压缩包内容失败")?;
 
-        let mut file = File::create(&archive_path)
-            .context("无法创建压缩包文件")?;
-        file.write_all(&bytes)
-            .context("写入压缩包失败")?;
+        let mut file = File::create(&archive_path).context("无法创建压缩包文件")?;
+        file.write_all(&bytes).context("写入压缩包失败")?;
 
-        log::info!("压缩包已保存: {:?}, 大小: {} bytes", archive_path, bytes.len());
+        log::info!(
+            "压缩包已保存: {:?}, 大小: {} bytes",
+            archive_path,
+            bytes.len()
+        );
 
         // 4. 解压缩
         let extract_dir = repo_cache_dir.join("extracted");
@@ -444,7 +472,8 @@ impl GitHubService {
         log::info!("解压完成: {:?}", extract_dir);
 
         // 5. 提取 commit SHA（从解压后的目录名）
-        let commit_sha = self.extract_commit_sha_from_cache(&extract_dir)
+        let commit_sha = self
+            .extract_commit_sha_from_cache(&extract_dir)
             .context("无法提取 commit SHA")?;
 
         log::info!("提取到 commit SHA: {}", commit_sha);
@@ -454,16 +483,15 @@ impl GitHubService {
 
     /// 解压zip文件
     fn extract_zip(&self, archive_path: &Path, extract_dir: &Path) -> Result<()> {
-        let file = File::open(archive_path)
-            .context("无法打开压缩包")?;
+        let file = File::open(archive_path).context("无法打开压缩包")?;
 
-        let mut archive = ZipArchive::new(file)
-            .context("无法读取ZIP文件")?;
+        let mut archive = ZipArchive::new(file).context("无法读取ZIP文件")?;
 
         log::info!("正在解压 {} 个文件...", archive.len());
 
         for i in 0..archive.len() {
-            let mut file = archive.by_index(i)
+            let mut file = archive
+                .by_index(i)
                 .context(format!("无法读取ZIP条目 {}", i))?;
 
             // GitHub的zipball会在根目录包含一个 {owner}-{repo}-{commit}/ 的文件夹
@@ -474,16 +502,14 @@ impl GitHubService {
             };
 
             if file.is_dir() {
-                fs::create_dir_all(&outpath)
-                    .context(format!("无法创建目录: {:?}", outpath))?;
+                fs::create_dir_all(&outpath).context(format!("无法创建目录: {:?}", outpath))?;
             } else {
                 if let Some(parent) = outpath.parent() {
-                    fs::create_dir_all(parent)
-                        .context(format!("无法创建父目录: {:?}", parent))?;
+                    fs::create_dir_all(parent).context(format!("无法创建父目录: {:?}", parent))?;
                 }
 
-                let mut outfile = File::create(&outpath)
-                    .context(format!("无法创建文件: {:?}", outpath))?;
+                let mut outfile =
+                    File::create(&outpath).context(format!("无法创建文件: {:?}", outpath))?;
 
                 std::io::copy(&mut file, &mut outfile)
                     .context(format!("无法写入文件: {:?}", outpath))?;
@@ -532,7 +558,11 @@ impl GitHubService {
         let mut skills = Vec::new();
         let max_depth = if scan_subdirs { 10 } else { 2 };
 
-        log::info!("开始扫描本地缓存: {:?}, scan_subdirs: {}", cache_path, scan_subdirs);
+        log::info!(
+            "开始扫描本地缓存: {:?}, scan_subdirs: {}",
+            cache_path,
+            scan_subdirs
+        );
 
         // GitHub zipball的根目录是 {owner}-{repo}-{commit}/
         // 需要找到这个根目录
@@ -553,7 +583,12 @@ impl GitHubService {
                     log::info!("发现skill: {:?}", entry.path());
 
                     // 读取并解析SKILL.md
-                    match self.parse_skill_from_file(&skill_md_path, entry.path(), &root_dir, repo_url) {
+                    match self.parse_skill_from_file(
+                        &skill_md_path,
+                        entry.path(),
+                        &root_dir,
+                        repo_url,
+                    ) {
                         Ok(skill) => skills.push(skill),
                         Err(e) => log::warn!("解析skill失败 {:?}: {}", entry.path(), e),
                     }
@@ -570,9 +605,7 @@ impl GitHubService {
     fn find_repo_root(&self, extract_dir: &Path) -> Result<PathBuf> {
         // GitHub zipball解压后会有一个 {owner}-{repo}-{commit}/ 目录
         // 我们需要找到这个目录
-        for entry in fs::read_dir(extract_dir)
-            .context("无法读取解压目录")?
-        {
+        for entry in fs::read_dir(extract_dir).context("无法读取解压目录")? {
             let entry = entry.context("无法读取目录条目")?;
             if entry.file_type()?.is_dir() {
                 return Ok(entry.path());
@@ -585,9 +618,7 @@ impl GitHubService {
     /// 从解压后的缓存目录中提取 commit SHA
     /// GitHub zipball 解压后的目录名格式：{owner}-{repo}-{commit_sha}
     pub fn extract_commit_sha_from_cache(&self, extract_dir: &Path) -> Result<String> {
-        for entry in fs::read_dir(extract_dir)
-            .context("无法读取解压目录")?
-        {
+        for entry in fs::read_dir(extract_dir).context("无法读取解压目录")? {
             let entry = entry.context("无法读取目录条目")?;
             if entry.file_type()?.is_dir() {
                 // 获取目录名，格式为 {owner}-{repo}-{commit_sha}
@@ -596,7 +627,9 @@ impl GitHubService {
                     if let Some(last_dash) = dir_name.rfind('-') {
                         let commit_sha = &dir_name[last_dash + 1..];
                         // 验证是否为合法的 SHA（至少 7 位十六进制字符）
-                        if commit_sha.len() >= 7 && commit_sha.chars().all(|c| c.is_ascii_hexdigit()) {
+                        if commit_sha.len() >= 7
+                            && commit_sha.chars().all(|c| c.is_ascii_hexdigit())
+                        {
                             return Ok(commit_sha.to_string());
                         }
                     }
@@ -616,14 +649,14 @@ impl GitHubService {
         repo_url: &str,
     ) -> Result<Skill> {
         // 读取SKILL.md内容
-        let content = fs::read_to_string(skill_md_path)
-            .context("无法读取SKILL.md")?;
+        let content = fs::read_to_string(skill_md_path).context("无法读取SKILL.md")?;
 
         // 解析frontmatter获取name和description
         let (name, description) = self.parse_skill_frontmatter(&content)?;
 
         // 计算相对于仓库根目录的路径
-        let relative_path = skill_dir.strip_prefix(repo_root)
+        let relative_path = skill_dir
+            .strip_prefix(repo_root)
             .context("无法计算相对路径")?;
 
         let mut file_path = relative_path.to_string_lossy().to_string();
@@ -646,7 +679,7 @@ impl GitHubService {
 
     /// 计算文件内容的SHA256 checksum
     fn calculate_checksum(&self, content: &str) -> String {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
 
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());
@@ -676,15 +709,22 @@ impl GitHubService {
         // 构建 API URL
         let path_param = if skill_path == "." { "" } else { skill_path };
         let url = if path_param.is_empty() {
-            format!("{}/repos/{}/{}/commits?per_page=1", self.api_base, owner, repo)
+            format!(
+                "{}/repos/{}/{}/commits?per_page=1",
+                self.api_base, owner, repo
+            )
         } else {
-            format!("{}/repos/{}/{}/commits?path={}&per_page=1", self.api_base, owner, repo, path_param)
+            format!(
+                "{}/repos/{}/{}/commits?path={}&per_page=1",
+                self.api_base, owner, repo, path_param
+            )
         };
 
         log::info!("检查技能更新: {}", url);
 
         // 发送请求
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -711,17 +751,19 @@ impl GitHubService {
         }
 
         // 解析响应
-        let commits: Vec<GitHubCommit> = response
-            .json()
-            .await
-            .context("解析 GitHub 提交信息失败")?;
+        let commits: Vec<GitHubCommit> =
+            response.json().await.context("解析 GitHub 提交信息失败")?;
 
         if let Some(latest_commit) = commits.first() {
             let latest_sha = &latest_commit.sha;
 
             log::info!(
                 "技能 {}/{}/{} - 已安装: {}，最新: {}",
-                owner, repo, skill_path, installed_sha, latest_sha
+                owner,
+                repo,
+                skill_path,
+                installed_sha,
+                latest_sha
             );
 
             // 比较 SHA（只比较前 7 位，因为可能存储的是短 SHA）

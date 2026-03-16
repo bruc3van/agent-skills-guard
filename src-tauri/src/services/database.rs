@@ -1,6 +1,6 @@
 use crate::models::{Plugin, Repository, Skill};
-use anyhow::{Result, Context};
-use rusqlite::{Connection, params, OptionalExtension};
+use anyhow::{Context, Result};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -16,8 +16,7 @@ impl Database {
             std::fs::create_dir_all(parent)?;
         }
 
-        let conn = Connection::open(db_path)
-            .context("Failed to open database")?;
+        let conn = Connection::open(db_path).context("Failed to open database")?;
 
         let db = Self {
             conn: Mutex::new(conn),
@@ -155,7 +154,9 @@ impl Database {
     pub fn save_plugin(&self, plugin: &Plugin) -> Result<()> {
         let conn = self.conn.lock().unwrap();
 
-        let security_issues_json = plugin.security_issues.as_ref()
+        let security_issues_json = plugin
+            .security_issues
+            .as_ref()
             .map(|issues| serde_json::to_string(issues).unwrap());
 
         conn.execute(
@@ -204,10 +205,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
 
         // 尝试添加列（如果列已存在会失败，这是正常的）
-        let _ = conn.execute(
-            "ALTER TABLE skills ADD COLUMN repository_owner TEXT",
-            [],
-        );
+        let _ = conn.execute("ALTER TABLE skills ADD COLUMN repository_owner TEXT", []);
 
         // 为现有记录填充 repository_owner
         conn.execute(
@@ -270,24 +268,30 @@ impl Database {
              ORDER BY added_at DESC"
         )?;
 
-        let repos = stmt.query_map([], |row| {
-            Ok(Repository {
-                id: row.get(0)?,
-                url: row.get(1)?,
-                name: row.get(2)?,
-                description: row.get(3)?,
-                enabled: row.get::<_, i32>(4)? != 0,
-                scan_subdirs: row.get::<_, i32>(5)? != 0,
-                added_at: row.get::<_, String>(6)?.parse().unwrap_or_else(|_| chrono::Utc::now()),
-                last_scanned: row.get::<_, Option<String>>(7)?
-                    .and_then(|s| s.parse().ok()),
-                cache_path: row.get(8)?,
-                cached_at: row.get::<_, Option<String>>(9)?
-                    .and_then(|s| s.parse().ok()),
-                cached_commit_sha: row.get(10)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+        let repos = stmt
+            .query_map([], |row| {
+                Ok(Repository {
+                    id: row.get(0)?,
+                    url: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    enabled: row.get::<_, i32>(4)? != 0,
+                    scan_subdirs: row.get::<_, i32>(5)? != 0,
+                    added_at: row
+                        .get::<_, String>(6)?
+                        .parse()
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    last_scanned: row
+                        .get::<_, Option<String>>(7)?
+                        .and_then(|s| s.parse().ok()),
+                    cache_path: row.get(8)?,
+                    cached_at: row
+                        .get::<_, Option<String>>(9)?
+                        .and_then(|s| s.parse().ok()),
+                    cached_commit_sha: row.get(10)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(repos)
     }
@@ -296,10 +300,14 @@ impl Database {
     pub fn save_skill(&self, skill: &Skill) -> Result<()> {
         let conn = self.conn.lock().unwrap();
 
-        let security_issues_json = skill.security_issues.as_ref()
+        let security_issues_json = skill
+            .security_issues
+            .as_ref()
             .map(|issues| serde_json::to_string(issues).unwrap());
 
-        let local_paths_json = skill.local_paths.as_ref()
+        let local_paths_json = skill
+            .local_paths
+            .as_ref()
             .map(|paths| serde_json::to_string(paths).unwrap());
 
         conn.execute(
@@ -341,39 +349,40 @@ impl Database {
              FROM skills"
         )?;
 
-        let skills = stmt.query_map([], |row| {
-            let security_issues: Option<String> = row.get(14)?;
-            let security_issues = security_issues
-                .and_then(|s| serde_json::from_str(&s).ok());
+        let skills = stmt
+            .query_map([], |row| {
+                let security_issues: Option<String> = row.get(14)?;
+                let security_issues = security_issues.and_then(|s| serde_json::from_str(&s).ok());
 
-            let local_paths: Option<String> = row.get(11)?;
-            let local_paths = local_paths
-                .and_then(|s| serde_json::from_str(&s).ok());
+                let local_paths: Option<String> = row.get(11)?;
+                let local_paths = local_paths.and_then(|s| serde_json::from_str(&s).ok());
 
-            Ok(Skill {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                description: row.get(2)?,
-                repository_url: row.get(3)?,
-                repository_owner: row.get(4)?,
-                file_path: row.get(5)?,
-                version: row.get(6)?,
-                author: row.get(7)?,
-                installed: row.get::<_, i32>(8)? != 0,
-                installed_at: row.get::<_, Option<String>>(9)?
-                    .and_then(|s| s.parse().ok()),
-                local_path: row.get(10)?,
-                local_paths,
-                checksum: row.get(12)?,
-                security_score: row.get(13)?,
-                security_issues,
-                security_level: row.get(15)?,
-                scanned_at: row.get::<_, Option<String>>(16)?
-                    .and_then(|s| s.parse().ok()),
-                installed_commit_sha: row.get(17)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+                Ok(Skill {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    description: row.get(2)?,
+                    repository_url: row.get(3)?,
+                    repository_owner: row.get(4)?,
+                    file_path: row.get(5)?,
+                    version: row.get(6)?,
+                    author: row.get(7)?,
+                    installed: row.get::<_, i32>(8)? != 0,
+                    installed_at: row
+                        .get::<_, Option<String>>(9)?
+                        .and_then(|s| s.parse().ok()),
+                    local_path: row.get(10)?,
+                    local_paths,
+                    checksum: row.get(12)?,
+                    security_score: row.get(13)?,
+                    security_issues,
+                    security_level: row.get(15)?,
+                    scanned_at: row
+                        .get::<_, Option<String>>(16)?
+                        .and_then(|s| s.parse().ok()),
+                    installed_commit_sha: row.get(17)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(skills)
     }
@@ -389,45 +398,48 @@ impl Database {
              FROM plugins"
         )?;
 
-        let plugins = stmt.query_map([], |row| {
-            let security_issues: Option<String> = row.get(21)?;
-            let security_issues = security_issues
-                .and_then(|s| serde_json::from_str(&s).ok());
+        let plugins = stmt
+            .query_map([], |row| {
+                let security_issues: Option<String> = row.get(21)?;
+                let security_issues = security_issues.and_then(|s| serde_json::from_str(&s).ok());
 
-            Ok(Plugin {
-                id: row.get(0)?,
-                claude_id: row.get(1)?,
-                name: row.get(2)?,
-                description: row.get(3)?,
-                version: row.get(4)?,
-                installed_version: row.get(5)?,
-                author: row.get(6)?,
-                repository_url: row.get(7)?,
-                repository_owner: row.get(8)?,
-                marketplace_name: row.get(9)?,
-                source: row.get(10)?,
-                discovery_source: row.get(11)?,
-                marketplace_add_command: row.get(12)?,
-                plugin_install_command: row.get(13)?,
-                installed: row.get::<_, i32>(14)? != 0,
-                installed_at: row.get::<_, Option<String>>(15)?
-                    .and_then(|s| s.parse().ok()),
-                claude_scope: row.get(16)?,
-                claude_enabled: row.get::<_, Option<i32>>(17)?.map(|v| v != 0),
-                claude_install_path: row.get(18)?,
-                claude_last_updated: row.get::<_, Option<String>>(19)?
-                    .and_then(|s| s.parse().ok()),
-                security_score: row.get(20)?,
-                security_issues,
-                security_level: row.get(22)?,
-                scanned_at: row.get::<_, Option<String>>(23)?
-                    .and_then(|s| s.parse().ok()),
-                staging_path: row.get(24)?,
-                install_log: row.get(25)?,
-                install_status: row.get(26)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+                Ok(Plugin {
+                    id: row.get(0)?,
+                    claude_id: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    version: row.get(4)?,
+                    installed_version: row.get(5)?,
+                    author: row.get(6)?,
+                    repository_url: row.get(7)?,
+                    repository_owner: row.get(8)?,
+                    marketplace_name: row.get(9)?,
+                    source: row.get(10)?,
+                    discovery_source: row.get(11)?,
+                    marketplace_add_command: row.get(12)?,
+                    plugin_install_command: row.get(13)?,
+                    installed: row.get::<_, i32>(14)? != 0,
+                    installed_at: row
+                        .get::<_, Option<String>>(15)?
+                        .and_then(|s| s.parse().ok()),
+                    claude_scope: row.get(16)?,
+                    claude_enabled: row.get::<_, Option<i32>>(17)?.map(|v| v != 0),
+                    claude_install_path: row.get(18)?,
+                    claude_last_updated: row
+                        .get::<_, Option<String>>(19)?
+                        .and_then(|s| s.parse().ok()),
+                    security_score: row.get(20)?,
+                    security_issues,
+                    security_level: row.get(22)?,
+                    scanned_at: row
+                        .get::<_, Option<String>>(23)?
+                        .and_then(|s| s.parse().ok()),
+                    staging_path: row.get(24)?,
+                    install_log: row.get(25)?,
+                    install_status: row.get(26)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(plugins)
     }
@@ -440,21 +452,27 @@ impl Database {
     }
 
     /// 删除指定仓库的所有未安装技能
-    pub fn delete_uninstalled_skills_by_repository_url(&self, repository_url: &str) -> Result<usize> {
+    pub fn delete_uninstalled_skills_by_repository_url(
+        &self,
+        repository_url: &str,
+    ) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let deleted_count = conn.execute(
             "DELETE FROM skills WHERE repository_url = ?1 AND installed = 0",
-            params![repository_url]
+            params![repository_url],
         )?;
         Ok(deleted_count)
     }
 
     /// 删除指定仓库的所有未安装插件
-    pub fn delete_uninstalled_plugins_by_repository_url(&self, repository_url: &str) -> Result<usize> {
+    pub fn delete_uninstalled_plugins_by_repository_url(
+        &self,
+        repository_url: &str,
+    ) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let deleted_count = conn.execute(
             "DELETE FROM plugins WHERE repository_url = ?1 AND installed = 0",
-            params![repository_url]
+            params![repository_url],
         )?;
         Ok(deleted_count)
     }
@@ -463,7 +481,10 @@ impl Database {
     pub fn delete_skill(&self, skill_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM skills WHERE id = ?1", params![skill_id])?;
-        conn.execute("DELETE FROM installations WHERE skill_id = ?1", params![skill_id])?;
+        conn.execute(
+            "DELETE FROM installations WHERE skill_id = ?1",
+            params![skill_id],
+        )?;
         Ok(())
     }
 
@@ -479,16 +500,10 @@ impl Database {
         let conn = self.conn.lock().unwrap();
 
         // 添加 cache_path 列
-        let _ = conn.execute(
-            "ALTER TABLE repositories ADD COLUMN cache_path TEXT",
-            [],
-        );
+        let _ = conn.execute("ALTER TABLE repositories ADD COLUMN cache_path TEXT", []);
 
         // 添加 cached_at 列
-        let _ = conn.execute(
-            "ALTER TABLE repositories ADD COLUMN cached_at TEXT",
-            [],
-        );
+        let _ = conn.execute("ALTER TABLE repositories ADD COLUMN cached_at TEXT", []);
 
         // 添加 cached_commit_sha 列
         let _ = conn.execute(
@@ -504,16 +519,10 @@ impl Database {
         let conn = self.conn.lock().unwrap();
 
         // 添加 security_level 列
-        let _ = conn.execute(
-            "ALTER TABLE skills ADD COLUMN security_level TEXT",
-            [],
-        );
+        let _ = conn.execute("ALTER TABLE skills ADD COLUMN security_level TEXT", []);
 
         // 添加 scanned_at 列
-        let _ = conn.execute(
-            "ALTER TABLE skills ADD COLUMN scanned_at TEXT",
-            [],
-        );
+        let _ = conn.execute("ALTER TABLE skills ADD COLUMN scanned_at TEXT", []);
 
         Ok(())
     }
@@ -523,10 +532,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
 
         // 添加 local_paths 列（JSON 数组格式）
-        let _ = conn.execute(
-            "ALTER TABLE skills ADD COLUMN local_paths TEXT",
-            [],
-        );
+        let _ = conn.execute("ALTER TABLE skills ADD COLUMN local_paths TEXT", []);
 
         // 将现有的 local_path 迁移到 local_paths 数组中
         conn.execute(
@@ -603,8 +609,14 @@ impl Database {
         let _ = conn.execute("ALTER TABLE plugins ADD COLUMN discovery_source TEXT", []);
         let _ = conn.execute("ALTER TABLE plugins ADD COLUMN claude_scope TEXT", []);
         let _ = conn.execute("ALTER TABLE plugins ADD COLUMN claude_enabled INTEGER", []);
-        let _ = conn.execute("ALTER TABLE plugins ADD COLUMN claude_install_path TEXT", []);
-        let _ = conn.execute("ALTER TABLE plugins ADD COLUMN claude_last_updated TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE plugins ADD COLUMN claude_install_path TEXT",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE plugins ADD COLUMN claude_last_updated TEXT",
+            [],
+        );
 
         // 填充缺失字段，保证旧数据可被新逻辑识别
         let _ = conn.execute(
@@ -628,8 +640,14 @@ impl Database {
     fn migrate_add_plugin_install_commands(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
 
-        let _ = conn.execute("ALTER TABLE plugins ADD COLUMN marketplace_add_command TEXT", []);
-        let _ = conn.execute("ALTER TABLE plugins ADD COLUMN plugin_install_command TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE plugins ADD COLUMN marketplace_add_command TEXT",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE plugins ADD COLUMN plugin_install_command TEXT",
+            [],
+        );
 
         Ok(())
     }
@@ -642,26 +660,33 @@ impl Database {
             "SELECT id, url, name, description, enabled, scan_subdirs,
                     added_at, last_scanned, cache_path, cached_at, cached_commit_sha
              FROM repositories
-             WHERE id = ?1"
+             WHERE id = ?1",
         )?;
 
-        let repo = stmt.query_row(params![repo_id], |row| {
-            Ok(Repository {
-                id: row.get(0)?,
-                url: row.get(1)?,
-                name: row.get(2)?,
-                description: row.get(3)?,
-                enabled: row.get::<_, i32>(4)? != 0,
-                scan_subdirs: row.get::<_, i32>(5)? != 0,
-                added_at: row.get::<_, String>(6)?.parse().unwrap_or_else(|_| chrono::Utc::now()),
-                last_scanned: row.get::<_, Option<String>>(7)?
-                    .and_then(|s| s.parse().ok()),
-                cache_path: row.get(8)?,
-                cached_at: row.get::<_, Option<String>>(9)?
-                    .and_then(|s| s.parse().ok()),
-                cached_commit_sha: row.get(10)?,
+        let repo = stmt
+            .query_row(params![repo_id], |row| {
+                Ok(Repository {
+                    id: row.get(0)?,
+                    url: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    enabled: row.get::<_, i32>(4)? != 0,
+                    scan_subdirs: row.get::<_, i32>(5)? != 0,
+                    added_at: row
+                        .get::<_, String>(6)?
+                        .parse()
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    last_scanned: row
+                        .get::<_, Option<String>>(7)?
+                        .and_then(|s| s.parse().ok()),
+                    cache_path: row.get(8)?,
+                    cached_at: row
+                        .get::<_, Option<String>>(9)?
+                        .and_then(|s| s.parse().ok()),
+                    cached_commit_sha: row.get(10)?,
+                })
             })
-        }).optional()?;
+            .optional()?;
 
         Ok(repo)
     }
@@ -669,14 +694,12 @@ impl Database {
     /// 获取所有未扫描的仓库ID列表
     pub fn get_unscanned_repositories(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id FROM repositories WHERE last_scanned IS NULL AND enabled = 1"
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id FROM repositories WHERE last_scanned IS NULL AND enabled = 1")?;
 
-        let repo_ids = stmt.query_map([], |row| {
-            Ok(row.get(0)?)
-        })?
-        .collect::<std::result::Result<Vec<String>, _>>()?;
+        let repo_ids = stmt
+            .query_map([], |row| Ok(row.get(0)?))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
 
         Ok(repo_ids)
     }

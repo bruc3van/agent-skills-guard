@@ -8,21 +8,21 @@ pub struct SecurityReport {
     pub level: SecurityLevel,
     pub issues: Vec<SecurityIssue>,
     pub recommendations: Vec<String>,
-    pub blocked: bool,  // 是否被硬触发规则阻止安装
-    pub hard_trigger_issues: Vec<String>,  // 触发的硬阻止规则列表
-    pub scanned_files: Vec<String>,  // 已扫描的文件列表
-    pub partial_scan: bool,  // 是否存在未完整扫描
-    pub skipped_files: Vec<String>,  // 跳过扫描的文件列表
+    pub blocked: bool,                    // 是否被硬触发规则阻止安装
+    pub hard_trigger_issues: Vec<String>, // 触发的硬阻止规则列表
+    pub scanned_files: Vec<String>,       // 已扫描的文件列表
+    pub partial_scan: bool,               // 是否存在未完整扫描
+    pub skipped_files: Vec<String>,       // 跳过扫描的文件列表
 }
 
 /// 安全等级
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SecurityLevel {
-    Safe,      // 90-100
-    Low,       // 70-89
-    Medium,    // 50-69
-    High,      // 30-49
-    Critical,  // 0-29
+    Safe,     // 90-100
+    Low,      // 70-89
+    Medium,   // 50-69
+    High,     // 30-49
+    Critical, // 0-29
 }
 
 impl SecurityLevel {
@@ -55,7 +55,7 @@ pub struct SecurityIssue {
     pub description: String,
     pub line_number: Option<usize>,
     pub code_snippet: Option<String>,
-    pub file_path: Option<String>,  // 记录哪个文件有风险
+    pub file_path: Option<String>, // 记录哪个文件有风险
 }
 
 /// 问题严重程度
@@ -70,12 +70,12 @@ pub enum IssueSeverity {
 /// 问题分类
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IssueCategory {
-    FileSystem,         // 文件系统操作
-    Network,            // 网络请求
-    ProcessExecution,   // 进程执行
-    DataExfiltration,   // 数据泄露风险
-    DangerousFunction,  // 危险函数调用
-    ObfuscatedCode,     // 代码混淆
+    FileSystem,        // 文件系统操作
+    Network,           // 网络请求
+    ProcessExecution,  // 进程执行
+    DataExfiltration,  // 数据泄露风险
+    DangerousFunction, // 危险函数调用
+    ObfuscatedCode,    // 代码混淆
     Other,
 }
 
