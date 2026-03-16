@@ -31,6 +31,7 @@ import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
+import { normalizeInstalledSkills } from "@/lib/installed-skills";
 import { countIssuesBySeverity, groupIssuesBySignature } from "@/lib/security-utils";
 import {
   AlertDialog,
@@ -501,69 +502,10 @@ export function InstalledSkillsPage() {
     }
   };
 
-  const mergedSkills = useMemo(() => {
-    if (!installedSkills) return [];
-    const skillMap = new Map<string, Skill>();
-    installedSkills.forEach((skill) => {
-      const key = skill.name;
-      if (skillMap.has(key)) {
-        const existing = skillMap.get(key)!;
-        const existingPaths = existing.local_paths || [];
-        const newPaths = skill.local_paths || [];
-        const allPaths = Array.from(new Set([...existingPaths, ...newPaths]));
-        skillMap.set(key, {
-          ...existing,
-          local_paths: allPaths,
-          repository_url:
-            existing.repository_url === "local" ? skill.repository_url : existing.repository_url,
-          repository_owner:
-            existing.repository_owner === "local"
-              ? skill.repository_owner
-              : existing.repository_owner,
-        });
-      } else {
-        skillMap.set(key, { ...skill });
-      }
-    });
-    return Array.from(skillMap.values());
-  }, [installedSkills]);
-
-  const installedSkillsByName = useMemo(() => {
-    const map = new Map<string, Skill[]>();
-    if (!installedSkills) return map;
-    installedSkills.forEach((skill) => {
-      const key = skill.name;
-      const list = map.get(key);
-      if (list) {
-        list.push(skill);
-      } else {
-        map.set(key, [skill]);
-      }
-    });
-    return map;
-  }, [installedSkills]);
-
-  const installedSkillPathOwners = useMemo(() => {
-    const map = new Map<string, Map<string, string>>();
-    if (!installedSkills) return map;
-    installedSkills.forEach((skill) => {
-      const key = skill.name;
-      const pathMap = map.get(key) ?? new Map<string, string>();
-      const paths =
-        skill.local_paths && skill.local_paths.length > 0
-          ? skill.local_paths
-          : skill.local_path
-            ? [skill.local_path]
-            : [];
-      paths.forEach((path) => {
-        if (!pathMap.has(path)) {
-          pathMap.set(path, skill.id);
-        }
-      });
-      map.set(key, pathMap);
-    });
-    return map;
-  }, [installedSkills]);
+  const normalizedInstalledSkills = useMemo(
+    () => normalizeInstalledSkills(installedSkills ?? []),
+    [installedSkills]
+  );
 
   const { data: skillPluginUpgradeCandidates = [] } = useQuery<SkillPluginUpgradeCandidate[]>({
     queryKey: ["skillPluginUpgradeCandidates"],
@@ -638,12 +580,12 @@ export function InstalledSkillsPage() {
 
   const tabCounts = useMemo(
     () => ({
-      all: mergedSkills.length + installedPlugins.length + installedMarketplaces.length,
-      skills: mergedSkills.length,
+      all: normalizedInstalledSkills.length + installedPlugins.length + installedMarketplaces.length,
+      skills: normalizedInstalledSkills.length,
       plugins: installedPlugins.length,
       marketplaces: installedMarketplaces.length,
     }),
-    [installedMarketplaces.length, installedPlugins.length, mergedSkills.length]
+    [installedMarketplaces.length, installedPlugins.length, normalizedInstalledSkills.length]
   );
 
   const repositoryOptions: CyberSelectOption[] = useMemo(() => {
@@ -651,11 +593,13 @@ export function InstalledSkillsPage() {
 
     const items =
       activeTab === "skills"
-        ? mergedSkills.map((skill) => ({ owner: skill.repository_owner || "unknown" }))
+        ? normalizedInstalledSkills.map((skill) => ({ owner: skill.repository_owner || "unknown" }))
         : activeTab === "plugins"
           ? installedPlugins.map((plugin) => ({ owner: plugin.repository_owner || "unknown" }))
           : [
-              ...mergedSkills.map((skill) => ({ owner: skill.repository_owner || "unknown" })),
+              ...normalizedInstalledSkills.map((skill) => ({
+                owner: skill.repository_owner || "unknown",
+              })),
               ...installedPlugins.map((plugin) => ({
                 owner: plugin.repository_owner || "unknown",
               })),
@@ -688,10 +632,10 @@ export function InstalledSkillsPage() {
         label: `${repo.displayName} (${repo.count})`,
       })),
     ];
-  }, [activeTab, installedPlugins, installedMarketplaces, mergedSkills, i18n.language, t]);
+  }, [activeTab, installedPlugins, installedMarketplaces, normalizedInstalledSkills, i18n.language, t]);
 
   const filteredSkills = useMemo(() => {
-    let items = mergedSkills;
+    let items = normalizedInstalledSkills;
 
     if (selectedRepository !== "all") {
       items = items.filter((skill) => (skill.repository_owner || "unknown") === selectedRepository);
@@ -717,7 +661,7 @@ export function InstalledSkillsPage() {
     }
 
     return items;
-  }, [mergedSkills, searchQuery, selectedRepository]);
+  }, [normalizedInstalledSkills, searchQuery, selectedRepository]);
 
   const filteredPlugins = useMemo(() => {
     let items = installedPlugins;
@@ -769,7 +713,7 @@ export function InstalledSkillsPage() {
 
   const filteredAllItems = useMemo<InstalledEntry[]>(() => {
     const items: InstalledEntry[] = [
-      ...mergedSkills.map((skill): InstalledEntry => ({ kind: "skill", item: skill })),
+      ...normalizedInstalledSkills.map((skill): InstalledEntry => ({ kind: "skill", item: skill })),
       ...installedPlugins.map((plugin): InstalledEntry => ({ kind: "plugin", item: plugin })),
       ...installedMarketplaces.map((marketplace): InstalledEntry => ({
         kind: "marketplace",
@@ -826,18 +770,13 @@ export function InstalledSkillsPage() {
     installedMarketplaces,
     installedPlugins,
     marketplaceDescriptions,
-    mergedSkills,
+    normalizedInstalledSkills,
     searchQuery,
     selectedRepository,
   ]);
 
   const renderSkillCard = (skill: Skill, index: number) => {
     const upgradeCandidate = skillPluginUpgradeByName.get(skill.name.toLowerCase());
-    const skillEntries = installedSkillsByName.get(skill.name);
-    const uninstallSkillIds =
-      skillEntries && skillEntries.length > 0 ? skillEntries.map((entry) => entry.id) : [skill.id];
-    const uniqueUninstallSkillIds = Array.from(new Set(uninstallSkillIds));
-    const pathOwners = installedSkillPathOwners.get(skill.name);
     return (
       <SkillCard
         key={`skill-${skill.id}`}
@@ -851,12 +790,10 @@ export function InstalledSkillsPage() {
           setInstalledOps((prev) => ({ ...prev, uninstallingSkillId: skill.id }));
           const errors: string[] = [];
           try {
-            for (const skillId of uniqueUninstallSkillIds) {
-              try {
-                await uninstallMutation.mutateAsync(skillId);
-              } catch (error: any) {
-                errors.push(error?.message || String(error));
-              }
+            try {
+              await uninstallMutation.mutateAsync(skill.id);
+            } catch (error: any) {
+              errors.push(error?.message || String(error));
             }
           } finally {
             setInstalledOps((prev) => ({ ...prev, uninstallingSkillId: null }));
@@ -868,9 +805,8 @@ export function InstalledSkillsPage() {
           }
         }}
         onUninstallPath={(path: string) => {
-          const targetSkillId = pathOwners?.get(path) ?? skill.id;
           uninstallPathMutation.mutate(
-            { skillId: targetSkillId, path },
+            { skillId: skill.id, path },
             {
               onSuccess: () => appToast.success(t("skills.toast.uninstalled")),
               onError: (error: any) =>

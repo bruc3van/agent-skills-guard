@@ -3,7 +3,7 @@ use crate::security::{ScanOptions, SecurityScanner};
 use crate::services::{Database, GitHubService};
 use anyhow::{Context, Result};
 use chrono::Utc;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub struct SkillManager {
@@ -29,6 +29,73 @@ impl SkillManager {
     fn get_skills_directory() -> PathBuf {
         let home = dirs::home_dir().expect("Failed to get home directory");
         home.join(".claude").join("skills")
+    }
+
+    fn create_temp_install_dir(
+        &self,
+        install_base_dir: &Path,
+        skill_folder_name: &str,
+    ) -> Result<PathBuf> {
+        let temp_dir = install_base_dir.join(format!(
+            ".{}.tmp-{}",
+            skill_folder_name,
+            uuid::Uuid::new_v4()
+        ));
+        if temp_dir.exists() {
+            std::fs::remove_dir_all(&temp_dir)
+                .context("无法清理旧的临时安装目录，请检查文件权限")?;
+        }
+        std::fs::create_dir_all(&temp_dir).context("无法创建临时安装目录，请检查磁盘权限")?;
+        Ok(temp_dir)
+    }
+
+    fn replace_installation_directory(
+        &self,
+        prepared_dir: &Path,
+        final_install_dir: &Path,
+    ) -> Result<()> {
+        let mut backup_dir = None;
+
+        if final_install_dir.exists() {
+            let file_name = final_install_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .context("无效的技能目录名")?;
+            let parent = final_install_dir.parent().context("无效的安装目录")?;
+            let backup_path =
+                parent.join(format!(".{}.backup-{}", file_name, uuid::Uuid::new_v4()));
+
+            rename_with_retry(final_install_dir, &backup_path).with_context(|| {
+                format!("无法备份现有技能目录，请关闭占用该目录的程序: {:?}", final_install_dir)
+            })?;
+            backup_dir = Some(backup_path);
+        }
+
+        match rename_with_retry(prepared_dir, final_install_dir) {
+            Ok(()) => {
+                if let Some(backup_path) = backup_dir {
+                    if let Err(error) = std::fs::remove_dir_all(&backup_path) {
+                        log::warn!("清理安装备份目录失败: {:?}, 错误: {}", backup_path, error);
+                    }
+                }
+                Ok(())
+            }
+            Err(error) => {
+                if final_install_dir.exists() {
+                    let _ = std::fs::remove_dir_all(final_install_dir);
+                }
+                if let Some(backup_path) = backup_dir {
+                    let _ = rename_with_retry(&backup_path, final_install_dir);
+                }
+                if prepared_dir.exists() {
+                    let _ = std::fs::remove_dir_all(prepared_dir);
+                }
+                Err(anyhow::anyhow!(format!(
+                    "无法替换技能目录: {:?} -> {:?}, 错误: {}",
+                    prepared_dir, final_install_dir, error
+                )))
+            }
+        }
     }
 
     /// 下载并分析 skill，返回文件内容和安全报告
@@ -143,14 +210,7 @@ impl SkillManager {
         };
 
         let skill_dir = install_base_dir.join(&skill_folder_name);
-
-        // 如果目标目录已存在，先清理（避免旧文件冲突）
-        if skill_dir.exists() {
-            log::info!("目标目录已存在，先清理: {:?}", skill_dir);
-            std::fs::remove_dir_all(&skill_dir).context("无法清理现有技能目录")?;
-        }
-
-        std::fs::create_dir_all(&skill_dir).context("无法创建技能子目录，请检查磁盘空间和权限")?;
+        let prepared_dir = self.create_temp_install_dir(&install_base_dir, &skill_folder_name)?;
 
         // 优先从本地缓存复制文件
         if let Some(cache_path) = &repo.cache_path {
@@ -181,25 +241,25 @@ impl SkillManager {
                     log::info!("从本地缓存复制文件: {:?}", cached_skill_dir);
 
                     // 复制整个目录
-                    self.copy_directory(&cached_skill_dir, &skill_dir)
+                    self.copy_directory(&cached_skill_dir, &prepared_dir)
                         .context("从缓存复制文件失败")?;
 
                     log::info!("成功从本地缓存安装技能");
                 } else {
                     log::warn!("缓存中未找到技能目录，降级使用网络下载");
-                    self.install_from_network(&skill, &skill_dir).await?;
+                    self.install_from_network(&skill, &prepared_dir).await?;
                 }
             } else {
                 log::warn!("缓存目录格式异常，降级使用网络下载");
-                self.install_from_network(&skill, &skill_dir).await?;
+                self.install_from_network(&skill, &prepared_dir).await?;
             }
         } else {
             log::info!("仓库未缓存，使用网络下载");
-            self.install_from_network(&skill, &skill_dir).await?;
+            self.install_from_network(&skill, &prepared_dir).await?;
         }
 
         // 从缓存读取 SKILL.md 进行元数据提取
-        let skill_md_path = skill_dir.join("SKILL.md");
+        let skill_md_path = prepared_dir.join("SKILL.md");
         if skill_md_path.exists() {
             let skill_md_content =
                 std::fs::read_to_string(&skill_md_path).context("读取 SKILL.md 失败")?;
@@ -214,7 +274,7 @@ impl SkillManager {
 
         // 扫描整个技能目录
         let scan_report = self.scanner.scan_directory_with_options(
-            skill_dir.to_str().context("技能目录路径无效")?,
+            prepared_dir.to_str().context("技能目录路径无效")?,
             &skill.id,
             "zh",
             ScanOptions { skip_readme: true },
@@ -230,8 +290,8 @@ impl SkillManager {
         // 检查是否被 hard_trigger 阻止
         if scan_report.blocked {
             // 先删除已下载的文件
-            if skill_dir.exists() {
-                std::fs::remove_dir_all(&skill_dir)?;
+            if prepared_dir.exists() {
+                std::fs::remove_dir_all(&prepared_dir)?;
             }
 
             let mut error_msg =
@@ -242,6 +302,8 @@ impl SkillManager {
             error_msg.push_str("\n这些操作可能对您的系统造成严重危害，强烈建议不要安装此技能。");
             anyhow::bail!(error_msg);
         }
+
+        self.replace_installation_directory(&prepared_dir, &skill_dir)?;
 
         // 注释掉评分检查，允许用户在前端确认后安装低分技能
         // 只有硬触发的技能会被后端强制阻止
@@ -546,27 +608,24 @@ impl SkillManager {
         // 确保目标基础目录存在
         std::fs::create_dir_all(&install_base_dir).context("无法创建目标目录")?;
 
-        // 如果目标目录已存在，先删除
-        if final_install_dir.exists() {
-            std::fs::remove_dir_all(&final_install_dir).context("无法删除已存在的目标目录")?;
-        }
-
-        // 创建目标目录
-        std::fs::create_dir_all(&final_install_dir).context("无法创建最终安装目录")?;
+        let skill_dir_name = skill_dir_name.to_string_lossy().to_string();
+        let prepared_dir = self.create_temp_install_dir(&install_base_dir, &skill_dir_name)?;
 
         // 从缓存复制到目标路径
         log::info!(
             "Copying skill from cache {:?} to {:?}",
             cache_dir,
-            final_install_dir
+            prepared_dir
         );
         let mut files_copied = 0;
-        self.copy_dir_recursive(&cache_dir, &final_install_dir, &mut files_copied)?;
+        self.copy_dir_recursive(&cache_dir, &prepared_dir, &mut files_copied)?;
 
         log::info!(
             "Copied {} files from cache to install directory",
             files_copied
         );
+
+        self.replace_installation_directory(&prepared_dir, &final_install_dir)?;
 
         // 更新安装路径
         let install_path_str = final_install_dir.to_string_lossy().to_string();
@@ -1254,7 +1313,6 @@ impl SkillManager {
     /// 确认技能更新：从 staging 写入到安装目录，并在缓存目录保留备份
     pub fn confirm_skill_update(&self, skill_id: &str, force_overwrite: bool) -> Result<()> {
         use anyhow::Context;
-        use std::{io, thread, time::Duration};
 
         log::info!("Confirming update for skill: {}", skill_id);
 
@@ -1286,47 +1344,18 @@ impl SkillManager {
             anyhow::bail!("技能没有有效的安装路径");
         }
 
-        // 使用第一个路径作为目标（通常只有一个）
-        let target_install_dir = PathBuf::from(&install_paths[0]);
+        // 始终以当前活跃安装路径（local_path / local_paths 最后一个）为更新目标
+        let target_install_dir = skill
+            .local_paths
+            .as_ref()
+            .and_then(|paths| paths.last())
+            .map(PathBuf::from)
+            .context("技能没有有效的活跃安装路径")?;
 
         #[derive(Debug)]
         enum BackupDir {
             Renamed(PathBuf),
             Copied(PathBuf),
-        }
-
-        fn is_retryable_rename_error(err: &io::Error) -> bool {
-            if err.kind() == io::ErrorKind::PermissionDenied {
-                return true;
-            }
-
-            matches!(err.raw_os_error(), Some(5 | 32 | 33))
-        }
-
-        fn rename_with_retry(from: &PathBuf, to: &PathBuf) -> io::Result<()> {
-            let mut last_err: Option<io::Error> = None;
-            let attempts = 6usize;
-            let delay = Duration::from_millis(250);
-
-            for attempt in 0..attempts {
-                match std::fs::rename(from, to) {
-                    Ok(()) => return Ok(()),
-                    Err(err) => {
-                        let retryable = is_retryable_rename_error(&err);
-                        let is_last = attempt + 1 >= attempts;
-                        last_err = Some(err);
-                        if retryable && !is_last {
-                            thread::sleep(delay);
-                            continue;
-                        }
-                        break;
-                    }
-                }
-            }
-
-            Err(last_err.unwrap_or_else(|| {
-                io::Error::new(io::ErrorKind::Other, "rename_with_retry failed")
-            }))
         }
 
         // 创建备份（如果目录存在）：优先移动到缓存目录；若移动失败则复制到缓存目录
@@ -1601,8 +1630,8 @@ impl SkillManager {
 
         // 恢复数据库中的 local_path
         if let Some(local_paths) = &skill.local_paths {
-            if !local_paths.is_empty() {
-                skill.local_path = Some(local_paths[0].clone());
+            if let Some(last_path) = local_paths.last() {
+                skill.local_path = Some(last_path.clone());
             } else {
                 skill.local_path = None;
             }
@@ -1678,4 +1707,36 @@ impl SkillManager {
         log::info!("目录复制完成: {:?}", dst);
         Ok(())
     }
+}
+
+fn is_retryable_rename_error(err: &std::io::Error) -> bool {
+    if err.kind() == std::io::ErrorKind::PermissionDenied {
+        return true;
+    }
+
+    matches!(err.raw_os_error(), Some(5 | 32 | 33))
+}
+
+fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut last_err: Option<std::io::Error> = None;
+    let attempts = 6usize;
+    let delay = std::time::Duration::from_millis(250);
+
+    for attempt in 0..attempts {
+        match std::fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                let retryable = is_retryable_rename_error(&err);
+                let is_last = attempt + 1 >= attempts;
+                last_err = Some(err);
+                if retryable && !is_last {
+                    std::thread::sleep(delay);
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| std::io::Error::other("rename_with_retry failed")))
 }

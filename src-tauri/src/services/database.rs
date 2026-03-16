@@ -1,6 +1,6 @@
 use crate::models::{Plugin, Repository, Skill};
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -486,6 +486,27 @@ impl Database {
             params![skill_id],
         )?;
         Ok(())
+    }
+
+    /// 按 ID 批量删除 skill 记录
+    pub fn delete_skills_by_ids(&self, skill_ids: &[String]) -> Result<usize> {
+        if skill_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.conn.lock().unwrap();
+        let placeholders = (0..skill_ids.len())
+            .map(|index| format!("?{}", index + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!("DELETE FROM skills WHERE id IN ({})", placeholders);
+
+        let deleted_count = conn.execute(
+            &sql,
+            params_from_iter(skill_ids.iter().map(|skill_id| skill_id.as_str())),
+        )?;
+
+        Ok(deleted_count)
     }
 
     /// 删除 plugin 记录

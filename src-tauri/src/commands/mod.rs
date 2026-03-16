@@ -4,6 +4,7 @@ pub mod security;
 
 use crate::models::{FeaturedRepositoriesConfig, Repository, Skill};
 use crate::services::{Database, GitHubService, PluginManager, SkillManager};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::Manager;
@@ -15,6 +16,36 @@ pub struct AppState {
     pub skill_manager: Arc<Mutex<SkillManager>>,
     pub plugin_manager: Arc<Mutex<PluginManager>>,
     pub github: Arc<GitHubService>,
+}
+
+fn merge_scanned_skill(existing: Option<&Skill>, scanned: Skill) -> Skill {
+    let Some(existing) = existing else {
+        return scanned;
+    };
+
+    let mut merged = scanned;
+    merged.version = existing.version.clone();
+    merged.author = existing.author.clone();
+    merged.installed = existing.installed;
+    merged.installed_at = existing.installed_at;
+    merged.local_path = existing.local_path.clone();
+    merged.local_paths = existing.local_paths.clone();
+    merged.security_score = existing.security_score;
+    merged.security_issues = existing.security_issues.clone();
+    merged.security_level = existing.security_level.clone();
+    merged.scanned_at = existing.scanned_at;
+    merged.installed_commit_sha = existing.installed_commit_sha.clone();
+    merged
+}
+
+fn collect_stale_uninstalled_skill_ids(existing_skills: &[Skill], fresh_skills: &[Skill]) -> Vec<String> {
+    let fresh_ids: HashSet<&str> = fresh_skills.iter().map(|skill| skill.id.as_str()).collect();
+
+    existing_skills
+        .iter()
+        .filter(|skill| !skill.installed && !fresh_ids.contains(skill.id.as_str()))
+        .map(|skill| skill.id.clone())
+        .collect()
 }
 
 /// 添加仓库
@@ -179,15 +210,47 @@ pub async fn scan_repository(
         .scan_cached_repository(&cache_path_for_scan, &repo.url, repo.scan_subdirs)
         .map_err(|e| format!("扫描缓存失败: {}", e))?;
 
-    // 保存到数据库
-    for skill in &skills {
-        // 验证 file_path 不为空（注意："." 表示根目录，是有效路径）
-        if skill.file_path.trim().is_empty() {
-            log::warn!("跳过无效技能记录：名称={}, 路径为空", skill.name);
-            continue;
-        }
+    let existing_repo_skills: Vec<Skill> = state
+        .db
+        .get_skills()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|skill| skill.repository_url == repo.url)
+        .collect();
+    let existing_by_id: HashMap<String, Skill> = existing_repo_skills
+        .iter()
+        .cloned()
+        .map(|skill| (skill.id.clone(), skill))
+        .collect();
+    let merged_skills: Vec<Skill> = skills
+        .into_iter()
+        .filter(|skill| {
+            if skill.file_path.trim().is_empty() {
+                log::warn!("跳过无效技能记录：名称={}, 路径为空", skill.name);
+                false
+            } else {
+                true
+            }
+        })
+        .map(|skill| merge_scanned_skill(existing_by_id.get(&skill.id), skill))
+        .collect();
 
+    // 保存到数据库
+    for skill in &merged_skills {
         state.db.save_skill(skill).map_err(|e| e.to_string())?;
+    }
+
+    let stale_skill_ids = collect_stale_uninstalled_skill_ids(&existing_repo_skills, &merged_skills);
+    if !stale_skill_ids.is_empty() {
+        let deleted_count = state
+            .db
+            .delete_skills_by_ids(&stale_skill_ids)
+            .map_err(|e| e.to_string())?;
+        log::info!(
+            "清理仓库 {} 的 {} 个已失效未安装技能",
+            repo.name,
+            deleted_count
+        );
     }
 
     let deleted_plugins_count = state
@@ -202,7 +265,85 @@ pub async fn scan_repository(
         );
     }
 
-    Ok(skills)
+    Ok(merged_skills)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_scanned_skill_preserves_install_state_and_security_metadata() {
+        let mut existing = Skill::new(
+            "Original".to_string(),
+            "https://github.com/example/repo".to_string(),
+            "skill-a".to_string(),
+        );
+        existing.description = Some("existing description".to_string());
+        existing.installed = true;
+        existing.installed_at = Some(chrono::Utc::now());
+        existing.local_path = Some("/tmp/skill-a".to_string());
+        existing.local_paths = Some(vec!["/tmp/skill-a".to_string(), "/tmp/skill-b".to_string()]);
+        existing.security_score = Some(88);
+        existing.security_level = Some("Low".to_string());
+        existing.security_issues = Some(vec!["Warning: existing".to_string()]);
+        existing.installed_commit_sha = Some("abc1234".to_string());
+        existing.version = Some("1.0.0".to_string());
+        existing.author = Some("Bruce".to_string());
+
+        let mut scanned = Skill::new(
+            "Updated".to_string(),
+            "https://github.com/example/repo".to_string(),
+            "skill-a".to_string(),
+        );
+        scanned.description = Some("new description".to_string());
+        scanned.checksum = Some("new-checksum".to_string());
+
+        let merged = merge_scanned_skill(Some(&existing), scanned);
+
+        assert_eq!(merged.name, "Updated");
+        assert_eq!(merged.description.as_deref(), Some("new description"));
+        assert_eq!(merged.checksum.as_deref(), Some("new-checksum"));
+        assert!(merged.installed);
+        assert_eq!(merged.local_path.as_deref(), Some("/tmp/skill-a"));
+        assert_eq!(
+            merged.local_paths,
+            Some(vec!["/tmp/skill-a".to_string(), "/tmp/skill-b".to_string()])
+        );
+        assert_eq!(merged.security_score, Some(88));
+        assert_eq!(merged.security_level.as_deref(), Some("Low"));
+        assert_eq!(merged.installed_commit_sha.as_deref(), Some("abc1234"));
+        assert_eq!(merged.version.as_deref(), Some("1.0.0"));
+        assert_eq!(merged.author.as_deref(), Some("Bruce"));
+    }
+
+    #[test]
+    fn collect_stale_uninstalled_skill_ids_only_returns_missing_uninstalled_records() {
+        let mut installed = Skill::new(
+            "Installed".to_string(),
+            "https://github.com/example/repo".to_string(),
+            "installed".to_string(),
+        );
+        installed.installed = true;
+
+        let stale = Skill::new(
+            "Stale".to_string(),
+            "https://github.com/example/repo".to_string(),
+            "stale".to_string(),
+        );
+        let fresh = Skill::new(
+            "Fresh".to_string(),
+            "https://github.com/example/repo".to_string(),
+            "fresh".to_string(),
+        );
+
+        let stale_ids = collect_stale_uninstalled_skill_ids(
+            &[installed.clone(), stale.clone(), fresh.clone()],
+            &[installed, fresh],
+        );
+
+        assert_eq!(stale_ids, vec![stale.id]);
+    }
 }
 
 /// 获取所有 skills
