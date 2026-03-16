@@ -53,12 +53,16 @@ fn merge_scanned_skill(existing: Option<&Skill>, scanned: Skill) -> Skill {
     merged.security_score = existing.security_score;
     merged.security_issues = existing.security_issues.clone();
     merged.security_level = existing.security_level.clone();
+    merged.security_report = existing.security_report.clone();
     merged.scanned_at = existing.scanned_at;
     merged.installed_commit_sha = existing.installed_commit_sha.clone();
     merged
 }
 
-fn collect_stale_uninstalled_skill_ids(existing_skills: &[Skill], fresh_skills: &[Skill]) -> Vec<String> {
+fn collect_stale_uninstalled_skill_ids(
+    existing_skills: &[Skill],
+    fresh_skills: &[Skill],
+) -> Vec<String> {
     let fresh_ids: HashSet<&str> = fresh_skills.iter().map(|skill| skill.id.as_str()).collect();
 
     existing_skills
@@ -260,7 +264,8 @@ pub async fn scan_repository(
         state.db.save_skill(skill).map_err(|e| e.to_string())?;
     }
 
-    let stale_skill_ids = collect_stale_uninstalled_skill_ids(&existing_repo_skills, &merged_skills);
+    let stale_skill_ids =
+        collect_stale_uninstalled_skill_ids(&existing_repo_skills, &merged_skills);
     if !stale_skill_ids.is_empty() {
         let deleted_count = state
             .db
@@ -314,6 +319,18 @@ mod tests {
             code_snippet: None,
             file_path: None,
         }]);
+        existing.security_report = Some(crate::models::security::SecurityReport {
+            skill_id: existing.id.clone(),
+            score: 88,
+            level: crate::models::security::SecurityLevel::Low,
+            issues: existing.security_issues.clone().unwrap_or_default(),
+            recommendations: vec![],
+            blocked: false,
+            hard_trigger_issues: vec![],
+            scanned_files: vec![],
+            partial_scan: false,
+            skipped_files: vec![],
+        });
         existing.installed_commit_sha = Some("abc1234".to_string());
         existing.version = Some("1.0.0".to_string());
         existing.author = Some("Bruce".to_string());
@@ -339,6 +356,7 @@ mod tests {
         );
         assert_eq!(merged.security_score, Some(88));
         assert_eq!(merged.security_level.as_deref(), Some("Low"));
+        assert!(merged.security_report.is_some());
         assert_eq!(merged.installed_commit_sha.as_deref(), Some("abc1234"));
         assert_eq!(merged.version.as_deref(), Some("1.0.0"));
         assert_eq!(merged.author.as_deref(), Some("Bruce"));
@@ -692,18 +710,25 @@ pub struct ClearAllCachesResult {
 
 /// 打开技能目录
 #[tauri::command]
-pub async fn open_skill_directory(state: State<'_, AppState>, local_path: String) -> Result<(), String> {
+pub async fn open_skill_directory(
+    state: State<'_, AppState>,
+    local_path: String,
+) -> Result<(), String> {
     use std::process::Command;
 
     let path = std::path::Path::new(&local_path);
 
     // 验证路径是否存在且为目录
     if !path.exists() || !path.is_dir() {
-        return Err(format!("Path does not exist or is not a directory: {}", local_path));
+        return Err(format!(
+            "Path does not exist or is not a directory: {}",
+            local_path
+        ));
     }
 
     // 规范化路径，防止路径遍历
-    let canonical = path.canonicalize()
+    let canonical = path
+        .canonicalize()
         .map_err(|e| format!("Failed to resolve path: {}", e))?;
 
     // 验证路径在允许的范围内（技能安装目录或缓存目录）
@@ -738,7 +763,9 @@ pub async fn open_skill_directory(state: State<'_, AppState>, local_path: String
             }
         }
 
-        allowed_paths.iter().any(|allowed| canonical.starts_with(allowed))
+        allowed_paths
+            .iter()
+            .any(|allowed| canonical.starts_with(allowed))
     };
 
     if !allowed {

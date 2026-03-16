@@ -288,6 +288,7 @@ pub async fn scan_all_installed_plugins(
                 updated.security_score = Some(report.score);
                 updated.security_level = Some(report.level.as_str().to_string());
                 updated.security_issues = Some(report.issues.clone());
+                updated.security_report = Some(report.clone());
                 updated.scanned_at = Some(Utc::now());
 
                 if let Err(e) = db.save_plugin(&updated) {
@@ -383,9 +384,8 @@ pub async fn scan_installed_plugin(
 
     plugin.security_score = Some(report.score);
     plugin.security_level = Some(report.level.as_str().to_string());
-    plugin.security_issues = Some(
-        report.issues.clone(),
-    );
+    plugin.security_issues = Some(report.issues.clone());
+    plugin.security_report = Some(report.clone());
     plugin.scanned_at = Some(Utc::now());
 
     state

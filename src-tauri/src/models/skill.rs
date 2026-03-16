@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::models::security::SecurityIssue;
+use crate::models::security::{SecurityIssue, SecurityReport};
 
 /// Skill 信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +22,7 @@ pub struct Skill {
     pub security_score: Option<i32>,
     pub security_issues: Option<Vec<SecurityIssue>>,
     pub security_level: Option<String>, // 安全等级：Safe/Low/Medium/High/Critical
+    pub security_report: Option<SecurityReport>, // 完整扫描报告
     pub scanned_at: Option<DateTime<Utc>>, // 扫描时间戳
     pub installed_commit_sha: Option<String>, // 安装时对应的仓库 commit SHA
 }
@@ -48,6 +49,7 @@ impl Skill {
             security_score: None,
             security_issues: None,
             security_level: None,
+            security_report: None,
             scanned_at: None,
             installed_commit_sha: None,
         }

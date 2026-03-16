@@ -1,4 +1,4 @@
-import type { SecurityIssue } from "./security";
+import type { SecurityIssue, SecurityReport } from "./security";
 
 export type TabType = "overview" | "marketplace" | "installed" | "repositories" | "settings";
 
@@ -39,6 +39,7 @@ export interface Skill {
   checksum?: string;
   security_score?: number;
   security_issues?: SecurityIssue[];
+  security_report?: SecurityReport;
   installed_commit_sha?: string; // 安装时的 commit SHA，用于版本追踪
 }
 
@@ -66,6 +67,7 @@ export interface Plugin {
   security_score?: number;
   security_issues?: SecurityIssue[];
   security_level?: string;
+  security_report?: SecurityReport;
   scanned_at?: string;
   staging_path?: string;
   install_log?: string;

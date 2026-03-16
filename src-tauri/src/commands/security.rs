@@ -66,6 +66,7 @@ pub async fn scan_all_installed_skills(
                 updated.security_score = Some(report.score);
                 updated.security_level = Some(report.level.as_str().to_string());
                 updated.security_issues = Some(report.issues.clone());
+                updated.security_report = Some(report.clone());
                 updated.scanned_at = Some(chrono::Utc::now());
 
                 if let Err(e) = db.save_skill(&updated) {
@@ -157,6 +158,7 @@ pub async fn scan_installed_skill(
     skill.security_score = Some(report.score);
     skill.security_level = Some(report.level.as_str().to_string());
     skill.security_issues = Some(report.issues.clone());
+    skill.security_report = Some(report.clone());
     skill.scanned_at = Some(chrono::Utc::now());
 
     state
@@ -204,20 +206,22 @@ pub async fn get_scan_results(state: State<'_, AppState>) -> Result<Vec<SkillSca
         .into_iter()
         .filter(|s| s.installed && s.security_score.is_some())
         .map(|s| {
-            let issues = s.security_issues.clone().unwrap_or_default();
-
-            let report = SecurityReport {
+            let report = s.security_report.clone().unwrap_or_else(|| SecurityReport {
                 skill_id: s.id.clone(),
                 score: s.security_score.unwrap_or(0),
-                level: SecurityLevel::from_score(s.security_score.unwrap_or(0)),
-                issues,
+                level: s
+                    .security_level
+                    .as_deref()
+                    .and_then(|level| level.parse().ok())
+                    .unwrap_or_else(|| SecurityLevel::from_score(s.security_score.unwrap_or(0))),
+                issues: s.security_issues.clone().unwrap_or_default(),
                 recommendations: vec![],
                 blocked: false,
                 hard_trigger_issues: vec![],
                 scanned_files: vec![],
                 partial_scan: false,
                 skipped_files: vec![],
-            };
+            });
 
             SkillScanResult {
                 skill_id: s.id.clone(),

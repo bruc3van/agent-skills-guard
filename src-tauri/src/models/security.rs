@@ -47,6 +47,21 @@ impl SecurityLevel {
     }
 }
 
+impl std::str::FromStr for SecurityLevel {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Safe" => Ok(SecurityLevel::Safe),
+            "Low" => Ok(SecurityLevel::Low),
+            "Medium" => Ok(SecurityLevel::Medium),
+            "High" => Ok(SecurityLevel::High),
+            "Critical" => Ok(SecurityLevel::Critical),
+            _ => Err(()),
+        }
+    }
+}
+
 /// 安全问题
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityIssue {

@@ -1,4 +1,4 @@
-use crate::models::security::SecurityIssue;
+use crate::models::security::{SecurityIssue, SecurityLevel, SecurityReport};
 use crate::models::{Plugin, Repository, Skill};
 use anyhow::{Context, Result};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
@@ -22,6 +22,37 @@ fn deserialize_security_issues(json_str: &str) -> Option<Vec<SecurityIssue>> {
     }
 
     None
+}
+
+fn deserialize_security_report(json_str: &str) -> Option<SecurityReport> {
+    serde_json::from_str::<SecurityReport>(json_str).ok()
+}
+
+fn build_legacy_security_report(
+    item_id: &str,
+    score: Option<i32>,
+    level: Option<&str>,
+    issues: Option<Vec<SecurityIssue>>,
+) -> Option<SecurityReport> {
+    let score = score?;
+    Some(SecurityReport {
+        skill_id: item_id.to_string(),
+        score,
+        level: level
+            .and_then(parse_security_level)
+            .unwrap_or_else(|| SecurityLevel::from_score(score)),
+        issues: issues.unwrap_or_default(),
+        recommendations: Vec::new(),
+        blocked: false,
+        hard_trigger_issues: Vec::new(),
+        scanned_files: Vec::new(),
+        partial_scan: false,
+        skipped_files: Vec::new(),
+    })
+}
+
+fn parse_security_level(level: &str) -> Option<SecurityLevel> {
+    level.parse().ok()
 }
 
 /// 解析旧格式的安全问题字符串："[filename] Severity: description"
@@ -167,7 +198,8 @@ impl Database {
                 local_path TEXT,
                 checksum TEXT,
                 security_score INTEGER,
-                security_issues TEXT
+                security_issues TEXT,
+                security_report TEXT
             )",
             [],
         )?;
@@ -197,6 +229,7 @@ impl Database {
                 security_score INTEGER,
                 security_issues TEXT,
                 security_level TEXT,
+                security_report TEXT,
                 scanned_at TEXT,
                 staging_path TEXT,
                 install_log TEXT,
@@ -242,14 +275,20 @@ impl Database {
             .map(|issues| serde_json::to_string(issues))
             .transpose()
             .context("Failed to serialize plugin security issues")?;
+        let security_report_json = plugin
+            .security_report
+            .as_ref()
+            .map(|report| serde_json::to_string(report))
+            .transpose()
+            .context("Failed to serialize plugin security report")?;
 
         conn.execute(
             "INSERT OR REPLACE INTO plugins
             (id, claude_id, name, description, version, installed_version, author, repository_url, repository_owner,
              marketplace_name, source, discovery_source, marketplace_add_command, plugin_install_command, installed,
              installed_at, claude_scope, claude_enabled, claude_install_path, claude_last_updated, security_score,
-             security_issues, security_level, scanned_at, staging_path, install_log, install_status)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
+             security_issues, security_level, security_report, scanned_at, staging_path, install_log, install_status)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
             params![
                 plugin.id,
                 plugin.claude_id,
@@ -274,6 +313,7 @@ impl Database {
                 plugin.security_score,
                 security_issues_json,
                 plugin.security_level,
+                security_report_json,
                 plugin.scanned_at.as_ref().map(|d| d.to_rfc3339()),
                 plugin.staging_path,
                 plugin.install_log,
@@ -390,6 +430,12 @@ impl Database {
             .map(|issues| serde_json::to_string(issues))
             .transpose()
             .context("Failed to serialize skill security issues")?;
+        let security_report_json = skill
+            .security_report
+            .as_ref()
+            .map(|report| serde_json::to_string(report))
+            .transpose()
+            .context("Failed to serialize skill security report")?;
 
         let local_paths_json = skill
             .local_paths
@@ -401,8 +447,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO skills
             (id, name, description, repository_url, repository_owner, file_path, version, author,
-             installed, installed_at, local_path, local_paths, checksum, security_score, security_issues, security_level, scanned_at, installed_commit_sha)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+             installed, installed_at, local_path, local_paths, checksum, security_score, security_issues, security_level, security_report, scanned_at, installed_commit_sha)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 skill.id,
                 skill.name,
@@ -420,6 +466,7 @@ impl Database {
                 skill.security_score,
                 security_issues_json,
                 skill.security_level,
+                security_report_json,
                 skill.scanned_at.as_ref().map(|d| d.to_rfc3339()),
                 skill.installed_commit_sha,
             ],
@@ -433,7 +480,7 @@ impl Database {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, name, description, repository_url, repository_owner, file_path, version, author,
-                    installed, installed_at, local_path, local_paths, checksum, security_score, security_issues, security_level, scanned_at, installed_commit_sha
+                    installed, installed_at, local_path, local_paths, checksum, security_score, security_issues, security_level, security_report, scanned_at, installed_commit_sha
              FROM skills"
         )?;
 
@@ -441,6 +488,18 @@ impl Database {
             .query_map([], |row| {
                 let security_issues: Option<String> = row.get(14)?;
                 let security_issues = security_issues.and_then(|s| deserialize_security_issues(&s));
+                let security_level: Option<String> = row.get(15)?;
+                let security_report: Option<String> = row.get(16)?;
+                let security_report = security_report
+                    .and_then(|s| deserialize_security_report(&s))
+                    .or_else(|| {
+                        build_legacy_security_report(
+                            row.get_ref(0).ok()?.as_str().ok()?,
+                            row.get(13).ok()?,
+                            security_level.as_deref(),
+                            security_issues.clone(),
+                        )
+                    });
 
                 let local_paths: Option<String> = row.get(11)?;
                 let local_paths = local_paths.and_then(|s| serde_json::from_str(&s).ok());
@@ -463,11 +522,12 @@ impl Database {
                     checksum: row.get(12)?,
                     security_score: row.get(13)?,
                     security_issues,
-                    security_level: row.get(15)?,
+                    security_level,
+                    security_report,
                     scanned_at: row
-                        .get::<_, Option<String>>(16)?
+                        .get::<_, Option<String>>(17)?
                         .and_then(|s| s.parse().ok()),
-                    installed_commit_sha: row.get(17)?,
+                    installed_commit_sha: row.get(18)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -482,7 +542,7 @@ impl Database {
             "SELECT id, claude_id, name, description, version, installed_version, author, repository_url, repository_owner,
                     marketplace_name, source, discovery_source, marketplace_add_command, plugin_install_command,
                     installed, installed_at, claude_scope, claude_enabled, claude_install_path, claude_last_updated,
-                    security_score, security_issues, security_level, scanned_at, staging_path, install_log, install_status
+                    security_score, security_issues, security_level, security_report, scanned_at, staging_path, install_log, install_status
              FROM plugins"
         )?;
 
@@ -490,6 +550,18 @@ impl Database {
             .query_map([], |row| {
                 let security_issues: Option<String> = row.get(21)?;
                 let security_issues = security_issues.and_then(|s| deserialize_security_issues(&s));
+                let security_level: Option<String> = row.get(22)?;
+                let security_report: Option<String> = row.get(23)?;
+                let security_report = security_report
+                    .and_then(|s| deserialize_security_report(&s))
+                    .or_else(|| {
+                        build_legacy_security_report(
+                            row.get_ref(0).ok()?.as_str().ok()?,
+                            row.get(20).ok()?,
+                            security_level.as_deref(),
+                            security_issues.clone(),
+                        )
+                    });
 
                 Ok(Plugin {
                     id: row.get(0)?,
@@ -518,13 +590,14 @@ impl Database {
                         .and_then(|s| s.parse().ok()),
                     security_score: row.get(20)?,
                     security_issues,
-                    security_level: row.get(22)?,
+                    security_level,
+                    security_report,
                     scanned_at: row
-                        .get::<_, Option<String>>(23)?
+                        .get::<_, Option<String>>(24)?
                         .and_then(|s| s.parse().ok()),
-                    staging_path: row.get(24)?,
-                    install_log: row.get(25)?,
-                    install_status: row.get(26)?,
+                    staging_path: row.get(25)?,
+                    install_log: row.get(26)?,
+                    install_status: row.get(27)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -630,8 +703,14 @@ impl Database {
         // 添加 security_level 列
         let _ = conn.execute("ALTER TABLE skills ADD COLUMN security_level TEXT", []);
 
+        // 添加 security_report 列
+        let _ = conn.execute("ALTER TABLE skills ADD COLUMN security_report TEXT", []);
+
         // 添加 scanned_at 列
         let _ = conn.execute("ALTER TABLE skills ADD COLUMN scanned_at TEXT", []);
+
+        // 添加插件 security_report 列
+        let _ = conn.execute("ALTER TABLE plugins ADD COLUMN security_report TEXT", []);
 
         Ok(())
     }
@@ -816,8 +895,11 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use super::{deserialize_security_issues, parse_legacy_issue_string};
-    use crate::models::security::IssueSeverity;
+    use super::{
+        build_legacy_security_report, deserialize_security_issues, deserialize_security_report,
+        parse_legacy_issue_string,
+    };
+    use crate::models::security::{IssueSeverity, SecurityLevel, SecurityReport};
 
     #[test]
     fn parse_legacy_issue_string_preserves_unknown_prefixes() {
@@ -825,20 +907,51 @@ mod tests {
             parse_legacy_issue_string("[SKILL.md] CURL_PIPE_SH: mentions curl pipe sh").unwrap();
 
         assert!(matches!(issue.severity, IssueSeverity::Info));
-        assert_eq!(
-            issue.description,
-            "CURL_PIPE_SH: mentions curl pipe sh"
-        );
+        assert_eq!(issue.description, "CURL_PIPE_SH: mentions curl pipe sh");
         assert_eq!(issue.file_path.as_deref(), Some("SKILL.md"));
     }
 
     #[test]
     fn deserialize_security_issues_accepts_old_string_format_without_losing_rule_names() {
-        let issues =
-            deserialize_security_issues(r#"["RULE_NAME: description text"]"#).unwrap();
+        let issues = deserialize_security_issues(r#"["RULE_NAME: description text"]"#).unwrap();
 
         assert_eq!(issues.len(), 1);
         assert!(matches!(issues[0].severity, IssueSeverity::Info));
         assert_eq!(issues[0].description, "RULE_NAME: description text");
+    }
+
+    #[test]
+    fn deserialize_security_report_round_trips_full_report() {
+        let report = SecurityReport {
+            skill_id: "skill-1".to_string(),
+            score: 12,
+            level: SecurityLevel::Critical,
+            issues: vec![],
+            recommendations: vec!["stop".to_string()],
+            blocked: true,
+            hard_trigger_issues: vec!["rule".to_string()],
+            scanned_files: vec!["a.sh".to_string()],
+            partial_scan: true,
+            skipped_files: vec!["b.bin".to_string()],
+        };
+
+        let json = serde_json::to_string(&report).unwrap();
+        let decoded = deserialize_security_report(&json).unwrap();
+
+        assert!(decoded.blocked);
+        assert!(decoded.partial_scan);
+        assert_eq!(decoded.hard_trigger_issues, vec!["rule".to_string()]);
+        assert_eq!(decoded.skipped_files, vec!["b.bin".to_string()]);
+    }
+
+    #[test]
+    fn build_legacy_security_report_keeps_backward_compatible_defaults() {
+        let report = build_legacy_security_report("skill-1", Some(88), Some("Low"), None).unwrap();
+
+        assert_eq!(report.skill_id, "skill-1");
+        assert_eq!(report.score, 88);
+        assert!(matches!(report.level, SecurityLevel::Low));
+        assert!(!report.blocked);
+        assert!(!report.partial_scan);
     }
 }

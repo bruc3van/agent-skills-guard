@@ -284,6 +284,7 @@ impl PluginManager {
                 plugin.security_score = existing.security_score;
                 plugin.security_level = existing.security_level.clone();
                 plugin.security_issues = existing.security_issues.clone();
+                plugin.security_report = existing.security_report.clone();
                 plugin.scanned_at = existing.scanned_at;
                 plugin.staging_path = existing.staging_path.clone();
                 plugin.install_log = existing.install_log.clone();
@@ -1120,6 +1121,7 @@ impl PluginManager {
                         plugin.security_score = existing.security_score;
                         plugin.security_level = existing.security_level.clone();
                         plugin.security_issues = existing.security_issues.clone();
+                        plugin.security_report = existing.security_report.clone();
                         plugin.scanned_at = existing.scanned_at;
                         plugin.staging_path = existing.staging_path.clone();
                         plugin.install_log = existing.install_log.clone();
@@ -1248,6 +1250,7 @@ impl PluginManager {
             updated.security_score = Some(report.score);
             updated.security_level = Some(report.level.as_str().to_string());
             updated.security_issues = Some(report.issues.clone());
+            updated.security_report = Some(report.clone());
             updated.scanned_at = Some(now);
             updated.staging_path = Some(repo_root.to_string_lossy().to_string());
             if blocked && !updated.installed {

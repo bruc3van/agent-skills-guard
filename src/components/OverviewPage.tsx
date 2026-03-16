@@ -676,6 +676,10 @@ export function OverviewPage() {
 }
 
 function buildReportFromPlugin(plugin: Plugin): SecurityReport {
+  if (plugin.security_report) {
+    return plugin.security_report;
+  }
+
   return {
     skill_id: plugin.id,
     score: plugin.security_score ?? 0,

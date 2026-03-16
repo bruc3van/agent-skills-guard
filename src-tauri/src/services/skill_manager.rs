@@ -66,7 +66,10 @@ impl SkillManager {
                 parent.join(format!(".{}.backup-{}", file_name, uuid::Uuid::new_v4()));
 
             rename_with_retry(final_install_dir, &backup_path).with_context(|| {
-                format!("无法备份现有技能目录，请关闭占用该目录的程序: {:?}", final_install_dir)
+                format!(
+                    "无法备份现有技能目录，请关闭占用该目录的程序: {:?}",
+                    final_install_dir
+                )
             })?;
             backup_dir = Some(backup_path);
         }
@@ -96,6 +99,67 @@ impl SkillManager {
                 )))
             }
         }
+    }
+
+    fn apply_scan_report(skill: &mut Skill, report: &crate::models::SecurityReport) {
+        skill.security_score = Some(report.score);
+        skill.security_level = Some(report.level.as_str().to_string());
+        skill.security_issues = Some(report.issues.clone());
+        skill.security_report = Some(report.clone());
+        skill.scanned_at = Some(Utc::now());
+    }
+
+    fn enforce_installable_report(
+        &self,
+        report: &crate::models::SecurityReport,
+        operation: &str,
+    ) -> Result<()> {
+        if report.blocked || !report.hard_trigger_issues.is_empty() {
+            let mut error_msg = format!(
+                "⛔ 安全检测发现严重威胁，已禁止{}！\n\n检测到以下高危操作：\n",
+                operation
+            );
+            for (idx, issue) in report.hard_trigger_issues.iter().enumerate() {
+                error_msg.push_str(&format!("{}. {}\n", idx + 1, issue));
+            }
+            error_msg.push_str("\n这些操作可能对您的系统造成严重危害，强烈建议不要继续。");
+            anyhow::bail!(error_msg);
+        }
+
+        if report.partial_scan {
+            let mut error_msg = format!(
+                "⛔ 安全扫描未完整覆盖全部内容，已禁止{}。\n\n以下文件未被完整扫描：\n",
+                operation
+            );
+            if report.skipped_files.is_empty() {
+                error_msg.push_str("1. 扫描过程中存在被截断或跳过的文件\n");
+            } else {
+                for (idx, file) in report.skipped_files.iter().enumerate() {
+                    error_msg.push_str(&format!("{}. {}\n", idx + 1, file));
+                }
+            }
+            error_msg.push_str("\n请先移除超大文件、二进制文件或不可读文件后再试。");
+            anyhow::bail!(error_msg);
+        }
+
+        Ok(())
+    }
+
+    fn rescan_skill_directory_for_confirmation(
+        &self,
+        dir: &Path,
+        skill_id: &str,
+    ) -> Result<crate::models::SecurityReport> {
+        let locale = rust_i18n::locale();
+        let report = self.scanner.scan_directory_with_options(
+            dir.to_str().context("技能目录路径无效")?,
+            skill_id,
+            &locale,
+            ScanOptions { skip_readme: true },
+            None,
+        )?;
+        self.enforce_installable_report(&report, "安装或更新技能")?;
+        Ok(report)
     }
 
     /// 下载并分析 skill，返回文件内容和安全报告
@@ -150,10 +214,7 @@ impl SkillManager {
         let report = self.scanner.scan_file(&content_str, "SKILL.md", "zh")?;
 
         // 更新 skill 信息
-        skill.security_score = Some(report.score);
-        skill.security_level = Some(report.level.as_str().to_string());
-        skill.security_issues = Some(report.issues.clone());
-        skill.scanned_at = Some(Utc::now());
+        Self::apply_scan_report(skill, &report);
         skill.checksum = Some(self.scanner.calculate_checksum(&content));
 
         Ok((content, report))
@@ -281,20 +342,11 @@ impl SkillManager {
             scan_report.scanned_files.len()
         );
 
-        // 检查是否被 hard_trigger 阻止
-        if scan_report.blocked {
-            // 先删除已下载的文件
+        if let Err(error) = self.enforce_installable_report(&scan_report, "安装技能") {
             if prepared_dir.exists() {
                 std::fs::remove_dir_all(&prepared_dir)?;
             }
-
-            let mut error_msg =
-                format!("⛔ 安全检测发现严重威胁，禁止安装！\n\n检测到以下高危操作：\n");
-            for (idx, issue) in scan_report.hard_trigger_issues.iter().enumerate() {
-                error_msg.push_str(&format!("{}. {}\n", idx + 1, issue));
-            }
-            error_msg.push_str("\n这些操作可能对您的系统造成严重危害，强烈建议不要安装此技能。");
-            anyhow::bail!(error_msg);
+            return Err(error);
         }
 
         self.replace_installation_directory(&prepared_dir, &skill_dir)?;
@@ -316,10 +368,7 @@ impl SkillManager {
         // }
 
         // 更新 skill 安全信息
-        skill.security_score = Some(scan_report.score);
-        skill.security_level = Some(scan_report.level.as_str().to_string());
-        skill.security_issues = Some(scan_report.issues.clone());
-        skill.scanned_at = Some(Utc::now());
+        Self::apply_scan_report(&mut skill, &scan_report);
 
         // 更新数据库
         let new_path = skill_dir.to_string_lossy().to_string();
@@ -414,10 +463,7 @@ impl SkillManager {
         );
 
         // 更新 skill 安全信息到数据库（但不标记为已安装）
-        skill.security_score = Some(scan_report.score);
-        skill.security_level = Some(scan_report.level.as_str().to_string());
-        skill.security_issues = Some(scan_report.issues.clone());
-        skill.scanned_at = Some(Utc::now());
+        Self::apply_scan_report(&mut skill, &scan_report);
         // 注意：这里暂时保存缓存路径，确认安装时会更新为实际安装路径
         skill.local_path = Some(skill_cache_dir.to_string_lossy().to_string());
 
@@ -516,12 +562,17 @@ impl SkillManager {
             let src_path = entry.path();
             let file_name = entry.file_name();
             let dst_path = dst.join(&file_name);
+            let file_type = entry
+                .file_type()
+                .context(format!("无法获取文件类型: {:?}", src_path))?;
 
-            if src_path.is_dir() {
+            if file_type.is_symlink() {
+                anyhow::bail!("拒绝复制符号链接: {:?}", src_path);
+            } else if file_type.is_dir() {
                 std::fs::create_dir_all(&dst_path)
                     .context(format!("无法创建目标目录: {:?}", dst_path))?;
                 self.copy_dir_recursive(&src_path, &dst_path, counter)?;
-            } else {
+            } else if file_type.is_file() {
                 std::fs::copy(&src_path, &dst_path)
                     .context(format!("无法复制文件: {:?} -> {:?}", src_path, dst_path))?;
                 *counter += 1;
@@ -579,6 +630,8 @@ impl SkillManager {
         let skill_dir_name = skill_dir_name.to_string_lossy().to_string();
         let prepared_dir = self.create_temp_install_dir(&install_base_dir, &skill_dir_name)?;
 
+        let scan_report = self.rescan_skill_directory_for_confirmation(&cache_dir, &skill.id)?;
+
         // 从缓存复制到目标路径
         log::info!(
             "Copying skill from cache {:?} to {:?}",
@@ -612,6 +665,7 @@ impl SkillManager {
         skill.installed = true;
         skill.installed_at = Some(Utc::now());
         skill.installed_commit_sha = commit_sha;
+        Self::apply_scan_report(&mut skill, &scan_report);
 
         self.db.save_skill(&skill)?;
 
@@ -641,6 +695,7 @@ impl SkillManager {
         skill.security_score = None;
         skill.security_level = None;
         skill.security_issues = None;
+        skill.security_report = None;
         skill.scanned_at = None;
 
         self.db.save_skill(&skill)?;
@@ -886,26 +941,7 @@ impl SkillManager {
                                     None,
                                 )?;
 
-                                existing_skill.security_score = Some(report.score);
-                                existing_skill.security_issues = Some(report.issues.clone());
-                                existing_skill.security_level = Some(match report.level {
-                                    crate::models::security::SecurityLevel::Safe => {
-                                        "Safe".to_string()
-                                    }
-                                    crate::models::security::SecurityLevel::Low => {
-                                        "Low".to_string()
-                                    }
-                                    crate::models::security::SecurityLevel::Medium => {
-                                        "Medium".to_string()
-                                    }
-                                    crate::models::security::SecurityLevel::High => {
-                                        "High".to_string()
-                                    }
-                                    crate::models::security::SecurityLevel::Critical => {
-                                        "Critical".to_string()
-                                    }
-                                });
-                                existing_skill.scanned_at = Some(Utc::now());
+                                Self::apply_scan_report(&mut existing_skill, &report);
 
                                 self.db.save_skill(&existing_skill)?;
                                 scanned_skills.push(existing_skill);
@@ -949,23 +985,8 @@ impl SkillManager {
                                 checksum: Some(checksum),
                                 security_score: Some(report.score),
                                 security_issues: Some(report.issues.clone()),
-                                security_level: Some(match report.level {
-                                    crate::models::security::SecurityLevel::Safe => {
-                                        "Safe".to_string()
-                                    }
-                                    crate::models::security::SecurityLevel::Low => {
-                                        "Low".to_string()
-                                    }
-                                    crate::models::security::SecurityLevel::Medium => {
-                                        "Medium".to_string()
-                                    }
-                                    crate::models::security::SecurityLevel::High => {
-                                        "High".to_string()
-                                    }
-                                    crate::models::security::SecurityLevel::Critical => {
-                                        "Critical".to_string()
-                                    }
-                                }),
+                                security_level: Some(report.level.as_str().to_string()),
+                                security_report: Some(report.clone()),
                                 scanned_at: Some(Utc::now()),
                                 installed_commit_sha: None,
                             };
@@ -1236,6 +1257,7 @@ impl SkillManager {
         // 保存 staging 信息到数据库（临时）
         // 我们使用一个特殊的字段来标记这是 staging 路径
         let mut skill_update = skill.clone();
+        Self::apply_scan_report(&mut skill_update, &scan_report);
         skill_update.local_path = Some(format!(
             "__staging__:{}",
             staging_skill_dir.to_string_lossy()
@@ -1373,6 +1395,8 @@ impl SkillManager {
         // 确保目标父目录存在
         std::fs::create_dir_all(&target_install_dir.parent().context("无效的安装路径")?)?;
 
+        let scan_report = self.rescan_skill_directory_for_confirmation(&staging_dir, &skill.id)?;
+
         // 如果前面“移动备份”成功，目标目录已不存在；先创建一个干净目录
         if !target_install_dir.exists() {
             std::fs::create_dir_all(&target_install_dir)
@@ -1398,6 +1422,7 @@ impl SkillManager {
 
                 // 更新数据库：恢复 local_path，更新 installed_commit_sha
                 skill.local_path = Some(target_install_dir.to_string_lossy().to_string());
+                Self::apply_scan_report(&mut skill, &scan_report);
 
                 // 从 staging 路径推导出 extracted 目录并提取 commit SHA
                 // - staging_dir 指向 skill 目录（可能是仓库根目录或其子目录）
@@ -1603,7 +1628,9 @@ impl SkillManager {
             let file_name = entry.file_name();
             let dst_path = dst.join(&file_name);
 
-            if file_type.is_dir() {
+            if file_type.is_symlink() {
+                anyhow::bail!("拒绝复制符号链接: {:?}", src_path);
+            } else if file_type.is_dir() {
                 // 递归复制子目录
                 log::debug!("复制子目录: {:?}", file_name);
                 self.copy_directory(&src_path, &dst_path)?;
