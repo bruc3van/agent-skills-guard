@@ -17,9 +17,6 @@ import {
   SearchX,
   Download,
   Plug,
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
   Lightbulb,
   RefreshCw,
 } from "lucide-react";
@@ -32,16 +29,20 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
 import { normalizeInstalledSkills } from "@/lib/installed-skills";
-import { countIssuesBySeverity, groupIssuesBySignature } from "@/lib/security-utils";
+import { PageBusyNotice } from "./ui/PageBusyNotice";
 import {
   AlertDialog,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogDescription,
   AlertDialogFooter,
-  AlertDialogCancel,
 } from "./ui/alert-dialog";
+import {
+  SkillSecurityDialog,
+  SkillSecurityDialogConfirmButton,
+} from "./ui/SkillSecurityDialog";
 
 const AVAILABLE_UPDATES_KEY = "available_updates";
 const AVAILABLE_PLUGIN_UPDATES_KEY = "available_plugin_updates";
@@ -122,6 +123,7 @@ export function InstalledSkillsPage() {
   const [activeTab, setActiveTab] = useState<"all" | "skills" | "plugins" | "marketplaces">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedRepository, setSelectedRepository] = useState("all");
+  const [showUpdatesOnly, setShowUpdatesOnly] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const {
     uninstallingSkillId,
@@ -426,6 +428,10 @@ export function InstalledSkillsPage() {
         return;
       }
       if (total > 0) {
+        setActiveTab("all");
+        setSelectedRepository("all");
+        setSearchQuery("");
+        setShowUpdatesOnly(true);
         appToast.success(
           t("installed.checkUpdatesSummary", {
             skills: skillsCount,
@@ -434,6 +440,7 @@ export function InstalledSkillsPage() {
           })
         );
       } else {
+        setShowUpdatesOnly(false);
         appToast.success(t("installed.checkUpdatesAllUpToDate"));
       }
     } finally {
@@ -528,6 +535,15 @@ export function InstalledSkillsPage() {
   }, [allPlugins]);
 
   const isLoading = isSkillsLoading || isPluginsLoading || isMarketplacesLoading;
+  const updateCounts = useMemo(
+    () => ({
+      skills: availableUpdates.size,
+      plugins: availablePluginUpdates.size,
+      marketplaces: availableMarketplaceUpdates.size,
+      total: availableUpdates.size + availablePluginUpdates.size + availableMarketplaceUpdates.size,
+    }),
+    [availableMarketplaceUpdates, availablePluginUpdates, availableUpdates]
+  );
 
   const installedMarketplaces = useMemo<InstalledMarketplace[]>(() => {
     const byMarketplace = new Map<string, { name: string; repoUrl: string; plugins: Plugin[] }>();
@@ -577,6 +593,66 @@ export function InstalledSkillsPage() {
       })
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [allPlugins, claudeMarketplaces, installedPlugins]);
+  const pageBusyMessage = useMemo(() => {
+    if (
+      isCheckingAllUpdates ||
+      isScanning ||
+      isCheckingUpdates ||
+      isCheckingPluginUpdates ||
+      isCheckingMarketplaceUpdates
+    ) {
+      return t("installed.busy.checkUpdates");
+    }
+    if (preparingUpdateSkillId) {
+      const skill = normalizedInstalledSkills.find((item) => item.id === preparingUpdateSkillId);
+      return t("installed.busy.prepareSkillUpdate", { name: skill?.name ?? "" });
+    }
+    if (confirmingUpdateSkillId) {
+      const skill = normalizedInstalledSkills.find((item) => item.id === confirmingUpdateSkillId);
+      return t("installed.busy.applySkillUpdate", { name: skill?.name ?? "" });
+    }
+    if (uninstallingSkillId) {
+      const skill = normalizedInstalledSkills.find((item) => item.id === uninstallingSkillId);
+      return t("installed.busy.uninstallSkill", { name: skill?.name ?? "" });
+    }
+    if (uninstallingPluginId) {
+      const plugin = installedPlugins.find((item) => item.id === uninstallingPluginId);
+      return t("installed.busy.uninstallPlugin", { name: plugin?.name ?? "" });
+    }
+    if (updatingPluginId) {
+      const plugin = installedPlugins.find((item) => item.id === updatingPluginId);
+      return t("installed.busy.updatePlugin", { name: plugin?.name ?? "" });
+    }
+    if (updatingMarketplaceName) {
+      return t("installed.busy.updateMarketplace", { name: updatingMarketplaceName });
+    }
+    if (removingMarketplaceName) {
+      return t("installed.busy.removeMarketplace", { name: removingMarketplaceName });
+    }
+    return null;
+  }, [
+    confirmingUpdateSkillId,
+    installedPlugins,
+    isCheckingAllUpdates,
+    isCheckingMarketplaceUpdates,
+    isCheckingPluginUpdates,
+    isCheckingUpdates,
+    isScanning,
+    normalizedInstalledSkills,
+    preparingUpdateSkillId,
+    removingMarketplaceName,
+    t,
+    uninstallingPluginId,
+    uninstallingSkillId,
+    updatingMarketplaceName,
+    updatingPluginId,
+  ]);
+
+  useEffect(() => {
+    if (updateCounts.total === 0 && showUpdatesOnly) {
+      setShowUpdatesOnly(false);
+    }
+  }, [showUpdatesOnly, updateCounts.total]);
 
   const tabCounts = useMemo(
     () => ({
@@ -636,35 +712,42 @@ export function InstalledSkillsPage() {
 
   const filteredSkills = useMemo(() => {
     let items = normalizedInstalledSkills;
+    const query = searchQuery.trim().toLowerCase();
 
     if (selectedRepository !== "all") {
       items = items.filter((skill) => (skill.repository_owner || "unknown") === selectedRepository);
     }
 
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      const nameMatches: Skill[] = [];
-      const restMatches: Skill[] = [];
-      items.forEach((skill) => {
+    if (showUpdatesOnly) {
+      items = items.filter((skill) => availableUpdates.has(skill.id));
+    }
+
+    if (query) {
+      items = items.filter((skill) => {
         const nameMatch = skill.name.toLowerCase().includes(query);
         const descriptionMatch = skill.description?.toLowerCase().includes(query);
-        if (nameMatch) nameMatches.push(skill);
-        else if (descriptionMatch) restMatches.push(skill);
-      });
-      items = [...nameMatches, ...restMatches];
-    } else {
-      items = [...items].sort((a, b) => {
-        const timeA = a.installed_at ? new Date(a.installed_at).getTime() : 0;
-        const timeB = b.installed_at ? new Date(b.installed_at).getTime() : 0;
-        return timeB - timeA;
+        return nameMatch || descriptionMatch;
       });
     }
 
-    return items;
-  }, [normalizedInstalledSkills, searchQuery, selectedRepository]);
+    return [...items].sort((a, b) => {
+      const updateDelta = Number(availableUpdates.has(b.id)) - Number(availableUpdates.has(a.id));
+      if (updateDelta !== 0) return updateDelta;
+      if (query) {
+        const aRank = a.name.toLowerCase().includes(query) ? 0 : 1;
+        const bRank = b.name.toLowerCase().includes(query) ? 0 : 1;
+        if (aRank !== bRank) return aRank - bRank;
+      }
+      const timeA = a.installed_at ? new Date(a.installed_at).getTime() : 0;
+      const timeB = b.installed_at ? new Date(b.installed_at).getTime() : 0;
+      if (timeA !== timeB) return timeB - timeA;
+      return a.name.localeCompare(b.name);
+    });
+  }, [availableUpdates, normalizedInstalledSkills, searchQuery, selectedRepository, showUpdatesOnly]);
 
   const filteredPlugins = useMemo(() => {
     let items = installedPlugins;
+    const query = searchQuery.trim().toLowerCase();
 
     if (selectedRepository !== "all") {
       items = items.filter(
@@ -672,33 +755,43 @@ export function InstalledSkillsPage() {
       );
     }
 
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      const nameMatches: Plugin[] = [];
-      const restMatches: Plugin[] = [];
-      items.forEach((plugin) => {
+    if (showUpdatesOnly) {
+      items = items.filter((plugin) => availablePluginUpdates.has(plugin.id));
+    }
+
+    if (query) {
+      items = items.filter((plugin) => {
         const nameMatch = plugin.name.toLowerCase().includes(query);
         const descriptionMatch = plugin.description?.toLowerCase().includes(query);
-        if (nameMatch) nameMatches.push(plugin);
-        else if (descriptionMatch) restMatches.push(plugin);
-      });
-      items = [...nameMatches, ...restMatches];
-    } else {
-      items = [...items].sort((a, b) => {
-        const timeA = a.installed_at ? new Date(a.installed_at).getTime() : 0;
-        const timeB = b.installed_at ? new Date(b.installed_at).getTime() : 0;
-        return timeB - timeA;
+        return nameMatch || descriptionMatch;
       });
     }
 
-    return items;
-  }, [installedPlugins, searchQuery, selectedRepository]);
+    return [...items].sort((a, b) => {
+      const updateDelta =
+        Number(availablePluginUpdates.has(b.id)) - Number(availablePluginUpdates.has(a.id));
+      if (updateDelta !== 0) return updateDelta;
+      if (query) {
+        const aRank = a.name.toLowerCase().includes(query) ? 0 : 1;
+        const bRank = b.name.toLowerCase().includes(query) ? 0 : 1;
+        if (aRank !== bRank) return aRank - bRank;
+      }
+      const timeA = a.installed_at ? new Date(a.installed_at).getTime() : 0;
+      const timeB = b.installed_at ? new Date(b.installed_at).getTime() : 0;
+      if (timeA !== timeB) return timeB - timeA;
+      return a.name.localeCompare(b.name);
+    });
+  }, [availablePluginUpdates, installedPlugins, searchQuery, selectedRepository, showUpdatesOnly]);
 
   const filteredMarketplaces = useMemo(() => {
     let items = installedMarketplaces;
+    const query = searchQuery.trim().toLowerCase();
 
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
+    if (showUpdatesOnly) {
+      items = items.filter((marketplace) => availableMarketplaceUpdates.has(marketplace.name));
+    }
+
+    if (query) {
       items = items.filter((m) => {
         const description = marketplaceDescriptions.get(m.name);
         return (
@@ -708,8 +801,25 @@ export function InstalledSkillsPage() {
       });
     }
 
-    return items;
-  }, [installedMarketplaces, marketplaceDescriptions, searchQuery]);
+    return [...items].sort((a, b) => {
+      const updateDelta =
+        Number(availableMarketplaceUpdates.has(b.name)) -
+        Number(availableMarketplaceUpdates.has(a.name));
+      if (updateDelta !== 0) return updateDelta;
+      if (query) {
+        const aRank = a.name.toLowerCase().includes(query) ? 0 : 1;
+        const bRank = b.name.toLowerCase().includes(query) ? 0 : 1;
+        if (aRank !== bRank) return aRank - bRank;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }, [
+    availableMarketplaceUpdates,
+    installedMarketplaces,
+    marketplaceDescriptions,
+    searchQuery,
+    showUpdatesOnly,
+  ]);
 
   const filteredAllItems = useMemo<InstalledEntry[]>(() => {
     const items: InstalledEntry[] = [
@@ -745,35 +855,52 @@ export function InstalledSkillsPage() {
         (description ? description.toLowerCase().includes(query) : false) ||
         (marketplaceName && marketplaceName.includes(query));
 
-      return matchesSearch && matchesRepo;
+      const matchesUpdate =
+        !showUpdatesOnly ||
+        (entry.kind === "skill" && availableUpdates.has(entry.item.id)) ||
+        (entry.kind === "plugin" && availablePluginUpdates.has(entry.item.id)) ||
+        (entry.kind === "marketplace" && availableMarketplaceUpdates.has(entry.item.name));
+
+      return matchesSearch && matchesRepo && matchesUpdate;
     });
 
-    if (query) {
-      const nameMatches: InstalledEntry[] = [];
-      const restMatches: InstalledEntry[] = [];
-
-      filtered.forEach((entry) => {
-        if (entry.item.name.toLowerCase().includes(query)) {
-          nameMatches.push(entry);
-        } else {
-          restMatches.push(entry);
-        }
-      });
-
-      filtered = [...nameMatches, ...restMatches];
-    } else {
-      filtered = [...filtered].sort((a, b) => a.item.name.localeCompare(b.item.name));
-    }
-
-    return filtered;
+    return [...filtered].sort((a, b) => {
+      const aHasUpdate =
+        (a.kind === "skill" && availableUpdates.has(a.item.id)) ||
+        (a.kind === "plugin" && availablePluginUpdates.has(a.item.id)) ||
+        (a.kind === "marketplace" && availableMarketplaceUpdates.has(a.item.name));
+      const bHasUpdate =
+        (b.kind === "skill" && availableUpdates.has(b.item.id)) ||
+        (b.kind === "plugin" && availablePluginUpdates.has(b.item.id)) ||
+        (b.kind === "marketplace" && availableMarketplaceUpdates.has(b.item.name));
+      const updateDelta = Number(bHasUpdate) - Number(aHasUpdate);
+      if (updateDelta !== 0) return updateDelta;
+      if (query) {
+        const aRank = a.item.name.toLowerCase().includes(query) ? 0 : 1;
+        const bRank = b.item.name.toLowerCase().includes(query) ? 0 : 1;
+        if (aRank !== bRank) return aRank - bRank;
+      }
+      return a.item.name.localeCompare(b.item.name);
+    });
   }, [
+    availableMarketplaceUpdates,
+    availablePluginUpdates,
+    availableUpdates,
     installedMarketplaces,
     installedPlugins,
     marketplaceDescriptions,
     normalizedInstalledSkills,
     searchQuery,
     selectedRepository,
+    showUpdatesOnly,
   ]);
+
+  const focusUpdateItems = (tab: "all" | "skills" | "plugins" | "marketplaces") => {
+    setActiveTab(tab);
+    setShowUpdatesOnly(true);
+    setSelectedRepository("all");
+    setSearchQuery("");
+  };
 
   const renderSkillCard = (skill: Skill, index: number) => {
     const upgradeCandidate = skillPluginUpgradeByName.get(skill.name.toLowerCase());
@@ -936,14 +1063,7 @@ export function InstalledSkillsPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <div
-        className="flex-shrink-0 border-b border-border/50"
-        onWheel={(e) => {
-          if (!listContainerRef.current) return;
-          listContainerRef.current.scrollBy({ top: e.deltaY });
-          e.preventDefault();
-        }}
-      >
+      <div className="flex-shrink-0 border-b border-border/50">
         <div className="px-8 pt-8 pb-4" style={{ animation: "fadeIn 0.4s ease-out" }}>
           <div className="max-w-6xl mx-auto">
             <div
@@ -1050,14 +1170,83 @@ export function InstalledSkillsPage() {
                   className="min-w-[200px]"
                 />
               )}
-
             </div>
+
+            {updateCounts.total > 0 && (
+              <div className="mt-4 flex flex-wrap items-center gap-2 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3">
+                <span className="text-sm font-medium text-foreground">
+                  {t("installed.updatesFocus.title", { count: updateCounts.total })}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => focusUpdateItems("all")}
+                  className={`h-8 rounded-full px-3 text-xs transition-colors ${
+                    activeTab === "all" && showUpdatesOnly
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-card text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {t("installed.updatesFocus.all", { count: updateCounts.total })}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => focusUpdateItems("skills")}
+                  className={`h-8 rounded-full px-3 text-xs transition-colors ${
+                    activeTab === "skills" && showUpdatesOnly
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-card text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {t("installed.updatesFocus.skills", { count: updateCounts.skills })}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => focusUpdateItems("plugins")}
+                  className={`h-8 rounded-full px-3 text-xs transition-colors ${
+                    activeTab === "plugins" && showUpdatesOnly
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-card text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {t("installed.updatesFocus.plugins", { count: updateCounts.plugins })}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => focusUpdateItems("marketplaces")}
+                  className={`h-8 rounded-full px-3 text-xs transition-colors ${
+                    activeTab === "marketplaces" && showUpdatesOnly
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-card text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {t("installed.updatesFocus.marketplaces", {
+                    count: updateCounts.marketplaces,
+                  })}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowUpdatesOnly((value) => !value)}
+                  className="ml-auto h-8 rounded-full border border-border bg-card px-3 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {showUpdatesOnly
+                    ? t("installed.updatesFocus.showAll")
+                    : t("installed.updatesFocus.showOnly")}
+                </button>
+              </div>
+            )}
+
+            {pageBusyMessage && (
+              <div className="mt-4">
+                <PageBusyNotice message={pageBusyMessage} />
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       <div
         ref={listContainerRef}
+        aria-busy={pageBusyMessage ? "true" : "false"}
         className="flex-1 overflow-y-auto overscroll-contain px-8 pb-8"
         onScroll={(e) => {
           const top = (e.currentTarget as HTMLDivElement).scrollTop;
@@ -1102,6 +1291,8 @@ export function InstalledSkillsPage() {
               <p className="text-sm text-muted-foreground">
                 {searchQuery || (activeTab !== "marketplaces" && selectedRepository !== "all")
                   ? t("installed.empty.noResults", { query: searchQuery })
+                  : showUpdatesOnly
+                    ? t("installed.empty.noUpdates")
                   : activeTab === "all"
                     ? t("installed.empty.all")
                     : activeTab === "skills"
@@ -1121,6 +1312,16 @@ export function InstalledSkillsPage() {
                   {t("installed.empty.clearFilters")}
                 </button>
               )}
+              {!searchQuery &&
+                selectedRepository === "all" &&
+                showUpdatesOnly && (
+                  <button
+                    onClick={() => setShowUpdatesOnly(false)}
+                    className="mt-5 apple-button-secondary"
+                  >
+                    {t("installed.updatesFocus.showAll")}
+                  </button>
+                )}
             </div>
           )}
         </div>
@@ -1143,7 +1344,11 @@ export function InstalledSkillsPage() {
           if (pendingUpdate) {
             try {
               setConfirmingUpdateSkillId(pendingUpdate.skill.id);
-              await api.confirmSkillUpdate(pendingUpdate.skill.id, forceOverwrite);
+              await api.confirmSkillUpdate(
+                pendingUpdate.skill.id,
+                forceOverwrite,
+                Boolean(pendingUpdate.report.partial_scan || pendingUpdate.report.skipped_files?.length)
+              );
               await queryClient.refetchQueries({ queryKey: ["skills"] });
               await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
               await queryClient.refetchQueries({ queryKey: ["scanResults"] });
@@ -1570,6 +1775,8 @@ function SkillCard({
             <button
               onClick={onShowPluginUpgrade}
               disabled={isAnyOperationPending}
+              aria-label={`${t("skills.installedPage.upgradeToPlugin")}: ${skill.name}`}
+              title={`${t("skills.installedPage.upgradeToPlugin")}: ${skill.name}`}
               className="apple-button-secondary h-8 px-3 text-xs flex items-center gap-1.5 disabled:opacity-50"
             >
               <Plug className="w-3.5 h-3.5" />
@@ -1580,6 +1787,8 @@ function SkillCard({
             <button
               onClick={onUpdate}
               disabled={isAnyOperationPending}
+              aria-label={`${t("skills.update")}: ${skill.name}`}
+              title={`${t("skills.update")}: ${skill.name}`}
               className="apple-button-primary h-8 px-3 text-xs flex items-center gap-1.5"
             >
               {isPreparingUpdate || isApplyingUpdate ? (
@@ -1600,6 +1809,8 @@ function SkillCard({
           <button
             onClick={onUninstall}
             disabled={isAnyOperationPending}
+            aria-label={`${t("skills.uninstallAll")}: ${skill.name}`}
+            title={`${t("skills.uninstallAll")}: ${skill.name}`}
             className="apple-button-destructive h-8 px-3 text-xs flex items-center gap-1.5"
           >
             {isUninstalling ? (
@@ -1621,6 +1832,7 @@ function SkillCard({
       <div className="relative mb-4">
         <p
           ref={descriptionRef}
+          title={isDescriptionTruncated && skill.description ? skill.description : undefined}
           className="text-sm text-muted-foreground leading-5 h-[3.75rem] overflow-hidden [display:-webkit-box] [-webkit-line-clamp:3] [-webkit-box-orient:vertical] peer"
         >
           {skill.description || t("skills.noDescription")}
@@ -1678,6 +1890,8 @@ function SkillCard({
                         );
                       }
                     }}
+                    aria-label={`${t("skills.folder.opened")}: ${path}`}
+                    title={`${t("skills.folder.opened")}: ${path}`}
                     className="text-blue-500 hover:text-blue-600 transition-colors"
                   >
                     <FolderOpen className="w-4 h-4" />
@@ -1689,6 +1903,8 @@ function SkillCard({
                 <button
                   onClick={() => onUninstallPath(path)}
                   disabled={isAnyOperationPending}
+                  aria-label={`${t("skills.uninstall")}: ${path}`}
+                  title={`${t("skills.uninstall")}: ${path}`}
                   className="text-red-500 hover:text-red-600 transition-colors disabled:opacity-50"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -1773,9 +1989,10 @@ function InstalledPluginCard({
             <button
               onClick={onUpdate}
               disabled={isAnyOperationPending}
+              aria-label={`${t("plugins.updates.update")}: ${plugin.name}`}
               title={
                 latestVersion
-                  ? t("plugins.updates.available", { version: latestVersion })
+                  ? `${t("plugins.updates.update")}: ${plugin.name} (${t("plugins.updates.available", { version: latestVersion })})`
                   : undefined
               }
               className="apple-button-primary h-8 px-3 text-xs flex items-center gap-1.5"
@@ -1796,6 +2013,8 @@ function InstalledPluginCard({
           <button
             onClick={onUninstall}
             disabled={isAnyOperationPending}
+            aria-label={`${t("plugins.uninstall")}: ${plugin.name}`}
+            title={`${t("plugins.uninstall")}: ${plugin.name}`}
             className="apple-button-destructive h-8 px-3 text-xs flex items-center gap-1.5 disabled:opacity-50"
           >
             {isUninstalling ? (
@@ -1816,6 +2035,7 @@ function InstalledPluginCard({
       <div className="relative mb-4">
         <p
           ref={descriptionRef}
+          title={isDescriptionTruncated && plugin.description ? plugin.description : undefined}
           className="text-sm text-muted-foreground leading-5 h-[3.75rem] overflow-hidden [display:-webkit-box] [-webkit-line-clamp:3] [-webkit-box-orient:vertical] peer"
         >
           {plugin.description || t("plugins.noDescription")}
@@ -1862,6 +2082,8 @@ function InstalledPluginCard({
                     );
                   }
                 }}
+                aria-label={`${t("skills.folder.opened")}: ${installPath}`}
+                title={`${t("skills.folder.opened")}: ${installPath}`}
                 className="text-blue-500 hover:text-blue-600 transition-colors"
               >
                 <FolderOpen className="w-4 h-4" />
@@ -1898,217 +2120,86 @@ function UpdateConfirmDialog({
 }: UpdateConfirmDialogProps) {
   const { t } = useTranslation();
   const [forceOverwrite, setForceOverwrite] = useState(false);
-
-  const isMediumRisk = report ? report.score >= 50 && report.score < 70 : false;
-  const isHighRisk = report ? report.score < 50 || report.blocked : false;
   const hasConflicts = conflicts.length > 0;
-
-  const issueCounts = useMemo(
-    () => (report ? countIssuesBySeverity(report.issues) : { critical: 0, error: 0, warning: 0 }),
-    [report]
-  );
-  const groupedIssues = useMemo(() => (report ? groupIssuesBySignature(report.issues) : []), [report]);
-  const previewGroups = useMemo(() => groupedIssues.slice(0, 5), [groupedIssues]);
-
-  if (!report) return null;
+  const confirmTone = !report
+    ? "primary"
+    : report.score < 50 || report.blocked
+      ? "destructive"
+      : report.partial_scan || report.score < 70
+        ? "warning"
+        : "primary";
 
   return (
-    <AlertDialog open={open} onOpenChange={onClose}>
-      <AlertDialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-        <AlertDialogHeader>
-          <AlertDialogTitle className="flex items-center gap-2">
-            {isHighRisk ? (
-              <XCircle className="w-5 h-5 text-destructive" />
-            ) : isMediumRisk ? (
-              <AlertTriangle className="w-5 h-5 text-warning" />
-            ) : (
-              <CheckCircle className="w-5 h-5 text-success" />
-            )}
-            {t("skills.installedPage.updateScanResult")}
-          </AlertDialogTitle>
-          <AlertDialogDescription asChild>
-            <div className="space-y-4 pb-4">
-              <div>
-                {t("skills.installedPage.preparingUpdate")}:{" "}
-                <span className="font-medium">{skillName}</span>
-              </div>
-
-              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
-                <span className="text-sm">{t("skills.marketplace.install.securityScore")}:</span>
-                <span
-                  className={`text-2xl font-semibold ${
-                    report.score >= 90
-                      ? "text-success"
-                      : report.score >= 70
-                        ? "text-success"
-                        : report.score >= 50
-                          ? "text-warning"
-                          : "text-destructive"
-                  }`}
-                >
-                  {report.score}
-                </span>
-              </div>
-
-              <div className="p-3 bg-primary/10 rounded-lg">
-                <div className="text-sm text-primary flex items-center gap-2">
-                  <Lightbulb className="w-4 h-4" />
-                  {t("skills.installedPage.updateTip")}
-                </div>
-              </div>
-
-              {hasConflicts && (
-                <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg">
-                  <div className="flex items-start gap-2 mb-2">
-                    <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                      <div className="font-medium text-warning mb-1">
-                        {t("skills.installedPage.conflictDetected")}
-                      </div>
-                      <div className="text-sm text-muted-foreground mb-2">
-                        {t("skills.installedPage.conflictDescription")}
-                      </div>
-                      <ul className="space-y-1 text-xs max-h-32 overflow-y-auto">
-                        {conflicts.slice(0, 10).map((conflict, idx) => (
-                          <li key={idx} className="text-warning">
-                            • {conflict}
-                          </li>
-                        ))}
-                        {conflicts.length > 10 && (
-                          <li className="text-muted-foreground">
-                            ...{" "}
-                            {t("skills.installedPage.andMore", { count: conflicts.length - 10 })}
-                          </li>
-                        )}
-                      </ul>
-                    </div>
-                  </div>
-                  <label className="flex items-center gap-2 mt-3 p-2 bg-card rounded-lg cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={forceOverwrite}
-                      onChange={(e) => setForceOverwrite(e.target.checked)}
-                      className="w-4 h-4 rounded"
-                    />
-                    <span className="text-sm">{t("skills.installedPage.forceOverwrite")}</span>
-                  </label>
-                </div>
-              )}
-
-              {report.issues.length > 0 && (
-                <>
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">
-                      {t("skills.marketplace.install.issuesDetected")}:
-                    </div>
-                    <div className="flex gap-4 text-sm">
-                      {issueCounts.critical > 0 && (
-                        <span className="text-destructive">
-                          {t("skills.marketplace.install.critical")}: {issueCounts.critical}
-                        </span>
-                      )}
-                      {issueCounts.error > 0 && (
-                        <span className="text-warning">
-                          {t("skills.marketplace.install.highRisk")}: {issueCounts.error}
-                        </span>
-                      )}
-                      {issueCounts.warning > 0 && (
-                        <span className="text-warning">
-                          {t("skills.marketplace.install.mediumRisk")}: {issueCounts.warning}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div
-                    className={`p-3 rounded-lg ${isHighRisk ? "bg-destructive/10" : isMediumRisk ? "bg-warning/10" : "bg-success/10"}`}
-                  >
-                    <div className="space-y-2 text-sm max-h-48 overflow-y-auto">
-                      {previewGroups.map((group) =>
-                        group.items.length === 1 ? (
-                          <div key={group.key} className="text-xs">
-                            {group.summary.file_path && (
-                              <span className="text-primary mr-1">[{group.summary.file_path}]</span>
-                            )}
-                            {group.summary.description}
-                            {typeof group.summary.line_number === "number" && (
-                              <span className="text-muted-foreground ml-2">
-                                (行 {group.summary.line_number})
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <details key={group.key} className="text-xs">
-                            <summary className="cursor-pointer list-none flex items-center justify-between gap-2">
-                              <span className="min-w-0 truncate">
-                                {group.summary.file_path && (
-                                  <span className="text-primary mr-1">[{group.summary.file_path}]</span>
-                                )}
-                                {group.summary.description}
-                              </span>
-                              <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
-                                {group.items.length}
-                              </span>
-                            </summary>
-                            <ul className="mt-2 pl-3 space-y-1 border-l border-border/60">
-                              {group.items.map((item, itemIdx) => (
-                                <li key={`${group.key}-${itemIdx}`} className="text-muted-foreground">
-                                  <span className="mr-1">#{itemIdx + 1}</span>
-                                  {typeof item.line_number === "number" && (
-                                    <span className="mr-1">(行 {item.line_number})</span>
-                                  )}
-                                  {item.code_snippet && (
-                                    <code className="font-mono text-[11px]">{item.code_snippet}</code>
-                                  )}
-                                </li>
-                              ))}
-                            </ul>
-                          </details>
-                        )
-                      )}
-                      {groupedIssues.length > previewGroups.length && (
-                        <div className="text-xs text-muted-foreground">
-                          ...{" "}
-                          {t("skills.installedPage.andMore", { count: groupedIssues.length - previewGroups.length })}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {isHighRisk && (
-                <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
-                  <p className="text-sm text-destructive font-medium">
-                    {report.blocked
-                      ? t("skills.marketplace.install.blockedWarning")
-                      : t("skills.marketplace.install.highRiskWarning")}
-                  </p>
-                </div>
-              )}
+    <SkillSecurityDialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+      title={t("skills.installedPage.updateScanResult")}
+      skillName={skillName}
+      preparingLabel={t("skills.installedPage.preparingUpdate")}
+      report={report}
+      issuePreviewCount={5}
+      contentClassName="max-w-2xl max-h-[80vh] overflow-y-auto"
+      leadContent={
+        <>
+          <div className="rounded-lg bg-primary/10 p-3">
+            <div className="flex items-center gap-2 text-sm text-primary">
+              <Lightbulb className="h-4 w-4" />
+              {t("skills.installedPage.updateTip")}
             </div>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
+          </div>
 
-        <AlertDialogFooter>
+          {hasConflicts && (
+            <div className="rounded-lg border border-warning/30 bg-warning/10 p-4">
+              <div className="mb-1 font-medium text-warning">
+                {t("skills.installedPage.conflictDetected")}
+              </div>
+              <div className="mb-2 text-sm text-muted-foreground">
+                {t("skills.installedPage.conflictDescription")}
+              </div>
+              <ul className="max-h-32 space-y-1 overflow-y-auto text-xs text-warning">
+                {conflicts.slice(0, 10).map((conflict, idx) => (
+                  <li key={idx}>• {conflict}</li>
+                ))}
+                {conflicts.length > 10 && (
+                  <li className="text-muted-foreground">
+                    ... {t("skills.installedPage.andMore", { count: conflicts.length - 10 })}
+                  </li>
+                )}
+              </ul>
+              <label className="mt-3 flex cursor-pointer items-center gap-2 rounded-lg bg-card p-2">
+                <input
+                  type="checkbox"
+                  checked={forceOverwrite}
+                  onChange={(event) => setForceOverwrite(event.target.checked)}
+                  className="h-4 w-4 rounded"
+                />
+                <span className="text-sm">{t("skills.installedPage.forceOverwrite")}</span>
+              </label>
+            </div>
+          )}
+        </>
+      }
+      footer={
+        <>
           <AlertDialogCancel onClick={onClose} disabled={isConfirming}>
             {t("skills.marketplace.install.cancel")}
           </AlertDialogCancel>
-          <button
+          <SkillSecurityDialogConfirmButton
             onClick={() => onConfirm(forceOverwrite)}
-            disabled={isConfirming || report.blocked || (hasConflicts && !forceOverwrite)}
-            className="macos-button-primary disabled:opacity-50"
-          >
-            {isConfirming ? (
-              <span className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {t("skills.installedPage.applyingUpdate")}
-              </span>
-            ) : (
-              t("skills.marketplace.install.continue")
-            )}
-          </button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+            disabled={Boolean(report?.blocked) || (hasConflicts && !forceOverwrite)}
+            isLoading={isConfirming}
+            loadingLabel={t("skills.installedPage.applyingUpdate")}
+            label={
+              report?.partial_scan
+                ? t("skills.installedPage.continueUpdate")
+                : t("skills.marketplace.install.continue")
+            }
+            tone={confirmTone}
+          />
+        </>
+      }
+    />
   );
 }

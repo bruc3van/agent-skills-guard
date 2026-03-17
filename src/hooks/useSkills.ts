@@ -20,13 +20,15 @@ export function useInstalledSkills() {
 interface InstallSkillVariables {
   skillId: string;
   installPath?: string;
+  allowPartialScan?: boolean;
 }
 
 export function useInstallSkill() {
   const queryClient = useQueryClient();
 
   return useMutation<unknown, Error, InstallSkillVariables>({
-    mutationFn: ({ skillId, installPath }) => api.installSkill(skillId, installPath),
+    mutationFn: ({ skillId, installPath, allowPartialScan }) =>
+      api.installSkill(skillId, installPath, allowPartialScan),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["skills"] });
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });

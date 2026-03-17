@@ -118,7 +118,7 @@
   /* Apple 风格按钮 - 圆润、精致 */
   .apple-button {
     @apply h-9 px-5 rounded-full text-sm font-medium;
-    @apply transition-all duration-200;
+    @apply transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
     letter-spacing: -0.01em;
   }
 
@@ -243,7 +243,7 @@
   /* Apple 风格侧边栏导航 */
   .sidebar-item {
     @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium;
-    @apply text-muted-foreground transition-all duration-200;
+    @apply text-muted-foreground transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
     letter-spacing: -0.01em;
   }
 

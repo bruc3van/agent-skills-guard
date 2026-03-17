@@ -411,10 +411,11 @@ pub async fn install_skill(
     state: State<'_, AppState>,
     skill_id: String,
     install_path: Option<String>,
+    allow_partial_scan: Option<bool>,
 ) -> Result<(), String> {
     let manager = state.skill_manager.lock().await;
     manager
-        .install_skill(&skill_id, install_path)
+        .install_skill(&skill_id, install_path, allow_partial_scan.unwrap_or(false))
         .await
         .map_err(|e| e.to_string())
 }
@@ -439,10 +440,11 @@ pub async fn confirm_skill_installation(
     state: State<'_, AppState>,
     skill_id: String,
     install_path: Option<String>,
+    allow_partial_scan: Option<bool>,
 ) -> Result<(), String> {
     let manager = state.skill_manager.lock().await;
     manager
-        .confirm_skill_installation(&skill_id, install_path)
+        .confirm_skill_installation(&skill_id, install_path, allow_partial_scan.unwrap_or(false))
         .map_err(|e| e.to_string())
 }
 
@@ -1144,10 +1146,11 @@ pub async fn confirm_skill_update(
     state: State<'_, AppState>,
     skill_id: String,
     force_overwrite: bool,
+    allow_partial_scan: Option<bool>,
 ) -> Result<(), String> {
     let manager = state.skill_manager.lock().await;
     manager
-        .confirm_skill_update(&skill_id, force_overwrite)
+        .confirm_skill_update(&skill_id, force_overwrite, allow_partial_scan.unwrap_or(false))
         .map_err(|e| e.to_string())
 }
 

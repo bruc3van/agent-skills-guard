@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { appToast } from "../lib/toast";
+import { formatAppDateTime } from "@/lib/locale";
 
 export function SkillsPage() {
   const { t } = useTranslation();
@@ -125,10 +126,13 @@ export function SkillsPage() {
             <SkillCard
               key={skill.id}
               skill={skill}
-              onInstall={() => {
+              onInstall={(allowPartialScan?: boolean) => {
                 setInstallingSkillId(skill.id);
                 installMutation.mutate(
-                  { skillId: skill.id },
+                  {
+                    skillId: skill.id,
+                    allowPartialScan: allowPartialScan ?? false,
+                  },
                   {
                     onSuccess: () => {
                       setInstallingSkillId(null);
@@ -195,7 +199,7 @@ export function SkillsPage() {
 
 interface SkillCardProps {
   skill: Skill;
-  onInstall: () => void;
+  onInstall: (allowPartialScan?: boolean) => void;
   onUninstall: () => void;
   onDelete: () => void;
   isInstalling: boolean;
@@ -218,6 +222,7 @@ function SkillCard({
   getSecurityBadge,
   t,
 }: SkillCardProps) {
+  const { i18n } = useTranslation();
   const [showDetails, setShowDetails] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -238,10 +243,15 @@ function SkillCard({
     }
   };
 
+  const hasPartialScan = Boolean(
+    skill.security_report?.partial_scan || skill.security_report?.skipped_files?.length
+  );
+
   const handleInstallClick = () => {
     if (
       (skill.security_score != null && skill.security_score < 70) ||
-      (skill.security_issues && skill.security_issues.length > 0)
+      (skill.security_issues && skill.security_issues.length > 0) ||
+      hasPartialScan
     ) {
       setShowConfirm(true);
     } else {
@@ -251,7 +261,7 @@ function SkillCard({
 
   const confirmInstall = () => {
     setShowConfirm(false);
-    onInstall();
+    onInstall(hasPartialScan);
   };
 
   return (
@@ -322,6 +332,8 @@ function SkillCard({
           <button
             onClick={onDelete}
             disabled={isAnyOperationPending}
+            aria-label={`${t("common.delete")}: ${skill.name}`}
+            title={`${t("common.delete")}: ${skill.name}`}
             className="px-3 py-2 rounded-lg border border-border bg-card text-muted-foreground hover:border-destructive hover:text-destructive transition-all disabled:opacity-50"
           >
             {isDeleting ? (
@@ -389,6 +401,8 @@ function SkillCard({
               <p className="text-primary mb-1">{t("skills.localPath")}:</p>
               <button
                 onClick={handleOpenFolder}
+                aria-label={`${t("skills.openFolder")}: ${skill.local_path}`}
+                title={`${t("skills.openFolder")}: ${skill.local_path}`}
                 className="text-muted-foreground break-all hover:text-primary transition-colors flex items-center gap-2"
               >
                 <FolderOpen className="w-4 h-4 flex-shrink-0" />
@@ -430,7 +444,7 @@ function SkillCard({
           {skill.installed_at && (
             <DetailItem
               label={t("skills.installedAt")}
-              value={new Date(skill.installed_at).toLocaleString("zh-CN")}
+              value={formatAppDateTime(skill.installed_at, i18n.language)}
             />
           )}
         </div>
@@ -479,6 +493,17 @@ function SkillCard({
                     </li>
                   )}
                 </ul>
+              </div>
+            )}
+
+            {hasPartialScan && (
+              <div className="mb-4 p-3 bg-warning/10 border border-warning/30 rounded-lg">
+                <p className="text-xs text-warning font-medium mb-1">
+                  {t("skills.marketplace.install.partialScanTitle")}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t("skills.marketplace.install.partialScanDescription")}
+                </p>
               </div>
             )}
 

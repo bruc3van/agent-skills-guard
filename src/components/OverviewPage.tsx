@@ -108,6 +108,8 @@ export function OverviewPage() {
       let installedPluginsCount = 0;
       let scannedPluginsCount = 0;
       let installedSkillsCount = 0;
+      let failedSkillsCount = 0;
+      let failedPluginsCount = 0;
 
       const scanConcurrency = getScanConcurrency();
 
@@ -151,6 +153,7 @@ export function OverviewPage() {
               await api.scanInstalledPlugin(plugin.id, i18n.language, undefined, undefined, true);
               scannedPluginsCount += 1;
             } catch (e) {
+              failedPluginsCount += 1;
               console.error("补扫插件失败:", plugin.name, e);
             } finally {
               setScanStatus((prev) => {
@@ -175,6 +178,7 @@ export function OverviewPage() {
               const result = await api.scanInstalledSkill(skill.id, i18n.language);
               results.push(result);
             } catch (e) {
+              failedSkillsCount += 1;
               console.error("补扫技能失败:", skill.name, e);
             } finally {
               setScanStatus((prev) => {
@@ -246,6 +250,8 @@ export function OverviewPage() {
           installedPluginsCount,
           scannedPluginsCount,
           extraLocalScannedCount,
+          failedSkillsCount,
+          failedPluginsCount,
         };
       }
 
@@ -297,6 +303,7 @@ export function OverviewPage() {
             await api.scanInstalledPlugin(plugin.id, i18n.language, undefined, undefined, true);
             scannedPluginsCount += 1;
           } catch (e) {
+            failedPluginsCount += 1;
             console.error("扫描插件失败:", plugin.name, e);
           } finally {
             setScanStatus((prev) => {
@@ -322,6 +329,7 @@ export function OverviewPage() {
             const result = await api.scanInstalledSkill(skill.id, i18n.language);
             results.push(result);
           } catch (e) {
+            failedSkillsCount += 1;
             console.error("扫描技能失败:", skill.name, e);
           } finally {
             setScanStatus((prev) => {
@@ -378,6 +386,8 @@ export function OverviewPage() {
         installedPluginsCount,
         scannedPluginsCount,
         extraLocalScannedCount,
+        failedSkillsCount,
+        failedPluginsCount,
       };
     },
     onSuccess: ({
@@ -386,21 +396,33 @@ export function OverviewPage() {
       installedPluginsCount,
       scannedPluginsCount,
       extraLocalScannedCount,
+      failedSkillsCount,
+      failedPluginsCount,
     }) => {
       queryClient.invalidateQueries({ queryKey: ["scanResults"] });
       queryClient.invalidateQueries({ queryKey: ["skills"] });
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
       queryClient.invalidateQueries({ queryKey: ["plugins"] });
       queryClient.invalidateQueries({ queryKey: ["claudeMarketplaces"] });
-      appToast.success(
-        t("overview.scan.allCompleted", {
-          localCount: localSkillsCount,
-          scannedCount: results.length + extraLocalScannedCount,
-          pluginCount: installedPluginsCount,
-          scannedPluginsCount,
-        }),
-        { duration: 4000 }
-      );
+      const hasFailures = failedSkillsCount > 0 || failedPluginsCount > 0;
+      const toastMessage = hasFailures
+        ? t("overview.scan.partialCompleted", {
+            scannedCount: results.length + extraLocalScannedCount,
+            scannedPluginsCount,
+            failedSkillsCount,
+            failedPluginsCount,
+          })
+        : t("overview.scan.allCompleted", {
+            localCount: localSkillsCount,
+            scannedCount: results.length + extraLocalScannedCount,
+            pluginCount: installedPluginsCount,
+            scannedPluginsCount,
+          });
+      if (hasFailures) {
+        appToast.warning(toastMessage, { duration: 5000 });
+      } else {
+        appToast.success(toastMessage, { duration: 4000 });
+      }
     },
     onError: (error: any) => {
       appToast.error(t("overview.scan.failed", { error: error.message }), { duration: 4000 });
@@ -541,7 +563,9 @@ export function OverviewPage() {
         if (skill?.local_path) {
           await invoke("open_skill_directory", { localPath: skill.local_path });
         } else {
-          appToast.error("无法找到技能路径", { duration: 4000 });
+          appToast.error(t("skills.folder.skillPathNotFound"), {
+            duration: 4000,
+          });
         }
       } else {
         const path = item.local_path;
@@ -552,7 +576,9 @@ export function OverviewPage() {
             await openPath(path);
           }
         } else {
-          appToast.error("无法找到插件路径", { duration: 4000 });
+          appToast.error(t("skills.folder.pluginPathNotFound"), {
+            duration: 4000,
+          });
         }
       }
     } catch (error: any) {

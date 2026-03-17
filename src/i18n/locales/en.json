@@ -21,6 +21,12 @@
     "empty": "MARKET_IS_EMPTY",
     "scanningRepositories": "Scanning repositories in background, please wait...",
     "goToRepositories": "GO_TO_REPOSITORIES",
+    "busy": {
+      "refreshing": "Refreshing marketplace content...",
+      "preparingSkill": "Preparing skill install: {{name}}",
+      "installingSkill": "Installing skill: {{name}}",
+      "installingPlugin": "Installing plugin: {{name}}"
+    },
     "tabs": {
       "all": "ALL ({{count}})",
       "skills": "SKILLS ({{count}})",
@@ -57,7 +63,27 @@
     "empty": {
       "all": "NO_INSTALLED_ITEMS",
       "noResults": "No items found containing \"{{query}}\"",
+      "noUpdates": "No updatable items match the current filters",
       "clearFilters": "CLEAR_FILTERS"
+    },
+    "updatesFocus": {
+      "title": "{{count}} updatable items found",
+      "all": "All {{count}}",
+      "skills": "Skills {{count}}",
+      "plugins": "Plugins {{count}}",
+      "marketplaces": "Marketplaces {{count}}",
+      "showOnly": "Only updates",
+      "showAll": "Show all"
+    },
+    "busy": {
+      "checkUpdates": "Checking installed item status...",
+      "prepareSkillUpdate": "Preparing skill update: {{name}}",
+      "applySkillUpdate": "Applying skill update: {{name}}",
+      "uninstallSkill": "Uninstalling skill: {{name}}",
+      "uninstallPlugin": "Uninstalling plugin: {{name}}",
+      "updatePlugin": "Updating plugin: {{name}}",
+      "updateMarketplace": "Updating marketplace: {{name}}",
+      "removeMarketplace": "Removing marketplace: {{name}}"
     }
   },
   "footer": {
@@ -161,6 +187,9 @@
         "warningTitle": "⚠️ Strongly Recommended NOT to Install This Skill!",
         "warningMessage": "Severe security threats detected that may harm your system or data.",
         "blocked": "This Skill has severe security risks and has been blocked",
+        "partialScanTitle": "Some files were not fully scanned",
+        "partialScanDescription": "The following files were not completely scanned. If you trust the source, you can proceed cautiously, but cleaning these files and retrying is still recommended.",
+        "partialScanUnknown": "Some files were truncated or skipped during scanning",
         "preparationFailed": "Installation preparation failed"
       }
     },
@@ -183,6 +212,7 @@
       "preparingUpdate": "Preparing Update",
       "securityChecking": "Security Check...",
       "applyingUpdate": "Applying Update...",
+      "continueUpdate": "Continue Update",
       "updateScanResult": "Update Security Scan Result",
       "updateTip": "Before updating: Close Claude CLI and any editors (like VSCode) that may have skill files open to avoid file access issues",
       "conflictDetected": "File Conflicts Detected",
@@ -204,7 +234,10 @@
     },
     "folder": {
       "opened": "FOLDER_OPENED",
-      "openFailed": "OPEN_FOLDER_FAILED: {{error}}"
+      "openFailed": "OPEN_FOLDER_FAILED: {{error}}",
+      "notFound": "Cannot find {{target}} path",
+      "skillPathNotFound": "Cannot find skill path",
+      "pluginPathNotFound": "Cannot find plugin path"
     },
     "pathSelection": {
       "selectPath": "Select Installation Path",
@@ -328,6 +361,17 @@
   },
   "repositories": {
     "title": "REPOSITORIES",
+    "busy": {
+      "refreshingFeaturedMarketplaces": "Refreshing featured marketplaces...",
+      "refreshingFeaturedRepositories": "Refreshing featured repositories...",
+      "refreshingRepositoryCache": "Refreshing repository cache...",
+      "scanningRepository": "Scanning repository...",
+      "deletingRepository": "Deleting repository...",
+      "addingFeaturedMarketplace": "Adding featured marketplace...",
+      "addingRepository": "Adding repository...",
+      "preparingInstall": "Preparing skill install...",
+      "installingSkill": "Installing skill..."
+    },
     "tabs": {
       "featuredMarketplaces": "FEATURED_MARKETPLACES",
       "featured": "FEATURED_REPOSITORIES",
@@ -510,6 +554,7 @@
       "localSkillsFound": "FOUND {{count}} LOCAL_SKILLS",
       "localSkillsFailed": "LOCAL_SCAN_FAILED: {{error}}",
       "completed": "SECURITY_SCAN_COMPLETE: {{count}} SKILLS_SCANNED",
+      "partialCompleted": "Scan partially completed: {{scannedCount}} skills and {{scannedPluginsCount}} plugins scanned, with {{failedSkillsCount}} skills and {{failedPluginsCount}} plugins failed",
       "failed": "SECURITY_SCAN_FAILED: {{error}}",
       "allCompleted": "SCAN_COMPLETE: {{localCount}} LOCAL_SKILLS_FOUND, PLUGINS {{pluginCount}}, {{scannedCount}} SKILLS_SCANNED, {{scannedPluginsCount}} PLUGINS_SCANNED"
     },

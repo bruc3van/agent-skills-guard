@@ -113,6 +113,7 @@ impl SkillManager {
         &self,
         report: &crate::models::SecurityReport,
         operation: &str,
+        allow_partial_scan: bool,
     ) -> Result<()> {
         if report.blocked || !report.hard_trigger_issues.is_empty() {
             let mut error_msg = format!(
@@ -126,7 +127,7 @@ impl SkillManager {
             anyhow::bail!(error_msg);
         }
 
-        if report.partial_scan {
+        if report.partial_scan && !allow_partial_scan {
             let mut error_msg = format!(
                 "⛔ 安全扫描未完整覆盖全部内容，已禁止{}。\n\n以下文件未被完整扫描：\n",
                 operation
@@ -149,6 +150,7 @@ impl SkillManager {
         &self,
         dir: &Path,
         skill_id: &str,
+        allow_partial_scan: bool,
     ) -> Result<crate::models::SecurityReport> {
         let locale = rust_i18n::locale();
         let report = self.scanner.scan_directory_with_options(
@@ -158,7 +160,7 @@ impl SkillManager {
             ScanOptions { skip_readme: true },
             None,
         )?;
-        self.enforce_installable_report(&report, "安装或更新技能")?;
+        self.enforce_installable_report(&report, "安装或更新技能", allow_partial_scan)?;
         Ok(report)
     }
 
@@ -221,7 +223,12 @@ impl SkillManager {
     }
 
     /// 安装 skill 到本地
-    pub async fn install_skill(&self, skill_id: &str, install_path: Option<String>) -> Result<()> {
+    pub async fn install_skill(
+        &self,
+        skill_id: &str,
+        install_path: Option<String>,
+        allow_partial_scan: bool,
+    ) -> Result<()> {
         // 从数据库获取 skill
         let mut skill = self
             .db
@@ -342,7 +349,9 @@ impl SkillManager {
             scan_report.scanned_files.len()
         );
 
-        if let Err(error) = self.enforce_installable_report(&scan_report, "安装技能") {
+        if let Err(error) =
+            self.enforce_installable_report(&scan_report, "安装技能", allow_partial_scan)
+        {
             if prepared_dir.exists() {
                 std::fs::remove_dir_all(&prepared_dir)?;
             }
@@ -588,6 +597,7 @@ impl SkillManager {
         &self,
         skill_id: &str,
         install_path: Option<String>,
+        allow_partial_scan: bool,
     ) -> Result<()> {
         use anyhow::Context;
         use std::path::PathBuf;
@@ -630,7 +640,11 @@ impl SkillManager {
         let skill_dir_name = skill_dir_name.to_string_lossy().to_string();
         let prepared_dir = self.create_temp_install_dir(&install_base_dir, &skill_dir_name)?;
 
-        let scan_report = self.rescan_skill_directory_for_confirmation(&cache_dir, &skill.id)?;
+        let scan_report = self.rescan_skill_directory_for_confirmation(
+            &cache_dir,
+            &skill.id,
+            allow_partial_scan,
+        )?;
 
         // 从缓存复制到目标路径
         log::info!(
@@ -1269,7 +1283,12 @@ impl SkillManager {
     }
 
     /// 确认技能更新：从 staging 写入到安装目录，并在缓存目录保留备份
-    pub fn confirm_skill_update(&self, skill_id: &str, force_overwrite: bool) -> Result<()> {
+    pub fn confirm_skill_update(
+        &self,
+        skill_id: &str,
+        force_overwrite: bool,
+        allow_partial_scan: bool,
+    ) -> Result<()> {
         use anyhow::Context;
 
         log::info!("Confirming update for skill: {}", skill_id);
@@ -1395,7 +1414,11 @@ impl SkillManager {
         // 确保目标父目录存在
         std::fs::create_dir_all(&target_install_dir.parent().context("无效的安装路径")?)?;
 
-        let scan_report = self.rescan_skill_directory_for_confirmation(&staging_dir, &skill.id)?;
+        let scan_report = self.rescan_skill_directory_for_confirmation(
+            &staging_dir,
+            &skill.id,
+            allow_partial_scan,
+        )?;
 
         // 如果前面“移动备份”成功，目标目录已不存在；先创建一个干净目录
         if !target_install_dir.exists() {

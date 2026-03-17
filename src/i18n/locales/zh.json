@@ -21,6 +21,12 @@
     "empty": "市场暂无内容",
     "scanningRepositories": "正在后台扫描仓库，请稍候...",
     "goToRepositories": "前往仓库页面",
+    "busy": {
+      "refreshing": "正在同步市场内容...",
+      "preparingSkill": "正在准备安装技能：{{name}}",
+      "installingSkill": "正在安装技能：{{name}}",
+      "installingPlugin": "正在安装插件：{{name}}"
+    },
     "tabs": {
       "all": "全部 ({{count}})",
       "skills": "技能 ({{count}})",
@@ -57,7 +63,27 @@
     "empty": {
       "all": "暂无已安装内容",
       "noResults": "没有找到包含\"{{query}}\"的内容",
+      "noUpdates": "当前筛选条件下没有可更新内容",
       "clearFilters": "清除筛选"
+    },
+    "updatesFocus": {
+      "title": "发现 {{count}} 个可更新项",
+      "all": "全部 {{count}}",
+      "skills": "技能 {{count}}",
+      "plugins": "插件 {{count}}",
+      "marketplaces": "市场 {{count}}",
+      "showOnly": "仅看可更新",
+      "showAll": "查看全部"
+    },
+    "busy": {
+      "checkUpdates": "正在检查已安装内容的状态...",
+      "prepareSkillUpdate": "正在准备更新技能：{{name}}",
+      "applySkillUpdate": "正在更新技能：{{name}}",
+      "uninstallSkill": "正在卸载技能：{{name}}",
+      "uninstallPlugin": "正在卸载插件：{{name}}",
+      "updatePlugin": "正在更新插件：{{name}}",
+      "updateMarketplace": "正在更新市场：{{name}}",
+      "removeMarketplace": "正在移除市场：{{name}}"
     }
   },
   "footer": {
@@ -161,6 +187,9 @@
         "warningTitle": "⚠️ 强烈建议不要安装此 Skill！",
         "warningMessage": "检测到严重安全威胁，可能危害您的系统或数据。",
         "blocked": "该 Skill 存在严重安全风险，已被阻止安装",
+        "partialScanTitle": "部分内容未完成安全扫描",
+        "partialScanDescription": "以下文件未被完整扫描。若确认来源可信，可以谨慎继续安装或更新，但仍建议优先清理这些文件后再试。",
+        "partialScanUnknown": "扫描过程中存在被截断或跳过的文件",
         "preparationFailed": "安装准备失败"
       }
     },
@@ -183,6 +212,7 @@
       "preparingUpdate": "准备更新",
       "securityChecking": "安全检查中",
       "applyingUpdate": "正在更新",
+      "continueUpdate": "继续更新",
       "updateScanResult": "更新安全扫描结果",
       "updateTip": "建议在更新前：关闭 Claude CLI、关闭可能打开技能文件的编辑器（如 VSCode），以避免文件占用问题",
       "conflictDetected": "检测到文件冲突",
@@ -204,7 +234,10 @@
     },
     "folder": {
       "opened": "已打开文件夹",
-      "openFailed": "打开文件夹失败：{{error}}"
+      "openFailed": "打开文件夹失败：{{error}}",
+      "notFound": "无法找到{{target}}路径",
+      "skillPathNotFound": "无法找到技能路径",
+      "pluginPathNotFound": "无法找到插件路径"
     },
     "pathSelection": {
       "selectPath": "选择安装路径",
@@ -328,6 +361,17 @@
   },
   "repositories": {
     "title": "仓库",
+    "busy": {
+      "refreshingFeaturedMarketplaces": "正在刷新精选市场...",
+      "refreshingFeaturedRepositories": "正在刷新精选仓库...",
+      "refreshingRepositoryCache": "正在刷新仓库缓存...",
+      "scanningRepository": "正在扫描仓库...",
+      "deletingRepository": "正在删除仓库...",
+      "addingFeaturedMarketplace": "正在添加精选市场...",
+      "addingRepository": "正在添加仓库...",
+      "preparingInstall": "正在准备安装技能...",
+      "installingSkill": "正在安装技能..."
+    },
     "tabs": {
       "featuredMarketplaces": "精选市场",
       "featured": "精选仓库",
@@ -510,6 +554,7 @@
       "localSkillsFound": "发现 {{count}} 个本地技能",
       "localSkillsFailed": "扫描本地技能失败：{{error}}",
       "completed": "安全扫描完成，已扫描 {{count}} 个技能",
+      "partialCompleted": "扫描部分完成：已扫描 {{scannedCount}} 个技能、{{scannedPluginsCount}} 个插件，另有 {{failedSkillsCount}} 个技能、{{failedPluginsCount}} 个插件失败",
       "failed": "安全扫描失败：{{error}}",
       "allCompleted": "扫描完成：发现 {{localCount}} 个技能， {{pluginCount}} 个插件，安全扫描 {{scannedCount}} 个技能， {{scannedPluginsCount}} 个插件"
     },

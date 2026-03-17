@@ -6,32 +6,35 @@ import type { Plugin, PluginInstallResult, Skill } from "../types";
 import { SecurityReport } from "../types/security";
 import {
   Download,
-  AlertTriangle,
   Loader2,
   Search,
   SearchX,
   RefreshCw,
-  XCircle,
   CheckCircle,
   ShieldCheck,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { formatRepositoryTag, parseRepositoryOwner } from "../lib/utils";
 import { invoke } from "@tauri-apps/api/core";
-import { countIssuesBySeverity, groupIssuesBySignature } from "@/lib/security-utils";
+import { api } from "@/lib/api";
 import { addRecentInstallPath, getPluginScanPromptEnabled } from "@/lib/storage";
 import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
 import { InstallPathSelector } from "./InstallPathSelector";
 import { appToast } from "@/lib/toast";
+import { PageBusyNotice } from "./ui/PageBusyNotice";
 import {
   AlertDialog,
+  AlertDialogCancel,
   AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
   AlertDialogDescription,
   AlertDialogFooter,
-  AlertDialogCancel,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from "./ui/alert-dialog";
+import {
+  SkillSecurityDialog,
+  SkillSecurityDialogConfirmButton,
+} from "./ui/SkillSecurityDialog";
 
 interface MarketplacePageProps {
   onNavigateToRepositories?: () => void;
@@ -142,6 +145,30 @@ export function MarketplacePage({
     installingPluginId !== null;
 
   const isLoading = isSkillsLoading || isPluginsLoading;
+  const pageBusyMessage = useMemo(() => {
+    if (isRefreshing) return t("market.busy.refreshing");
+    if (preparingSkillId) {
+      const skill = allSkills.find((item) => item.id === preparingSkillId);
+      return t("market.busy.preparingSkill", { name: skill?.name ?? "" });
+    }
+    if (installingSkillId) {
+      const skill = allSkills.find((item) => item.id === installingSkillId);
+      return t("market.busy.installingSkill", { name: skill?.name ?? "" });
+    }
+    if (installingPluginId) {
+      const plugin = plugins.find((item) => item.id === installingPluginId);
+      return t("market.busy.installingPlugin", { name: plugin?.name ?? "" });
+    }
+    return null;
+  }, [
+    allSkills,
+    installingPluginId,
+    installingSkillId,
+    isRefreshing,
+    plugins,
+    preparingSkillId,
+    t,
+  ]);
 
   useEffect(() => {
     if (!presetFilter) return;
@@ -290,14 +317,7 @@ export function MarketplacePage({
 
   return (
     <div className="flex flex-col h-full">
-      <div
-        className="flex-shrink-0 border-b border-border/50"
-        onWheel={(e) => {
-          if (!listContainerRef.current) return;
-          listContainerRef.current.scrollBy({ top: e.deltaY });
-          e.preventDefault();
-        }}
-      >
+      <div className="flex-shrink-0 border-b border-border/50">
         <div className="px-8 pt-8 pb-4" style={{ animation: "fadeIn 0.4s ease-out" }}>
           <div className="max-w-6xl mx-auto">
             <div
@@ -369,14 +389,16 @@ export function MarketplacePage({
                 options={repositoryOptions}
                 className="min-w-[200px]"
               />
-
             </div>
+
+            {pageBusyMessage && <div className="mt-4"><PageBusyNotice message={pageBusyMessage} /></div>}
           </div>
         </div>
       </div>
 
       <div
         ref={listContainerRef}
+        aria-busy={pageBusyMessage ? "true" : "false"}
         className="flex-1 overflow-y-auto overscroll-contain px-8 pb-8"
         onScroll={(e) => {
           const top = (e.currentTarget as HTMLDivElement).scrollTop;
@@ -576,10 +598,13 @@ export function MarketplacePage({
             pendingInstall: null,
           }));
           try {
-            await invoke("confirm_skill_installation", {
+            await api.confirmSkillInstallation(
               skillId,
-              installPath: selectedPath,
-            });
+              selectedPath,
+              Boolean(
+                pendingInstall.report?.partial_scan || pendingInstall.report?.skipped_files?.length
+              )
+            );
             addRecentInstallPath(selectedPath);
             await queryClient.refetchQueries({ queryKey: ["skills"] });
             await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
@@ -735,6 +760,24 @@ function SkillCard({
           <button
             onClick={onInstall}
             disabled={isAnyOperationPending}
+            aria-label={
+              isPreparing
+                ? `${t("skills.scanning")}: ${skill.name}`
+                : isInstalling
+                  ? `${t("skills.installing")}: ${skill.name}`
+                  : skill.installed
+                    ? `${t("skills.installToOther")}: ${skill.name}`
+                    : `${t("skills.install")}: ${skill.name}`
+            }
+            title={
+              isPreparing
+                ? `${t("skills.scanning")}: ${skill.name}`
+                : isInstalling
+                  ? `${t("skills.installing")}: ${skill.name}`
+                  : skill.installed
+                    ? `${t("skills.installToOther")}: ${skill.name}`
+                    : `${t("skills.install")}: ${skill.name}`
+            }
             className="apple-button-primary h-8 px-3 text-xs flex items-center gap-1.5 disabled:opacity-50"
           >
             {isPreparing ? (
@@ -763,6 +806,7 @@ function SkillCard({
       <div className="relative mb-3">
         <p
           ref={descriptionRef}
+          title={isDescriptionTruncated && skill.description ? skill.description : undefined}
           className="text-sm text-muted-foreground leading-5 h-[3.75rem] overflow-hidden [display:-webkit-box] [-webkit-line-clamp:3] [-webkit-box-orient:vertical] peer"
         >
           {skill.description || t("skills.noDescription")}
@@ -868,6 +912,24 @@ function PluginCard({
           <button
             onClick={onInstall}
             disabled={isAnyOperationPending || plugin.installed || isUnsupported}
+            aria-label={
+              plugin.installed
+                ? `${t("market.installed")}: ${plugin.name}`
+                : isUnsupported
+                  ? `${t("plugins.unsupported")}: ${plugin.name}`
+                  : isInstalling
+                    ? `${t("plugins.installing")}: ${plugin.name}`
+                    : `${t("plugins.install")}: ${plugin.name}`
+            }
+            title={
+              plugin.installed
+                ? `${t("market.installed")}: ${plugin.name}`
+                : isUnsupported
+                  ? `${t("plugins.unsupported")}: ${plugin.name}`
+                  : isInstalling
+                    ? `${t("plugins.installing")}: ${plugin.name}`
+                    : `${t("plugins.install")}: ${plugin.name}`
+            }
             className="apple-button-primary h-8 px-3 text-xs flex items-center gap-1.5 disabled:opacity-50"
           >
             {plugin.installed ? (
@@ -895,6 +957,7 @@ function PluginCard({
       <div className="relative mb-3">
         <p
           ref={descriptionRef}
+          title={isDescriptionTruncated && plugin.description ? plugin.description : undefined}
           className="text-sm text-muted-foreground leading-5 h-[3.75rem] overflow-hidden [display:-webkit-box] [-webkit-line-clamp:3] [-webkit-box-orient:vertical] peer"
         >
           {plugin.description || t("plugins.noDescription")}
@@ -1051,172 +1114,55 @@ function InstallConfirmDialog({
   const { t } = useTranslation();
   const [selectedPath, setSelectedPath] = useState<string>("");
 
-  const isMediumRisk = report ? report.score >= 50 && report.score < 70 : false;
-  const isHighRisk = report ? report.score < 50 || report.blocked : false;
+  useEffect(() => {
+    if (!open) setSelectedPath("");
+  }, [open]);
 
-  const issueCounts = useMemo(
-    () => (report ? countIssuesBySeverity(report.issues) : { critical: 0, error: 0, warning: 0 }),
-    [report]
-  );
-  const groupedIssues = useMemo(() => (report ? groupIssuesBySignature(report.issues) : []), [report]);
-  const previewGroups = useMemo(() => groupedIssues.slice(0, 3), [groupedIssues]);
-
-  if (!report) return null;
+  const confirmTone = !report
+    ? "primary"
+    : report.score < 50 || report.blocked
+      ? "destructive"
+      : report.partial_scan || report.score < 70
+        ? "warning"
+        : "success";
 
   return (
-    <AlertDialog open={open} onOpenChange={onClose}>
-      <AlertDialogContent className="max-w-2xl">
-        <AlertDialogHeader>
-          <AlertDialogTitle className="flex items-center gap-2">
-            {isHighRisk ? (
-              <XCircle className="w-5 h-5 text-destructive" />
-            ) : isMediumRisk ? (
-              <AlertTriangle className="w-5 h-5 text-warning" />
-            ) : (
-              <CheckCircle className="w-5 h-5 text-success" />
-            )}
-            {t("skills.marketplace.install.scanResult")}
-          </AlertDialogTitle>
-          <AlertDialogDescription asChild>
-            <div className="space-y-4 pb-4">
-              <div>
-                {t("skills.marketplace.install.preparingInstall")}:{" "}
-                <span className="font-semibold">{skillName}</span>
-              </div>
-
-              {/* Issue Summary */}
-              {report.issues.length > 0 && (
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">
-                    {t("skills.marketplace.install.issuesDetected")}:
-                  </div>
-                  <div className="flex gap-4 text-sm">
-                    {issueCounts.critical > 0 && (
-                      <span className="text-destructive">
-                        {t("skills.marketplace.install.critical")}: {issueCounts.critical}
-                      </span>
-                    )}
-                    {issueCounts.error > 0 && (
-                      <span className="text-warning">
-                        {t("skills.marketplace.install.highRisk")}: {issueCounts.error}
-                      </span>
-                    )}
-                    {issueCounts.warning > 0 && (
-                      <span className="text-warning">
-                        {t("skills.marketplace.install.mediumRisk")}: {issueCounts.warning}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Issue List */}
-              {report.issues.length > 0 && (
-                <div
-                  className={`p-3 rounded-lg ${
-                    isHighRisk
-                      ? "bg-destructive/10 border border-destructive/30"
-                      : isMediumRisk
-                        ? "bg-warning/10 border border-warning/30"
-                        : "bg-success/10 border border-success/30"
-                  }`}
-                >
-                  <div className="space-y-2 text-sm">
-                    {previewGroups.map((group) =>
-                      group.items.length === 1 ? (
-                        <div key={group.key} className="text-xs">
-                          {group.summary.file_path && (
-                            <span className="text-primary mr-1.5">[{group.summary.file_path}]</span>
-                          )}
-                          {group.summary.description}
-                          {typeof group.summary.line_number === "number" && (
-                            <span className="text-muted-foreground ml-2">
-                              (行 {group.summary.line_number})
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <details key={group.key} className="text-xs">
-                          <summary className="cursor-pointer list-none flex items-center justify-between gap-2">
-                            <span className="min-w-0 truncate">
-                              {group.summary.file_path && (
-                                <span className="text-primary mr-1.5">[{group.summary.file_path}]</span>
-                              )}
-                              {group.summary.description}
-                            </span>
-                            <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
-                              {group.items.length}
-                            </span>
-                          </summary>
-                          <ul className="mt-2 pl-3 space-y-1 border-l border-border/60">
-                            {group.items.map((item, itemIdx) => (
-                              <li key={`${group.key}-${itemIdx}`} className="text-muted-foreground">
-                                <span className="mr-1">#{itemIdx + 1}</span>
-                                {typeof item.line_number === "number" && (
-                                  <span className="mr-1">(行 {item.line_number})</span>
-                                )}
-                                {item.code_snippet && (
-                                  <code className="font-mono text-[11px]">{item.code_snippet}</code>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
-                        </details>
-                      )
-                    )}
-                    {groupedIssues.length > previewGroups.length && (
-                      <div className="text-xs text-muted-foreground">
-                        ... {t("skills.installedPage.andMore", { count: groupedIssues.length - previewGroups.length })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Warning */}
-              {isHighRisk && (
-                <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-sm">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-                    <div>
-                      <strong className="block mb-1">
-                        {t("skills.marketplace.install.warningTitle")}
-                      </strong>
-                      {t("skills.marketplace.install.warningMessage")}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-
-        {/* Path Selector */}
-        <div className="py-4 border-t border-border">
+    <SkillSecurityDialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+      title={t("skills.marketplace.install.scanResult")}
+      skillName={skillName}
+      preparingLabel={t("skills.marketplace.install.preparingInstall")}
+      report={report}
+      issuePreviewCount={3}
+      contentClassName="max-w-2xl"
+      extraContent={
+        <div className="border-t border-border py-4">
           <InstallPathSelector onSelect={setSelectedPath} />
         </div>
-
-        <AlertDialogFooter>
+      }
+      footer={
+        <>
           <AlertDialogCancel onClick={onClose}>
             {t("skills.marketplace.install.cancel")}
           </AlertDialogCancel>
-          <button
+          <SkillSecurityDialogConfirmButton
             onClick={() => onConfirm(selectedPath)}
             disabled={!selectedPath}
-            className={`px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors ${
-              isHighRisk
-                ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                : isMediumRisk
-                  ? "bg-warning text-white hover:bg-warning/90"
-                  : "bg-success text-white hover:bg-success/90"
-            }`}
-          >
-            {isHighRisk
-              ? t("skills.marketplace.install.installAnyway")
-              : t("skills.marketplace.install.confirmInstall")}
-          </button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+            loadingLabel={t("skills.installing")}
+            label={
+              report?.partial_scan
+                ? t("skills.marketplace.install.installCautiously")
+                : report && (report.score < 50 || report.blocked)
+                ? t("skills.marketplace.install.installAnyway")
+                : t("skills.marketplace.install.confirmInstall")
+            }
+            tone={confirmTone}
+          />
+        </>
+      }
+    />
   );
 }

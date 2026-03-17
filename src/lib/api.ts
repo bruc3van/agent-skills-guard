@@ -46,8 +46,28 @@ export const api = {
     return invoke("get_installed_skills");
   },
 
-  async installSkill(skillId: string, installPath?: string): Promise<void> {
-    return invoke("install_skill", { skillId, installPath: installPath || null });
+  async installSkill(
+    skillId: string,
+    installPath?: string,
+    allowPartialScan = false
+  ): Promise<void> {
+    return invoke("install_skill", {
+      skillId,
+      installPath: installPath || null,
+      allowPartialScan,
+    });
+  },
+
+  async confirmSkillInstallation(
+    skillId: string,
+    installPath?: string,
+    allowPartialScan = false
+  ): Promise<void> {
+    return invoke("confirm_skill_installation", {
+      skillId,
+      installPath: installPath || null,
+      allowPartialScan,
+    });
   },
 
   async uninstallSkill(skillId: string): Promise<void> {
@@ -123,8 +143,12 @@ export const api = {
     return invoke("prepare_skill_update", { skillId, locale });
   },
 
-  async confirmSkillUpdate(skillId: string, forceOverwrite: boolean): Promise<void> {
-    return invoke("confirm_skill_update", { skillId, forceOverwrite });
+  async confirmSkillUpdate(
+    skillId: string,
+    forceOverwrite: boolean,
+    allowPartialScan = false
+  ): Promise<void> {
+    return invoke("confirm_skill_update", { skillId, forceOverwrite, allowPartialScan });
   },
 
   async cancelSkillUpdate(skillId: string): Promise<void> {

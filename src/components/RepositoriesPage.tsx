@@ -16,9 +16,6 @@ import {
   X,
   RefreshCw,
   Download,
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -30,16 +27,21 @@ import type { SecurityReport } from "../types/security";
 import { invoke } from "@tauri-apps/api/core";
 import { InstallPathSelector } from "./InstallPathSelector";
 import { addRecentInstallPath } from "@/lib/storage";
-import { countIssuesBySeverity } from "@/lib/security-utils";
+import { formatAppDate, formatAppDateTime } from "@/lib/locale";
+import { PageBusyNotice } from "./ui/PageBusyNotice";
 import {
   AlertDialog,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogDescription,
   AlertDialogFooter,
-  AlertDialogCancel,
 } from "./ui/alert-dialog";
+import {
+  SkillSecurityDialog,
+  SkillSecurityDialogConfirmButton,
+} from "./ui/SkillSecurityDialog";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -49,7 +51,11 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
 }
 
-function formatDate(dateStr: string, t: (key: string, options?: any) => string): string {
+function formatDate(
+  dateStr: string,
+  language: string,
+  t: (key: string, options?: any) => string
+): string {
   const date = new Date(dateStr);
   const now = new Date();
   const diff = now.getTime() - date.getTime();
@@ -59,7 +65,7 @@ function formatDate(dateStr: string, t: (key: string, options?: any) => string):
   if (days === 1) return t("repositories.date.yesterday");
   if (days < 7) return t("repositories.date.daysAgo", { days });
 
-  return date.toLocaleDateString();
+  return formatAppDate(date, language);
 }
 
 function hasFeaturedMarketplacesChanged(
@@ -301,6 +307,58 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
     });
   }, [activeTab, showAddForm]);
 
+  const pageBusyMessage = useMemo(() => {
+    if (refreshFeaturedMarketplacesMutation.isPending) {
+      return t("repositories.busy.refreshFeaturedMarketplaces");
+    }
+    if (refreshFeaturedMutation.isPending) {
+      return t("repositories.busy.refreshFeatured");
+    }
+    if (refreshCacheMutation.isPending && refreshingRepoId) {
+      const repo = repositories?.find((item) => item.id === refreshingRepoId);
+      return t("repositories.busy.refreshRepository", { name: repo?.name ?? "" });
+    }
+    if (scanMutation.isPending && scanningRepoId) {
+      const repo = repositories?.find((item) => item.id === scanningRepoId);
+      return t("repositories.busy.scanRepository", { name: repo?.name ?? "" });
+    }
+    if (deleteMutation.isPending && deletingRepoId) {
+      const repo = repositories?.find((item) => item.id === deletingRepoId);
+      return t("repositories.busy.deleteRepository", { name: repo?.name ?? "" });
+    }
+    if (isAddingFeatured) {
+      return t("repositories.busy.addFeatured");
+    }
+    if (addMutation.isPending) {
+      return t("repositories.busy.addRepository");
+    }
+    if (preparingSkillId) {
+      const skill = preview?.skills.find((item) => item.id === preparingSkillId);
+      return t("repositories.busy.prepareSkill", { name: skill?.name ?? "" });
+    }
+    if (installingSkillId) {
+      const skill = preview?.skills.find((item) => item.id === installingSkillId);
+      return t("repositories.busy.installSkill", { name: skill?.name ?? "" });
+    }
+    return null;
+  }, [
+    addMutation.isPending,
+    deleteMutation.isPending,
+    deletingRepoId,
+    installingSkillId,
+    isAddingFeatured,
+    preparingSkillId,
+    preview?.skills,
+    refreshCacheMutation.isPending,
+    refreshFeaturedMarketplacesMutation.isPending,
+    refreshFeaturedMutation.isPending,
+    refreshingRepoId,
+    repositories,
+    scanMutation.isPending,
+    scanningRepoId,
+    t,
+  ]);
+
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -387,6 +445,8 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
           label={t("repositories.tabs.my", { count: repositories?.length ?? 0 })}
         />
       </div>
+
+      {pageBusyMessage && <PageBusyNotice message={pageBusyMessage} />}
 
       {activeTab === "featuredMarketplaces" && (
         <div className="space-y-6">
@@ -727,6 +787,8 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
                           refreshCacheMutation.isPending ||
                           deleteMutation.isPending
                         }
+                        aria-label={`${repo.cache_path ? t("repositories.rescan") : t("repositories.scan")}: ${repo.name}`}
+                        title={`${repo.cache_path ? t("repositories.rescan") : t("repositories.scan")}: ${repo.name}`}
                         className="apple-button-primary h-8 px-3 text-xs flex items-center gap-1.5 disabled:opacity-50"
                       >
                         {(scanningRepoId === repo.id && scanMutation.isPending) ||
@@ -766,6 +828,8 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
                           refreshCacheMutation.isPending ||
                           deleteMutation.isPending
                         }
+                        aria-label={`${t("common.delete")}: ${repo.name}`}
+                        title={`${t("common.delete")}: ${repo.name}`}
                         className="apple-button-destructive h-8 px-3 text-xs flex items-center gap-1.5 disabled:opacity-50"
                       >
                         {deletingRepoId === repo.id ? (
@@ -784,13 +848,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
                         <span className="text-blue-500 font-medium">
                           {t("repositories.lastScan")}
                         </span>{" "}
-                        {new Date(repo.last_scanned).toLocaleString("zh-CN", {
-                          year: "numeric",
-                          month: "2-digit",
-                          day: "2-digit",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                        {formatAppDateTime(repo.last_scanned, i18n.language)}
                       </div>
                     )}
 
@@ -798,7 +856,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
                       {repo.cache_path ? (
                         <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/10 text-green-600">
                           {t("repositories.cache.statusCached")}
-                          {repo.cached_at && ` · ${formatDate(repo.cached_at, t)}`}
+                          {repo.cached_at && ` · ${formatDate(repo.cached_at, i18n.language, t)}`}
                         </span>
                       ) : (
                         <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-secondary text-muted-foreground">
@@ -927,7 +985,14 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
           setInstallingSkillId(skillId);
           setPendingSkillInstall(null);
           try {
-            await invoke("confirm_skill_installation", { skillId, installPath: selectedPath });
+            await invoke("confirm_skill_installation", {
+              skillId,
+              installPath: selectedPath,
+              allowPartialScan: Boolean(
+                pendingSkillInstall.report?.partial_scan ||
+                  pendingSkillInstall.report?.skipped_files?.length
+              ),
+            });
             addRecentInstallPath(selectedPath);
             await queryClient.refetchQueries({ queryKey: ["skills"] });
             await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
@@ -993,153 +1058,55 @@ function SkillInstallConfirmDialog({
   const { t } = useTranslation();
   const [selectedPath, setSelectedPath] = useState<string>("");
 
-  const isMediumRisk = report ? report.score >= 50 && report.score < 70 : false;
-  const isHighRisk = report ? report.score < 50 || report.blocked : false;
-
-  const issueCounts = useMemo(
-    () => (report ? countIssuesBySeverity(report.issues) : { critical: 0, error: 0, warning: 0 }),
-    [report]
-  );
-
   useEffect(() => {
     if (!open) setSelectedPath("");
   }, [open]);
 
-  if (!report) return null;
+  const confirmTone = !report
+    ? "primary"
+    : report.score < 50 || report.blocked
+      ? "destructive"
+      : report.partial_scan || report.score < 70
+        ? "warning"
+        : "success";
 
   return (
-    <AlertDialog open={open} onOpenChange={onClose}>
-      <AlertDialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-        <AlertDialogHeader>
-          <AlertDialogTitle className="flex items-center gap-2">
-            {isHighRisk ? (
-              <XCircle className="w-5 h-5 text-destructive" />
-            ) : isMediumRisk ? (
-              <AlertTriangle className="w-5 h-5 text-warning" />
-            ) : (
-              <CheckCircle className="w-5 h-5 text-success" />
-            )}
-            {t("skills.marketplace.install.scanResult")}
-          </AlertDialogTitle>
-          <AlertDialogDescription asChild>
-            <div className="space-y-4 pb-4">
-              <div>
-                {t("skills.marketplace.install.preparingInstall")}:{" "}
-                <span className="font-semibold">{skillName}</span>
-              </div>
-
-              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
-                <span className="text-sm">{t("skills.marketplace.install.securityScore")}:</span>
-                <span
-                  className={`text-3xl font-bold ${
-                    report.score >= 90
-                      ? "text-success"
-                      : report.score >= 70
-                        ? "text-success"
-                        : report.score >= 50
-                          ? "text-warning"
-                          : "text-destructive"
-                  }`}
-                >
-                  {report.score}
-                </span>
-              </div>
-
-              {report.issues.length > 0 && (
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">
-                    {t("skills.marketplace.install.issuesDetected")}:
-                  </div>
-                  <div className="flex gap-4 text-sm">
-                    {issueCounts.critical > 0 && (
-                      <span className="text-destructive">
-                        {t("skills.marketplace.install.critical")}: {issueCounts.critical}
-                      </span>
-                    )}
-                    {issueCounts.error > 0 && (
-                      <span className="text-warning">
-                        {t("skills.marketplace.install.highRisk")}: {issueCounts.error}
-                      </span>
-                    )}
-                    {issueCounts.warning > 0 && (
-                      <span className="text-warning">
-                        {t("skills.marketplace.install.mediumRisk")}: {issueCounts.warning}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {report.issues.length > 0 && (
-                <div
-                  className={`p-3 rounded-lg ${
-                    isHighRisk
-                      ? "bg-destructive/10 border border-destructive/30"
-                      : isMediumRisk
-                        ? "bg-warning/10 border border-warning/30"
-                        : "bg-success/10 border border-success/30"
-                  }`}
-                >
-                  <ul className="space-y-1 text-sm">
-                    {report.issues.slice(0, 3).map((issue, idx) => (
-                      <li key={idx} className="text-xs">
-                        {issue.file_path && (
-                          <span className="text-primary mr-1.5">[{issue.file_path}]</span>
-                        )}
-                        {issue.description}
-                        {issue.line_number && (
-                          <span className="text-muted-foreground ml-2">
-                            (行 {issue.line_number})
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {isHighRisk && (
-                <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-sm">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-                    <div>
-                      <strong className="block mb-1">
-                        {t("skills.marketplace.install.warningTitle")}
-                      </strong>
-                      {t("skills.marketplace.install.warningMessage")}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-
-        <div className="py-4 border-t border-border">
+    <SkillSecurityDialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+      title={t("skills.marketplace.install.scanResult")}
+      skillName={skillName}
+      preparingLabel={t("skills.marketplace.install.preparingInstall")}
+      report={report}
+      issuePreviewCount={3}
+      contentClassName="max-w-2xl max-h-[80vh] overflow-y-auto"
+      extraContent={
+        <div className="border-t border-border py-4">
           <InstallPathSelector onSelect={setSelectedPath} />
         </div>
-
-        <AlertDialogFooter>
+      }
+      footer={
+        <>
           <AlertDialogCancel onClick={onClose}>
             {t("skills.marketplace.install.cancel")}
           </AlertDialogCancel>
-          <button
+          <SkillSecurityDialogConfirmButton
             onClick={() => onConfirm(selectedPath)}
             disabled={!selectedPath}
-            className={`px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors ${
-              isHighRisk
-                ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                : isMediumRisk
-                  ? "bg-warning text-white hover:bg-warning/90"
-                  : "bg-success text-white hover:bg-success/90"
-            }`}
-          >
-            {isHighRisk
-              ? t("skills.marketplace.install.installAnyway")
-              : t("skills.marketplace.install.confirmInstall")}
-          </button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+            loadingLabel={t("skills.installing")}
+            label={
+              report?.partial_scan
+                ? t("skills.marketplace.install.installCautiously")
+                : report && (report.score < 50 || report.blocked)
+                ? t("skills.marketplace.install.installAnyway")
+                : t("skills.marketplace.install.confirmInstall")
+            }
+            tone={confirmTone}
+          />
+        </>
+      }
+    />
   );
 }
