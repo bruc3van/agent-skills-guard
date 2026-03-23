@@ -12,6 +12,12 @@
 
 [English](README_EN.md) | 简体中文
 
+<div align="center">
+
+![交流群](screen-shot/agentskillsgroup.jpg)
+
+</div>
+
 </div>
 
 ---
@@ -293,12 +299,6 @@
 - 💬 [GitHub Issues](https://github.com/brucevanfdm/agent-skills-guard/issues) - 报告问题或提出功能建议
 - 🐦 [X/Twitter](https://x.com/brucevanfdm) - 关注项目动态
 - 💬 **Agent Skills 安全交流群**
-
-<div align="center">
-
-![交流群](screen-shot/agentskillsgroup.jpg)
-
-</div>
 
 ---
 
