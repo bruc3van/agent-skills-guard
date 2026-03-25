@@ -892,7 +892,7 @@ repositories:
         en: "High-quality community-contributed skill repositories"
         zh: "社区贡献的高质量技能仓库"
       repositories:
-        - url: "https://github.com/brucevanfdm/docugenius-converter-skill"
+        - url: "https://github.com/brucevanfdm/bruce-doc-converter"
           name: "brucevanfdm"
           description:
             en: "Bidirectional document conversion skill for Claude Code. Converts Word/Excel/PPT/PDF to AI-friendly Markdown and exports Markdown to professionally formatted Word documents with auto-dependency installation."
@@ -976,7 +976,7 @@ repositories:
             zh: "从自然语言输入生成编辑风格信息卡片的 Claude Code 技能，将原始内容转换为可截图的 HTML 卡片，支持导出为 PNG。"
           tags: ["card", "infocard", "html", "design", "screenshot"]
           featured: true
-        - url: "https://github.com/brucevanfdm/drawio-skill"
+        - url: "https://github.com/brucevanfdm/bruce-drawio"
           name: "brucevanfdm"
           description:
             en: "Cross-platform draw.io diagram generator for Claude Code, supporting flowcharts, architecture diagrams, UML (sequence/class), ER diagrams, mind maps, and network topology. Works on macOS, Windows, and Linux."
