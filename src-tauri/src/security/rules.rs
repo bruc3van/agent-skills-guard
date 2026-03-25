@@ -259,7 +259,7 @@ lazy_static! {
         PatternRule::new(
             "REVERSE_SHELL",
             "反弹Shell",
-            r"(?i)(\b(ba)?sh\b.*?/dev/(tcp|udp)/|/dev/(tcp|udp)/.*\b(ba)?sh\b|\b(nc|ncat)\b.*\s-e\s+(/bin/)?(ba)?sh\b|\bsocat\b.*\bexec:(/bin/)?(ba)?sh\b)",
+            r"(?i)(\b(ba)?sh\b.*?/dev/(tcp|udp)/|/dev/(tcp|udp)/.*\b(ba)?sh\b|\b(nc|ncat)\b.*\s-e\s+(/bin/)?(ba)?sh\b|\bsocat\b.*\bexec:(/bin/)?(ba)?sh\b|\bpython[23]?\b[^\r\n]*-c[^\r\n]*socket[^\r\n]*connect|\bperl\b[^\r\n]*-e[^\r\n]*socket[^\r\n]*connect)",
             Severity::Critical,
             Category::RemoteExec,
             95,
@@ -551,7 +551,7 @@ lazy_static! {
         PatternRule::new(
             "CHMOD_777",
             "chmod 777",
-            r"chmod\s+(-[a-zA-Z]*\s+)*[0-7]?[0-7][67][67]",
+            r"chmod\s+(?:-[a-zA-Z]*\s+)*(?:[0-7]?[0-7][67][67]|(?:a|ugo|o)?[+=]rwx|(?:a|ugo|o)\+[rwx]*w)",
             Severity::High,
             Category::Privilege,
             55,
@@ -564,7 +564,7 @@ lazy_static! {
         PatternRule::new(
             "SUDOERS",
             "sudoers修改",
-            r"(/etc/sudoers|visudo|NOPASSWD)",
+            r"(/etc/sudoers(?:\.d(?:/\S+)?)?|visudo|NOPASSWD)",
             Severity::Critical,
             Category::Privilege,
             95,
@@ -592,7 +592,7 @@ lazy_static! {
         PatternRule::new(
             "SSH_KEYS",
             "SSH密钥注入",
-            r"(>>|>)\s*~?/?(\.ssh/authorized_keys|\.ssh/id_)",
+            r"(>>|>)\s*\S*\.ssh/(?:authorized_keys|id_)",
             Severity::Critical,
             Category::Persistence,
             90,
@@ -711,7 +711,7 @@ lazy_static! {
         PatternRule::new(
             "GITHUB_TOKEN",
             "GitHub Token",
-            r"ghp_[a-zA-Z0-9]{36}",
+            r"(?:gh[opusr]_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{36,})",
             Severity::Critical,
             Category::Secrets,
             80,
@@ -778,7 +778,7 @@ lazy_static! {
         PatternRule::new(
             "READ_SHADOW",
             "读取shadow文件",
-            r"(cat|less|head|tail)\s+/etc/shadow($|\s)",
+            r"(cat|less|head|tail)\s+/etc/shadow-?($|\s)",
             Severity::Critical,
             Category::SensitiveFileAccess,
             85,
