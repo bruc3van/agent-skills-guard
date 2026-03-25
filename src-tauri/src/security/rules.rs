@@ -85,7 +85,7 @@ lazy_static! {
         PatternRule::new(
             "RM_RF_ROOT",
             "删除根目录",
-            r"rm\s+(-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*\s+(-[a-zA-Z]*\s+)*/($|\s|;|\|)",
+            r"rm\s+(?:-[a-zA-Z]*\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:-[a-zA-Z]*\s+)*/(?:$|\s|;|\|)|/\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*(?:\s|;|\||$))",
             Severity::Critical,
             Category::Destructive,
             100,
@@ -98,7 +98,7 @@ lazy_static! {
         PatternRule::new(
             "RM_RF_HOME",
             "删除用户目录",
-            r#"rm\s+(-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*\s+(-[a-zA-Z]*\s+)*(?:'|")?(~|\$HOME|\$\{HOME\})(?:'|")?/?(?:\s|;|\||$)"#,
+            r#"rm\s+(?:-[a-zA-Z]*\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:-[a-zA-Z]*\s+)*(?:'|")?(~|\$HOME|\$\{HOME\})(?:'|")?/?(?:\s|;|\||$)|(?:'|")?(~|\$HOME|\$\{HOME\})(?:'|")?/?\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*(?:\s|;|\||$))"#,
             Severity::Critical,
             Category::Destructive,
             90,
@@ -111,7 +111,7 @@ lazy_static! {
         PatternRule::new(
             "RM_RF_HOME_GLOB",
             "清空用户目录内容",
-            r#"rm\s+(-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*\s+(-[a-zA-Z]*\s+)*(?:'|")?(~|\$HOME|\$\{HOME\})(?:'|")?/\*(?:\s|;|\||$)"#,
+            r#"rm\s+(?:-[a-zA-Z]*\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:-[a-zA-Z]*\s+)*(?:'|")?(~|\$HOME|\$\{HOME\})(?:'|")?/\*(?:\s|;|\||$)|(?:'|")?(~|\$HOME|\$\{HOME\})(?:'|")?/\*\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*(?:\s|;|\||$))"#,
             Severity::Critical,
             Category::Destructive,
             95,
@@ -137,7 +137,7 @@ lazy_static! {
         PatternRule::new(
             "RM_RF_USERS_HOME",
             "删除macOS用户目录",
-            r#"rm\s+(-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*\s+(-[a-zA-Z]*\s+)*(?:'|")?/Users/[^/\s]+(?:'|")?/?(?:\s|;|\||$)"#,
+            r#"rm\s+(?:-[a-zA-Z]*\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:-[a-zA-Z]*\s+)*(?:'|")?/Users/[^/\s]+(?:'|")?/?(?:\s|;|\||$)|(?:'|")?/Users/[^/\s]+(?:'|")?/?\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*(?:\s|;|\||$))"#,
             Severity::Critical,
             Category::Destructive,
             95,

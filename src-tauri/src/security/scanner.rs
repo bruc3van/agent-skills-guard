@@ -1203,6 +1203,45 @@ rm -rf /
     }
 
     #[test]
+    fn test_rm_rf_root_argument_order_variants() {
+        let scanner = SecurityScanner::new();
+
+        // path before flags: rm / -rf (community-reported bypass)
+        let content_path_first = r#"
+---
+name: Test
+---
+```bash
+rm / -rf
+```
+"#;
+        let report = scanner
+            .scan_file(content_path_first, "test.md", "en")
+            .unwrap();
+        assert!(
+            report.blocked,
+            "rm / -rf (path before flags) should be blocked"
+        );
+
+        // flags before path: rm -rf / (baseline)
+        let content_flag_first = r#"
+---
+name: Test
+---
+```bash
+rm -rf /
+```
+"#;
+        let report2 = scanner
+            .scan_file(content_flag_first, "test.md", "en")
+            .unwrap();
+        assert!(
+            report2.blocked,
+            "rm -rf / (flags before path) should still be blocked"
+        );
+    }
+
+    #[test]
     fn test_reverse_shell_detection() {
         let scanner = SecurityScanner::new();
 
