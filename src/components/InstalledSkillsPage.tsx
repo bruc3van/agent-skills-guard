@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useInstalledSkills, useUninstallSkill, useUninstallSkillPath } from "../hooks/useSkills";
 import {
   useClaudeMarketplaces,
@@ -84,7 +84,17 @@ const getMarketplaceOwner = (repoUrl: string) => {
 export function InstalledSkillsPage() {
   const { t, i18n } = useTranslation();
   const { data: installedSkills, isLoading: isSkillsLoading } = useInstalledSkills();
-  const { data: allPlugins = [], isLoading: isPluginsLoading } = usePlugins();
+  const [shouldSyncPlugins, setShouldSyncPlugins] = useState(false);
+  const [shouldLoadUpgradeCandidates, setShouldLoadUpgradeCandidates] = useState(false);
+  const cachedPluginsQuery = usePlugins({ mode: "cached" });
+  const runtimePluginsQuery = usePlugins({ enabled: shouldSyncPlugins });
+  const allPlugins = runtimePluginsQuery.data ?? cachedPluginsQuery.data ?? [];
+  const isPluginsLoading =
+    (cachedPluginsQuery.isLoading && cachedPluginsQuery.data === undefined) ||
+    (shouldSyncPlugins &&
+      runtimePluginsQuery.isLoading &&
+      runtimePluginsQuery.data === undefined &&
+      cachedPluginsQuery.data === undefined);
   const { data: claudeMarketplaces = [], isLoading: isMarketplacesLoading } = useClaudeMarketplaces();
   const { data: featuredMarketplaces } = useQuery({
     queryKey: ["featured-marketplaces"],
@@ -192,6 +202,26 @@ export function InstalledSkillsPage() {
     if (!text) return "";
     return i18n.language === "zh" ? text.zh : text.en;
   };
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setShouldSyncPlugins(true);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "all" && activeTab !== "skills") {
+      setShouldLoadUpgradeCandidates(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setShouldLoadUpgradeCandidates(true);
+    }, activeTab === "all" ? 1200 : 300);
+
+    return () => window.clearTimeout(timer);
+  }, [activeTab]);
 
   const marketplaceDescriptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -517,7 +547,7 @@ export function InstalledSkillsPage() {
   const { data: skillPluginUpgradeCandidates = [] } = useQuery<SkillPluginUpgradeCandidate[]>({
     queryKey: ["skillPluginUpgradeCandidates"],
     queryFn: () => api.getSkillPluginUpgradeCandidates(),
-    enabled: activeTab === "skills" || activeTab === "all",
+    enabled: shouldLoadUpgradeCandidates,
     staleTime: 60_000,
   });
 
@@ -1727,25 +1757,6 @@ function SkillCard({
   isAnyOperationPending,
   t,
 }: SkillCardProps) {
-  const descriptionRef = useRef<HTMLParagraphElement | null>(null);
-  const [isDescriptionTruncated, setIsDescriptionTruncated] = useState(false);
-
-  useLayoutEffect(() => {
-    const element = descriptionRef.current;
-    if (!element) return;
-
-    const update = () => {
-      setIsDescriptionTruncated(
-        element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth
-      );
-    };
-
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [skill.description]);
-
   return (
     <div className="apple-card p-6 pt-10 group flex flex-col h-full relative">
       <CardCornerBadge kind="skill" label={t("skills.badge")} />
@@ -1831,17 +1842,11 @@ function SkillCard({
       {/* Description - 自动填充剩余空间 */}
       <div className="relative mb-4">
         <p
-          ref={descriptionRef}
-          title={isDescriptionTruncated && skill.description ? skill.description : undefined}
-          className="text-sm text-muted-foreground leading-5 h-[3.75rem] overflow-hidden [display:-webkit-box] [-webkit-line-clamp:3] [-webkit-box-orient:vertical] peer"
+          title={skill.description || undefined}
+          className="text-sm text-muted-foreground leading-5 h-[3.75rem] overflow-hidden [display:-webkit-box] [-webkit-line-clamp:3] [-webkit-box-orient:vertical]"
         >
           {skill.description || t("skills.noDescription")}
         </p>
-        {isDescriptionTruncated && skill.description && (
-          <div className="apple-tooltip peer-hover:opacity-100 peer-hover:translate-y-0">
-            {skill.description}
-          </div>
-        )}
       </div>
 
       {/* Repository - 固定在底部 */}
@@ -1941,24 +1946,6 @@ function InstalledPluginCard({
 }: InstalledPluginCardProps) {
   const { t } = useTranslation();
   const installPath = plugin.claude_install_path?.trim();
-  const descriptionRef = useRef<HTMLParagraphElement | null>(null);
-  const [isDescriptionTruncated, setIsDescriptionTruncated] = useState(false);
-
-  useLayoutEffect(() => {
-    const element = descriptionRef.current;
-    if (!element) return;
-
-    const update = () => {
-      setIsDescriptionTruncated(
-        element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth
-      );
-    };
-
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [plugin.description]);
 
   return (
     <div className="apple-card p-6 pt-10 group flex flex-col h-full relative">
@@ -2034,17 +2021,11 @@ function InstalledPluginCard({
 
       <div className="relative mb-4">
         <p
-          ref={descriptionRef}
-          title={isDescriptionTruncated && plugin.description ? plugin.description : undefined}
-          className="text-sm text-muted-foreground leading-5 h-[3.75rem] overflow-hidden [display:-webkit-box] [-webkit-line-clamp:3] [-webkit-box-orient:vertical] peer"
+          title={plugin.description || undefined}
+          className="text-sm text-muted-foreground leading-5 h-[3.75rem] overflow-hidden [display:-webkit-box] [-webkit-line-clamp:3] [-webkit-box-orient:vertical]"
         >
           {plugin.description || t("plugins.noDescription")}
         </p>
-        {isDescriptionTruncated && plugin.description && (
-          <div className="apple-tooltip peer-hover:opacity-100 peer-hover:translate-y-0">
-            {plugin.description}
-          </div>
-        )}
       </div>
 
       <div className="text-sm text-muted-foreground mb-4">

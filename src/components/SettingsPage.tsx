@@ -316,7 +316,7 @@ export function SettingsPage() {
               <span className="text-sm font-medium">{t("settings.appInfo.repository")}</span>
             </div>
             <a
-              href="https://github.com/brucevanfdm/agent-skills-guard"
+              href="https://github.com/bruc3van/agent-skills-guard"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-sm text-blue-500 hover:text-blue-600 transition-colors"

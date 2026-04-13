@@ -892,8 +892,8 @@ repositories:
         en: "High-quality community-contributed skill repositories"
         zh: "社区贡献的高质量技能仓库"
       repositories:
-        - url: "https://github.com/brucevanfdm/bruce-doc-converter"
-          name: "brucevanfdm"
+        - url: "https://github.com/bruc3van/bruce-doc-converter"
+          name: "bruc3van"
           description:
             en: "Bidirectional document conversion skill for Claude Code. Converts Word/Excel/PPT/PDF to AI-friendly Markdown and exports Markdown to professionally formatted Word documents with auto-dependency installation."
             zh: "为 Claude Code 添加双向文档转换能力。将 Word/Excel/PPT/PDF 转换为 AI 友好的 Markdown 格式，并将 Markdown 导出为排版精美的 Word 文档，支持自动依赖安装。"
@@ -976,8 +976,8 @@ repositories:
             zh: "从自然语言输入生成编辑风格信息卡片的 Claude Code 技能，将原始内容转换为可截图的 HTML 卡片，支持导出为 PNG。"
           tags: ["card", "infocard", "html", "design", "screenshot"]
           featured: true
-        - url: "https://github.com/brucevanfdm/bruce-drawio"
-          name: "brucevanfdm"
+        - url: "https://github.com/bruc3van/bruce-drawio"
+          name: "bruc3van"
           description:
             en: "Cross-platform draw.io diagram generator for Claude Code, supporting flowcharts, architecture diagrams, UML (sequence/class), ER diagrams, mind maps, and network topology. Works on macOS, Windows, and Linux."
             zh: "跨平台 draw.io 图形生成技能，支持流程图、架构图、UML（时序/类图）、ER 图、思维导图及网络拓扑图，兼容 macOS、Windows 和 Linux。"
@@ -989,4 +989,25 @@ repositories:
             en: "A productivity skill pack for Claude Code with 5 skills: daily news report generation, RSS digest with scoring filter, voice transcript polishing, multilingual translation workflow (ZH↔EN/ZH↔JA), and Gemini watermark removal."
             zh: "面向 Claude Code 的效率技能包，包含 5 个技能：每日资讯报告生成、RSS 精选摘要（带评分过滤）、语音转录润色、多语言翻译工作流（中英/中日互译）及 Gemini 水印去除。"
           tags: ["news", "rss", "translation", "transcript", "productivity"]
+          featured: true
+        - url: "https://github.com/dontbesilent2025/dbskill"
+          name: "dontbesilent2025"
+          description:
+            en: "Business diagnosis toolkit derived from 12,000+ tweets. Includes skills for business model diagnosis, benchmark analysis, content creation, short-video hooks, Xiaohongshu title formulas, execution analysis, and concept deconstruction."
+            zh: "从 12,000+ 条推文提炼的商业诊断工具箱。包含商业模式诊断、对标分析、内容创作、短视频开头优化、小红书标题公式、执行力诊断和概念拆解等技能。"
+          tags: ["business", "diagnosis", "content-creation", "marketing"]
+          featured: true
+        - url: "https://github.com/slowmist/slowmist-agent-security"
+          name: "slowmist"
+          description:
+            en: "Comprehensive security review framework for AI agents in adversarial environments. Covers skill/MCP installation safety, GitHub repo audits, URL/document analysis, on-chain address AML checks, and social engineering detection."
+            zh: "面向对抗环境中 AI 代理的综合安全审查框架。涵盖技能/MCP 安装安全检测、GitHub 仓库审计、URL/文档分析、链上地址 AML 风险评估和社会工程攻击检测。"
+          tags: ["security", "audit", "blockchain", "aml"]
+          featured: true
+        - url: "https://github.com/MiniMax-AI/skills"
+          name: "MiniMax-AI"
+          description:
+            en: "Official MiniMax development skills for AI coding agents. Covers frontend, fullstack, Android, iOS, React Native, Flutter, and shader development. Includes MiniMax API integration for multimodal content generation (image, video, audio, TTS)."
+            zh: "MiniMax 官方开发技能集，面向 AI 编程代理。涵盖前端、全栈、Android、iOS、React Native、Flutter 和着色器开发。集成 MiniMax API 用于多模态内容生成（图像、视频、音频、语音合成）。"
+          tags: ["minimax", "frontend", "mobile", "multimodal", "api"]
           featured: true

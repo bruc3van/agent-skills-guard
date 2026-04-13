@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 const FEATURED_MARKETPLACES_REMOTE_URL: &str =
-    "https://raw.githubusercontent.com/brucevanfdm/agent-skills-guard/main/featured-marketplace.yaml";
+    "https://raw.githubusercontent.com/bruc3van/agent-skills-guard/main/featured-marketplace.yaml";
 const DEFAULT_FEATURED_MARKETPLACES_YAML: &str = include_str!("../../../featured-marketplace.yaml");
 
 fn featured_marketplaces_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {

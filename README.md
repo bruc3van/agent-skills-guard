@@ -6,9 +6,9 @@
 
 ### 让 Claude Code 技能管理像应用商店一样简单安全
 
-[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/brucevanfdm/agent-skills-guard/releases)
+[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/brucevanfdm/agent-skills-guard/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 
 [English](README_EN.md) | 简体中文
 
@@ -20,9 +20,9 @@
 
 ### 🚀 更多开源项目
 
-[📄 bruce-doc-converter](https://github.com/brucevanfdm/bruce-doc-converter) - Office/PDF 与 Markdown 双向转换，自动渲染 Mermaid 图表，让 AI 轻松读懂你的文档
+[📄 bruce-doc-converter](https://github.com/bruc3van/bruce-doc-converter) - Office/PDF 与 Markdown 双向转换，自动渲染 Mermaid 图表，让 AI 轻松读懂你的文档
 
-[📊 bruce-drawio](https://github.com/brucevanfdm/bruce-drawio) - 用自然语言生成各类 draw.io 图表，支持流程图、架构图、ER 图等，一键导出 PNG/SVG/PDF
+[📊 bruce-drawio](https://github.com/bruc3van/bruce-drawio) - 用自然语言生成各类 draw.io 图表，支持流程图、架构图、ER 图等，一键导出 PNG/SVG/PDF
 
 </div>
 
@@ -42,7 +42,7 @@
 
 **🎯 三秒钟了解核心价值：可视化管理 + 安全扫描 + 精选仓库**
 
-[⭐ 立即下载](https://github.com/brucevanfdm/agent-skills-guard/releases)
+[⭐ 立即下载](https://github.com/bruc3van/agent-skills-guard/releases)
 
 </div>
 
@@ -100,7 +100,7 @@
 
 如果你喜欢 Agent Skills Guard 的安全扫描功能，也可以试试我的 Claude Code 技能版本：
 
-**[agent-scanner-skill](https://github.com/brucevanfdm/agent-scanner-skill)** - 更强大的安全扫描技能，支持深度依赖分析、已知漏洞检测、智能风险评估等高级功能
+**[agent-scanner-skill](https://github.com/bruc3van/agent-scanner-skill)** - 更强大的安全扫描技能，支持深度依赖分析、已知漏洞检测、智能风险评估等高级功能
 
 无需 GUI，适合喜欢在终端中工作的开发者。
 
@@ -123,7 +123,7 @@
 
 ### 📥 安装
 
-访问 [GitHub Releases](https://github.com/brucevanfdm/agent-skills-guard/releases) 下载最新版本：
+访问 [GitHub Releases](https://github.com/bruc3van/agent-skills-guard/releases) 下载最新版本：
 
 - **macOS**：下载 `.dmg` 文件，拖拽安装
 - **Windows**：下载 `.msi` 安装包，双击安装
@@ -288,7 +288,7 @@
 
 ## 📝 更新日志
 
-[查看完整更新日志](https://github.com/brucevanfdm/agent-skills-guard/releases)
+[查看完整更新日志](https://github.com/bruc3van/agent-skills-guard/releases)
 
 ---
 
@@ -296,14 +296,14 @@
 
 ### 下载
 
-- 📦 [GitHub Releases](https://github.com/brucevanfdm/agent-skills-guard/releases) - 获取最新版本
+- 📦 [GitHub Releases](https://github.com/bruc3van/agent-skills-guard/releases) - 获取最新版本
 
 ### 联系方式
 
 有问题或建议？欢迎通过以下方式联系：
 
-- 💬 [GitHub Issues](https://github.com/brucevanfdm/agent-skills-guard/issues) - 报告问题或提出功能建议
-- 🐦 [X/Twitter](https://x.com/brucevanfdm) - 关注项目动态
+- 💬 [GitHub Issues](https://github.com/bruc3van/agent-skills-guard/issues) - 报告问题或提出功能建议
+- 🐦 [X/Twitter](https://x.com/bruc3van) - 关注项目动态
 - 💬 **Agent Skills 安全交流群**
 
 ---
@@ -314,7 +314,7 @@
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/brucevanfdm/agent-skills-guard.git
+git clone https://github.com/bruc3van/agent-skills-guard.git
 cd agent-skills-guard
 
 # 2. 安装依赖（需要 pnpm）
@@ -333,7 +333,7 @@ pnpm build
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=brucevanfdm/agent-skills-guard&type=Date)](https://star-history.com/#brucevanfdm/agent-skills-guard&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=bruc3van/agent-skills-guard&type=Date)](https://star-history.com/#bruc3van/agent-skills-guard&Date)
 
 ---
 
@@ -345,7 +345,7 @@ MIT License - 自由使用，自由分享
 
 <div align="center">
 
-Made by [Bruce](https://github.com/brucevanfdm)
+Made by [Bruce](https://github.com/bruc3van)
 
 如果这个项目对你有帮助，请给个 ⭐️ Star 支持一下！
 

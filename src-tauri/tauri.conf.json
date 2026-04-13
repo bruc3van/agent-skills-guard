@@ -1,12 +1,12 @@
 {
   "productName": "Agent Skills Guard",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "identifier": "com.agent-skills-guard.app",
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJEM0VGNkNFQTk0Nzg5MDAKUldRQWlVZXB6dlkrdmN2YjBHUVJoQzdUYldXVGNZMFRDY25jSTJSZmV1V1FZZXhqM2RId1I4cDAK",
       "endpoints": [
-        "https://github.com/brucevanfdm/agent-skills-guard/releases/latest/download/latest.json"
+        "https://github.com/bruc3van/agent-skills-guard/releases/latest/download/latest.json"
       ]
     }
   },

@@ -6,9 +6,9 @@
 
 ### Making Claude Code Skills Management as Simple and Secure as an App Store
 
-[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/brucevanfdm/agent-skills-guard/releases)
+[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/brucevanfdm/agent-skills-guard/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 
 English | [简体中文](README.md)
 
@@ -30,7 +30,7 @@ When enjoying Claude Code's AI-assisted programming, do you face these frustrati
 
 **🎯 Core value in three seconds: Visual management + Security scanning + Featured repositories**
 
-[⭐ Download Now](https://github.com/brucevanfdm/agent-skills-guard/releases)
+[⭐ Download Now](https://github.com/bruc3van/agent-skills-guard/releases)
 
 </div>
 
@@ -88,7 +88,7 @@ Say goodbye to command lines and enjoy the intuitive Apple minimalist interface.
 
 If you like the security scanning feature of Agent Skills Guard, you can also try our Claude Code skill version:
 
-**[agent-scanner-skill](https://github.com/brucevanfdm/agent-scanner-skill)** - More powerful security scanning with deep dependency analysis, known vulnerability detection, and intelligent risk assessment
+**[agent-scanner-skill](https://github.com/bruc3van/agent-scanner-skill)** - More powerful security scanning with deep dependency analysis, known vulnerability detection, and intelligent risk assessment
 
 No GUI required, perfect for developers who prefer working in the terminal.
 
@@ -111,7 +111,7 @@ No GUI required, perfect for developers who prefer working in the terminal.
 
 ### 📥 Installation
 
-Visit [GitHub Releases](https://github.com/brucevanfdm/agent-skills-guard/releases) to download the latest version:
+Visit [GitHub Releases](https://github.com/bruc3van/agent-skills-guard/releases) to download the latest version:
 
 - **macOS**: Download `.dmg` file, drag to install
 - **Windows**: Download `.msi` installer, double-click to install
@@ -275,7 +275,7 @@ Security scanning is based on preset rules, designed to help identify potential 
 
 ## 📝 Changelog
 
-[View full changelog](https://github.com/brucevanfdm/agent-skills-guard/releases)
+[View full changelog](https://github.com/bruc3van/agent-skills-guard/releases)
 
 ---
 
@@ -283,14 +283,14 @@ Security scanning is based on preset rules, designed to help identify potential 
 
 ### Download
 
-- 📦 [GitHub Releases](https://github.com/brucevanfdm/agent-skills-guard/releases) - Get the latest version
+- 📦 [GitHub Releases](https://github.com/bruc3van/agent-skills-guard/releases) - Get the latest version
 
 ### Contact
 
 Have questions or suggestions? Contact via:
 
-- 💬 [GitHub Issues](https://github.com/brucevanfdm/agent-skills-guard/issues) - Report issues or suggest features
-- 🐦 [X/Twitter](https://x.com/brucevanfdm) - Follow project updates
+- 💬 [GitHub Issues](https://github.com/bruc3van/agent-skills-guard/issues) - Report issues or suggest features
+- 🐦 [X/Twitter](https://x.com/bruc3van) - Follow project updates
 - 💬 **Agent Skills Security Community**
 
 <div align="center">
@@ -307,7 +307,7 @@ If you're a developer and want to build from source or contribute:
 
 ```bash
 # 1. Clone the project
-git clone https://github.com/brucevanfdm/agent-skills-guard.git
+git clone https://github.com/bruc3van/agent-skills-guard.git
 cd agent-skills-guard
 
 # 2. Install dependencies (requires pnpm)
@@ -326,7 +326,7 @@ pnpm build
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=brucevanfdm/agent-skills-guard&type=Date)](https://star-history.com/#brucevanfdm/agent-skills-guard&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=bruc3van/agent-skills-guard&type=Date)](https://star-history.com/#bruc3van/agent-skills-guard&Date)
 
 ---
 
@@ -338,7 +338,7 @@ MIT License - Free to use, free to share
 
 <div align="center">
 
-Made with ❤️ by [Bruce](https://github.com/brucevanfdm)
+Made with ❤️ by [Bruce](https://github.com/bruc3van)
 
 If this project helps you, please give it a ⭐️ Star!
 

@@ -5,6 +5,7 @@ import type { Plugin, PluginUninstallResult } from "../types";
 
 type UsePluginsOptions = {
   mode?: "runtime" | "cached";
+  enabled?: boolean;
 };
 
 export function pluginsQueryKey(lang: string) {
@@ -22,6 +23,7 @@ export function usePlugins(options: UsePluginsOptions = {}) {
     queryKey:
       mode === "runtime" ? pluginsQueryKey(i18n.language) : pluginsCachedQueryKey(i18n.language),
     queryFn: () => (mode === "runtime" ? api.getPlugins(i18n.language) : api.getPluginsCached()),
+    enabled: options.enabled ?? true,
     staleTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,

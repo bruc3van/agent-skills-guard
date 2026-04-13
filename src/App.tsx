@@ -1,10 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { Suspense, lazy, useState, useEffect, useCallback, useRef } from "react";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import { InstalledSkillsPage } from "./components/InstalledSkillsPage";
-import { MarketplacePage } from "./components/MarketplacePage";
-import { RepositoriesPage } from "./components/RepositoriesPage";
-import { OverviewPage } from "./components/OverviewPage";
-import { SettingsPage } from "./components/SettingsPage";
 import { Sidebar } from "./components/Sidebar";
 import { WindowControls } from "./components/WindowControls";
 import { UpdateBadge } from "./components/UpdateBadge";
@@ -30,12 +25,39 @@ import { pluginsCachedQueryKey } from "./hooks/usePlugins";
 const reactQueryClient = new QueryClient();
 type MarketplacePreset = { marketplaceName?: string } | null;
 
+const OverviewPage = lazy(() =>
+  import("./components/OverviewPage").then((module) => ({ default: module.OverviewPage }))
+);
+const MarketplacePage = lazy(() =>
+  import("./components/MarketplacePage").then((module) => ({ default: module.MarketplacePage }))
+);
+const InstalledSkillsPage = lazy(() =>
+  import("./components/InstalledSkillsPage").then((module) => ({
+    default: module.InstalledSkillsPage,
+  }))
+);
+const RepositoriesPage = lazy(() =>
+  import("./components/RepositoriesPage").then((module) => ({ default: module.RepositoriesPage }))
+);
+const SettingsPage = lazy(() =>
+  import("./components/SettingsPage").then((module) => ({ default: module.SettingsPage }))
+);
+
 const ONBOARDING_IMPORT_FEATURED_KEY = "asguard.onboarding.importFeatured.v1";
 import { isThrottleDue, markThrottleCompleted } from "./lib/rateLimit";
 
 const FEATURED_REPOSITORIES_REFRESHED_AT_KEY = "asguard.featuredRepositories.refreshedAt.v1";
 const FEATURED_MARKETPLACES_REFRESHED_AT_KEY = "asguard.featuredMarketplaces.refreshedAt.v1";
 const FEATURED_RESOURCES_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+function PageFallback() {
+  return (
+    <div className="h-full flex items-center justify-center gap-3 text-sm text-muted-foreground">
+      <Loader2 className="w-4 h-4 animate-spin" />
+      <span>加载中...</span>
+    </div>
+  );
+}
 
 function AppContent() {
   const { t, i18n } = useTranslation();
@@ -352,57 +374,59 @@ function AppContent() {
 
         {/* Content Area - 更大的内边距，更宽敞的感觉 */}
         <main className="flex-1 overflow-hidden">
-          {currentTab === "overview" && (
-            <div className="h-full overflow-y-auto">
-              <div className="p-8 animate-fade-in">
-                <div className="max-w-6xl mx-auto">
-                  <OverviewPage />
+          <Suspense fallback={<PageFallback />}>
+            {currentTab === "overview" && (
+              <div className="h-full overflow-y-auto">
+                <div className="p-8 animate-fade-in">
+                  <div className="max-w-6xl mx-auto">
+                    <OverviewPage />
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-          {currentTab === "installed" && (
-            <div className="h-full overflow-hidden">
-              <InstalledSkillsPage />
-            </div>
-          )}
-          {currentTab === "marketplace" && (
-            <div className="h-full overflow-hidden">
-              <MarketplacePage
-                onNavigateToRepositories={() => setCurrentTab("repositories")}
-                onNavigateToOverview={() => setCurrentTab("overview")}
-                presetFilter={marketplacePreset ?? undefined}
-                onPresetApplied={clearMarketplacePreset}
-              />
-            </div>
-          )}
-          {currentTab === "repositories" && (
-            <div className="h-full overflow-y-auto">
-              <div className="p-8 animate-fade-in">
-                <div className="max-w-6xl mx-auto">
-                  <RepositoriesPage
-                    onNavigateToMarket={(options) => {
-                      setMarketplacePreset(
-                        options?.marketplaceName
-                          ? { marketplaceName: options.marketplaceName }
-                          : null
-                      );
-                      setCurrentTab("marketplace");
-                    }}
-                  />
+            )}
+            {currentTab === "installed" && (
+              <div className="h-full overflow-hidden">
+                <InstalledSkillsPage />
+              </div>
+            )}
+            {currentTab === "marketplace" && (
+              <div className="h-full overflow-hidden">
+                <MarketplacePage
+                  onNavigateToRepositories={() => setCurrentTab("repositories")}
+                  onNavigateToOverview={() => setCurrentTab("overview")}
+                  presetFilter={marketplacePreset ?? undefined}
+                  onPresetApplied={clearMarketplacePreset}
+                />
+              </div>
+            )}
+            {currentTab === "repositories" && (
+              <div className="h-full overflow-y-auto">
+                <div className="p-8 animate-fade-in">
+                  <div className="max-w-6xl mx-auto">
+                    <RepositoriesPage
+                      onNavigateToMarket={(options) => {
+                        setMarketplacePreset(
+                          options?.marketplaceName
+                            ? { marketplaceName: options.marketplaceName }
+                            : null
+                        );
+                        setCurrentTab("marketplace");
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-          {currentTab === "settings" && (
-            <div className="h-full overflow-y-auto">
-              <div className="p-8 animate-fade-in">
-                <div className="max-w-6xl mx-auto">
-                  <SettingsPage />
+            )}
+            {currentTab === "settings" && (
+              <div className="h-full overflow-y-auto">
+                <div className="p-8 animate-fade-in">
+                  <div className="max-w-6xl mx-auto">
+                    <SettingsPage />
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </Suspense>
         </main>
       </div>
     </div>

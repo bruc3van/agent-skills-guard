@@ -1,8 +1,8 @@
 [package]
 name = "agent-skills-guard"
-version = "1.0.1"
+version = "1.0.2"
 description = "A secure manager for agent skills"
-authors = ["@brucevanfdm"]
+authors = ["@bruc3van"]
 edition = "2021"
 
 [lib]
