@@ -45,7 +45,7 @@ export function normalizeInstalledSkills(skills: Skill[]): Skill[] {
     return {
       ...skill,
       local_paths: localPaths.length > 0 ? localPaths : undefined,
-      local_path: skill.local_path ?? localPaths.at(-1),
+      local_path: skill.local_path ?? localPaths[0],
     };
   });
 }

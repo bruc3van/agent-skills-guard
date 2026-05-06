@@ -971,12 +971,13 @@ impl SkillManager {
                                     )
                                 });
 
-                            // 检查是否已存在（按 local_path 去重，避免目录不变但名称变化导致重复导入）
+                            // 检查是否已存在（按 local_path 和 local_paths 去重，避免目录不变但名称变化导致重复导入）
                             let local_path_str = path.to_string_lossy().to_string();
                             let existing_by_path = existing_skills
                                 .iter()
                                 .filter(|s| {
                                     s.local_path.as_deref() == Some(local_path_str.as_str())
+                                        || s.local_paths.as_ref().map_or(false, |paths| paths.contains(&local_path_str))
                                 })
                                 .cloned()
                                 .collect::<Vec<_>>();
@@ -1002,7 +1003,9 @@ impl SkillManager {
                                 }
 
                                 // 更新 checksum（基于 SKILL.md 内容）
-                                if existing_skill.checksum.as_deref() != Some(checksum.as_str()) {
+                                let checksum_changed =
+                                    existing_skill.checksum.as_deref() != Some(checksum.as_str());
+                                if checksum_changed {
                                     existing_skill.checksum = Some(checksum.clone());
                                 }
 
@@ -1014,7 +1017,51 @@ impl SkillManager {
                                     existing_skill.file_path = local_path_str.clone();
                                 }
 
-                                // 命中已有 local_path：刷新安全扫描信息，避免安全结果陈旧
+                                // 仅在 checksum 变化时重新扫描，避免每次扫描全量安全检查的性能开销
+                                if checksum_changed {
+                                    let report = self.scanner.scan_directory_with_options(
+                                        path.to_str().unwrap_or(""),
+                                        &existing_skill.id,
+                                        "zh",
+                                        ScanOptions { skip_readme: true },
+                                        None,
+                                    )?;
+
+                                    Self::apply_scan_report(&mut existing_skill, &report);
+                                }
+
+                                self.db.save_skill(&existing_skill)?;
+                                scanned_skills.push(existing_skill);
+                                continue;
+                            }
+
+                            // 二次匹配：按目录名为 local::* 技能查找已有记录，避免技能被移动+编辑后产生重复
+                            let dir_name = path.file_name().unwrap_or_default().to_string_lossy();
+                            let existing_by_dir = existing_skills.iter().find(|s| {
+                                s.id.starts_with("local::")
+                                    && !s.installed
+                                    && PathBuf::from(s.local_path.as_deref().unwrap_or(""))
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy() == dir_name)
+                                        .unwrap_or(false)
+                            });
+                            if let Some(mut existing_skill) = existing_by_dir.cloned() {
+                                log::info!(
+                                    "Reusing existing local skill '{}' for moved directory {:?} -> {:?}",
+                                    existing_skill.id,
+                                    existing_skill.local_path,
+                                    path
+                                );
+                                existing_skill.local_path = Some(local_path_str.clone());
+                                existing_skill.local_paths = Some(vec![local_path_str.clone()]);
+                                existing_skill.source_path = Some(local_path_str.clone());
+                                existing_skill.installed = true;
+                                existing_skill.installed_at = Some(Utc::now());
+                                existing_skill.checksum = Some(checksum);
+                                existing_skill.name = skill_name;
+                                existing_skill.description = skill_description;
+                                existing_skill.file_path = local_path_str.clone();
+
                                 let report = self.scanner.scan_directory_with_options(
                                     path.to_str().unwrap_or(""),
                                     &existing_skill.id,
@@ -1022,7 +1069,6 @@ impl SkillManager {
                                     ScanOptions { skip_readme: true },
                                     None,
                                 )?;
-
                                 Self::apply_scan_report(&mut existing_skill, &report);
 
                                 self.db.save_skill(&existing_skill)?;

@@ -43,6 +43,9 @@ fn merge_scanned_skill(existing: Option<&Skill>, scanned: Skill) -> Skill {
         return scanned;
     };
 
+    // checksum 变化意味着技能文件被修改，需要清除旧的安全数据以便后续重新扫描
+    let checksum_changed = existing.checksum != scanned.checksum;
+
     let mut merged = scanned;
     merged.version = existing.version.clone();
     merged.author = existing.author.clone();
@@ -50,12 +53,24 @@ fn merge_scanned_skill(existing: Option<&Skill>, scanned: Skill) -> Skill {
     merged.installed_at = existing.installed_at;
     merged.local_path = existing.local_path.clone();
     merged.local_paths = existing.local_paths.clone();
-    merged.security_score = existing.security_score;
-    merged.security_issues = existing.security_issues.clone();
-    merged.security_level = existing.security_level.clone();
-    merged.security_report = existing.security_report.clone();
-    merged.scanned_at = existing.scanned_at;
     merged.installed_commit_sha = existing.installed_commit_sha.clone();
+
+    if checksum_changed {
+        // 文件已变化，清除旧安全数据，下次安装/更新时重新扫描
+        merged.security_score = None;
+        merged.security_issues = None;
+        merged.security_level = None;
+        merged.security_report = None;
+        merged.scanned_at = None;
+    } else {
+        // 文件未变化，保留已有安全数据
+        merged.security_score = existing.security_score;
+        merged.security_issues = existing.security_issues.clone();
+        merged.security_level = existing.security_level.clone();
+        merged.security_report = existing.security_report.clone();
+        merged.scanned_at = existing.scanned_at;
+    }
+
     merged
 }
 
