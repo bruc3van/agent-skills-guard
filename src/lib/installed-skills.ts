@@ -102,9 +102,6 @@ export function groupSkillsByName(skills: Skill[]): Skill[] {
 
 export function getVisibleInstalledPaths(skill: Skill): string[] {
   const paths = pathsForSkill(skill);
-  if (skill.is_local_only) {
-    return paths;
-  }
   return paths.filter((path) => !isDefaultToolSkillPath(path));
 }
 

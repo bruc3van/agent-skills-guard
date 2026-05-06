@@ -80,7 +80,7 @@ export function ToolIcons({
   const [confirmTarget, setConfirmTarget] = useState<ToolDef | null>(null);
 
   function handleClick(tool: ToolDef, active: boolean) {
-    if (disabled || isLocalOnly) return;
+    if (disabled) return;
     if (active) {
       // 取消链接 → 需要确认
       setConfirmTarget(tool);
@@ -118,17 +118,18 @@ export function ToolIcons({
                 type="button"
                 onClick={() => handleClick(tool, active)}
                 disabled={interactionDisabled}
-                aria-disabled={isLocalOnly || interactionDisabled}
+                aria-disabled={interactionDisabled}
                 title={
                   isLocalOnly
-                    ? "本地 skill 不可同步"
+                    ? active
+                      ? `已在 ${tool.label}，点击取消`
+                      : `点击同步到 ${tool.label}（将移至通用目录）`
                     : active
                     ? `已同步到 ${tool.label}，点击取消`
                     : `点击同步到 ${tool.label}`
                 }
                 className={`
-                  flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all
-                  ${isLocalOnly ? "cursor-not-allowed" : "cursor-pointer"}
+                  flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer
                   ${
                     active
                       ? "border-current shadow-sm"

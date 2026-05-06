@@ -78,7 +78,7 @@ describe("groupSkillsByName", () => {
 });
 
 describe("getVisibleInstalledPaths", () => {
-  it("shows default tool paths for local-only skills", () => {
+  it("hides default tool paths for local-only skills", () => {
     const skill = buildSkill({
       id: "local::skill",
       repository_url: "local",
@@ -90,10 +90,7 @@ describe("getVisibleInstalledPaths", () => {
       ],
     });
 
-    expect(getVisibleInstalledPaths(skill)).toEqual([
-      "C:/Users/Bruce/.claude/skills/example",
-      "C:/Users/Bruce/.codex/skills/example",
-    ]);
+    expect(getVisibleInstalledPaths(skill)).toEqual([]);
   });
 
   it("hides default tool paths for managed skills", () => {

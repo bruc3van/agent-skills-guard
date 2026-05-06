@@ -43,7 +43,17 @@ pub async fn scan_all_installed_skills(
                 };
                 let path = PathBuf::from(local_path);
                 if !path.exists() || !path.is_dir() {
-                    log::warn!("Skill directory does not exist: {:?}", path);
+                    log::warn!("Skill directory does not exist, marking as uninstalled: {:?}", path);
+                    let mut updated = skill.clone();
+                    updated.installed = false;
+                    updated.installed_at = None;
+                    updated.local_path = None;
+                    updated.local_paths = None;
+                    updated.source_path = None;
+                    updated.linked_tools = Vec::new();
+                    if let Err(e) = db.save_skill(&updated) {
+                        log::warn!("Failed to update stale skill '{}': {}", skill.name, e);
+                    }
                     return None;
                 }
 
@@ -117,6 +127,16 @@ pub async fn scan_installed_skill(
     let local_path = skill.local_path.clone().unwrap_or_default();
     let path = PathBuf::from(&local_path);
     if !path.exists() || !path.is_dir() {
+        // Update DB: mark as uninstalled since directory is gone
+        skill.installed = false;
+        skill.installed_at = None;
+        skill.local_path = None;
+        skill.local_paths = None;
+        skill.source_path = None;
+        skill.linked_tools = Vec::new();
+        if let Err(e) = state.db.save_skill(&skill) {
+            log::warn!("Failed to update stale skill '{}': {}", skill.name, e);
+        }
         return Err(format!("Skill directory does not exist: {}", local_path));
     }
 

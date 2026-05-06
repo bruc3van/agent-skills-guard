@@ -1137,12 +1137,122 @@ impl SkillManager {
             }
         }
 
+        // Reconciliation pass: detect skills that exist in DB as installed
+        // but whose directories no longer exist on disk
+        let stale_count = self.reconcile_stale_skills(&existing_skills)?;
+
         log::info!(
-            "Scanned {} local skills, imported {} new skills",
+            "Scanned {} local skills, imported {} new skills, reconciled {} stale skills",
             scanned_skills.len(),
-            imported_skills.len()
+            imported_skills.len(),
+            stale_count
         );
         Ok(scanned_skills)
+    }
+
+    /// Reconcile DB state with filesystem: detect installed skills whose directories
+    /// have been deleted externally and update DB accordingly.
+    ///
+    /// - For local-only skills with no remaining paths: delete the DB record entirely
+    /// - For marketplace skills with no remaining paths: mark as uninstalled
+    /// - For skills with some paths gone: prune stale paths and update linked_tools
+    fn reconcile_stale_skills(&self, existing_skills: &[Skill]) -> Result<usize> {
+        let mut stale_count = 0usize;
+
+        for skill in existing_skills {
+            if !skill.installed {
+                continue;
+            }
+
+            let paths = match &skill.local_paths {
+                Some(p) if !p.is_empty() => p.clone(),
+                _ => match &skill.local_path {
+                    Some(p) => vec![p.clone()],
+                    None => continue,
+                },
+            };
+
+            // Check which paths still exist on disk
+            let alive_paths: Vec<String> =
+                paths.iter().filter(|p| PathBuf::from(p).exists()).cloned().collect();
+
+            if alive_paths.len() == paths.len() {
+                continue; // All paths still exist, nothing to do
+            }
+
+            stale_count += 1;
+
+            if alive_paths.is_empty() {
+                // All paths are gone
+                if skill.is_local_only {
+                    log::info!(
+                        "Deleting local-only skill '{}' (id={}): all paths removed from disk",
+                        skill.name,
+                        skill.id
+                    );
+                    if let Err(e) = self.db.delete_skill(&skill.id) {
+                        log::warn!("Failed to delete stale local skill '{}': {}", skill.name, e);
+                    }
+                } else {
+                    log::info!(
+                        "Marking skill '{}' (id={}) as uninstalled: all paths removed from disk",
+                        skill.name,
+                        skill.id
+                    );
+                    let mut updated = skill.clone();
+                    updated.installed = false;
+                    updated.installed_at = None;
+                    updated.local_path = None;
+                    updated.local_paths = None;
+                    updated.source_path = None;
+                    updated.linked_tools = Vec::new();
+                    if let Err(e) = self.db.save_skill(&updated) {
+                        log::warn!("Failed to update stale skill '{}': {}", skill.name, e);
+                    }
+                }
+            } else {
+                // Some paths are gone — prune stale paths and clean up linked tools
+                log::info!(
+                    "Pruning stale paths for skill '{}' (id={}): {:?} -> {:?}",
+                    skill.name,
+                    skill.id,
+                    paths,
+                    alive_paths
+                );
+
+                let mut updated = skill.clone();
+
+                // Remove linked tools whose paths are gone
+                let stale_paths: std::collections::HashSet<&str> = paths
+                    .iter()
+                    .filter(|p| !alive_paths.contains(p))
+                    .map(|s| s.as_str())
+                    .collect();
+                updated.linked_tools.retain(|tool_id| {
+                    if let Some(tool) = AgentTool::from_id(tool_id) {
+                        if let Some(tool_dir) = tool.default_skills_dir() {
+                            // Check if any stale path belongs to this tool
+                            return !stale_paths.iter().any(|sp| {
+                                PathBuf::from(sp).parent().map_or(false, |p| p == tool_dir)
+                            });
+                        }
+                    }
+                    true
+                });
+
+                updated.local_paths = Some(alive_paths.clone());
+                updated.local_path = Some(alive_paths[0].clone());
+                if updated.source_path.as_ref().map_or(true, |sp| !PathBuf::from(sp).exists()) {
+                    updated.source_path = Some(alive_paths[0].clone());
+                }
+
+                if let Err(e) = self.db.save_skill(&updated) {
+                    log::warn!("Failed to prune paths for skill '{}': {}", skill.name, e);
+                }
+            }
+        }
+
+        Ok(stale_count)
     }
 
     /// 解析 SKILL.md 的 frontmatter（使用 serde_yaml，支持多行 block scalar 等 YAML 语法）
@@ -1781,8 +1891,9 @@ impl SkillManager {
     }
 
     /// 为指定 skill 重建到目标工具的链接
-    /// - 先按当前 linked_tools 删除旧链接
-    /// - 再为 target_tools（不含 agents）创建新链接
+    /// - 本地技能先自动提升到通用目录（~/.agents/skills），原位置替换为链接
+    /// - 再按当前 linked_tools 删除旧链接
+    /// - 最后为 target_tools（不含 agents）创建新链接
     pub fn sync_skill_to_tools(&self, skill_id: &str, target_tools: Vec<String>) -> Result<()> {
         let mut skill = self
             .db
@@ -1790,6 +1901,67 @@ impl SkillManager {
             .into_iter()
             .find(|s| s.id == skill_id)
             .context("未找到该技能")?;
+
+        // 本地技能自动提升：复制到通用目录，原位置替换为 Junction
+        if skill.is_local_only {
+            let original_path = skill
+                .local_path
+                .as_ref()
+                .context("本地技能缺少 local_path")?
+                .clone();
+            let original = PathBuf::from(&original_path);
+            let dir_name = original
+                .file_name()
+                .context("无效的技能目录名")?;
+            let common_dir = self.skills_dir.join(&dir_name);
+
+            // 确保通用目录的父目录存在
+            std::fs::create_dir_all(&self.skills_dir)
+                .context("无法创建通用技能目录")?;
+
+            // 复制到通用目录
+            let mut files_copied = 0;
+            self.copy_dir_recursive(&original, &common_dir, &mut files_copied)?;
+            log::info!(
+                "已将本地技能复制到通用目录: {:?} ({} 个文件)",
+                common_dir,
+                files_copied
+            );
+
+            // 删除原目录，替换为指向通用目录的 Junction
+            if link_fs::is_dir_link(&original) {
+                link_fs::remove_dir_link(&original)?;
+            } else {
+                std::fs::remove_dir_all(&original)
+                    .context("无法删除原技能目录")?;
+            }
+            link_fs::create_dir_link(&common_dir, &original)
+                .context("无法将原位置替换为链接")?;
+
+            // 更新技能记录
+            let common_str = common_dir.to_string_lossy().to_string();
+            skill.source_path = Some(common_str.clone());
+            skill.local_path = Some(common_str.clone());
+            skill.local_paths = Some(vec![common_str, original_path.clone()]);
+            skill.is_local_only = false;
+
+            // 识别原路径所属工具并加入 linked_tools
+            let mut linked = Vec::new();
+            let original = PathBuf::from(&original_path);
+            for tool in AgentTool::all() {
+                if tool == AgentTool::Agents {
+                    continue;
+                }
+                if let Some(tool_dir) = tool.default_skills_dir() {
+                    if original.starts_with(&tool_dir) {
+                        linked.push(tool.id().to_string());
+                        break;
+                    }
+                }
+            }
+            skill.linked_tools = linked;
+            self.db.save_skill(&skill)?;
+        }
 
         let source_path = skill
             .source_path
@@ -1819,8 +1991,8 @@ impl SkillManager {
             }
         }
 
-        // 创建新链接
-        let mut new_linked: Vec<String> = Vec::new();
+        // 创建新链接（保留已有的 linked_tools，如本地技能提升时识别的原始工具）
+        let mut new_linked: Vec<String> = skill.linked_tools.clone();
         let mut new_paths: Vec<String> = vec![source_path.clone()];
 
         for tool_id in &target_tools {
@@ -1850,10 +2022,10 @@ impl SkillManager {
         Ok(())
     }
 
-    /// 为所有受管 skill 批量同步到指定工具
+    /// 为所有已安装 skill 批量同步到指定工具（含本地技能）
     pub fn sync_all_skills_to_tools(&self, target_tools: Vec<String>) -> Result<()> {
         let skills = self.db.get_skills()?;
-        let managed: Vec<_> = skills.into_iter().filter(|s| s.installed && !s.is_local_only).collect();
+        let managed: Vec<_> = skills.into_iter().filter(|s| s.installed).collect();
 
         let mut errors = Vec::new();
         for skill in managed {

@@ -1627,8 +1627,12 @@ export function InstalledSkillsPage() {
         open={!!syncTargetSkill}
         onOpenChange={(open) => { if (!open) setSyncTargetSkill(null); }}
         title={`同步「${syncTargetSkill?.name ?? ""}」到工具`}
-        description="选择要同步到的编程工具，将在目标工具 skill 目录创建链接。"
-        initialSelected={syncTargetSkill?.linked_tools ?? []}
+        description={syncTargetSkill?.is_local_only
+          ? "本地 skill 将被移至通用目录（~/.agents/skills），然后通过链接同步到选中的工具。"
+          : "选择要同步到的编程工具，将在目标工具 skill 目录创建链接。"}
+        initialSelected={syncTargetSkill?.is_local_only
+          ? getDisplayedToolIds(syncTargetSkill)
+          : syncTargetSkill?.linked_tools ?? []}
         loading={syncSkillMutation.isPending}
         onConfirm={async (tools) => {
           if (!syncTargetSkill) return;
@@ -1646,8 +1650,8 @@ export function InstalledSkillsPage() {
       <ToolSyncDialog
         open={batchSyncOpen}
         onOpenChange={setBatchSyncOpen}
-        title="批量同步所有受管 Skill"
-        description="将为所有受管 skill 在选中工具的目录下创建/更新链接。"
+        title="批量同步所有已安装 Skill"
+        description="将为所有已安装 skill（含本地 skill）在选中工具的目录下创建/更新链接。本地 skill 会先移至通用目录。"
         initialSelected={[]}
         loading={syncAllMutation.isPending}
         onConfirm={async (tools) => {
@@ -1922,18 +1926,16 @@ function SkillCard({
               )}
             </button>
           )}
-          {!skill.is_local_only && (
-            <button
-              onClick={onSync}
-              disabled={isAnyOperationPending}
-              aria-label={`同步到工具: ${skill.name}`}
-              title="批量同步到工具"
-              className="apple-button-secondary h-8 px-3 text-xs flex items-center gap-1.5"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              同步
-            </button>
-          )}
+          <button
+            onClick={onSync}
+            disabled={isAnyOperationPending}
+            aria-label={`同步到工具: ${skill.name}`}
+            title={skill.is_local_only ? "同步到工具（将移至通用目录）" : "批量同步到工具"}
+            className="apple-button-secondary h-8 px-3 text-xs flex items-center gap-1.5"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            同步
+          </button>
           <button
             onClick={onUninstall}
             disabled={isAnyOperationPending}
