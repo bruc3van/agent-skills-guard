@@ -15,6 +15,7 @@ import type {
   FeaturedRepositoriesConfig,
   FeaturedMarketplacesConfig,
   ClearAllCachesResult,
+  AgentToolInfo,
 } from "../types";
 import type { SecurityReport } from "../types/security";
 import type { SkillScanResult } from "../types/security";
@@ -61,12 +62,14 @@ export const api = {
   async confirmSkillInstallation(
     skillId: string,
     installPath?: string,
-    allowPartialScan = false
+    allowPartialScan = false,
+    targetTools?: string[]
   ): Promise<void> {
     return invoke("confirm_skill_installation", {
       skillId,
       installPath: installPath || null,
       allowPartialScan,
+      targetTools: targetTools ?? null,
     });
   },
 
@@ -281,5 +284,18 @@ export const api = {
   // Reset
   async resetAppData(): Promise<void> {
     return invoke("reset_app_data");
+  },
+
+  // Agent Tools
+  async listAgentTools(): Promise<AgentToolInfo[]> {
+    return invoke("list_agent_tools");
+  },
+
+  async syncSkillToTools(skillId: string, tools: string[]): Promise<void> {
+    return invoke("sync_skill_to_tools", { skillId, tools });
+  },
+
+  async syncAllSkillsToTools(tools: string[]): Promise<void> {
+    return invoke("sync_all_skills_to_tools", { tools });
   },
 };

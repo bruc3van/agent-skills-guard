@@ -35,6 +35,7 @@ import {
   SkillSecurityDialog,
   SkillSecurityDialogConfirmButton,
 } from "./ui/SkillSecurityDialog";
+import { useAgentTools } from "@/lib/agent-tools";
 
 interface MarketplacePageProps {
   onNavigateToRepositories?: () => void;
@@ -589,7 +590,7 @@ export function MarketplacePage({
             console.error("[ERROR] 取消安装失败:", error);
           });
         }}
-        onConfirm={async (selectedPath) => {
+        onConfirm={async (selectedPath, targetTools) => {
           if (!pendingInstall) return;
           const skillId = pendingInstall.skill.id;
           setInstallStatus((prev) => ({
@@ -603,7 +604,8 @@ export function MarketplacePage({
               selectedPath,
               Boolean(
                 pendingInstall.report?.partial_scan || pendingInstall.report?.skipped_files?.length
-              )
+              ),
+              targetTools
             );
             addRecentInstallPath(selectedPath);
             await queryClient.refetchQueries({ queryKey: ["skills"] });
@@ -1099,7 +1101,7 @@ function getPluginStatusLabel(status: Plugin["install_status"], t: (key: string)
 interface InstallConfirmDialogProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (selectedPath: string) => void;
+  onConfirm: (selectedPath: string, targetTools: string[]) => void;
   report: SecurityReport | null;
   skillName: string;
 }
@@ -1113,10 +1115,29 @@ function InstallConfirmDialog({
 }: InstallConfirmDialogProps) {
   const { t } = useTranslation();
   const [selectedPath, setSelectedPath] = useState<string>("");
+  const { data: agentTools = [] } = useAgentTools();
+  const [selectedTools, setSelectedTools] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
-    if (!open) setSelectedPath("");
+    if (!open) {
+      setSelectedPath("");
+    } else {
+      // 默认勾选已检测到的工具（present=true）且非 agents 的工具
+      const defaults = agentTools
+        .filter((t) => t.present && t.id !== "agents")
+        .map((t) => t.id);
+      setSelectedTools(new Set(defaults));
+    }
   }, [open]);
+
+  function toggleTool(id: string) {
+    setSelectedTools((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const confirmTone = !report
     ? "primary"
@@ -1139,8 +1160,26 @@ function InstallConfirmDialog({
       issuePreviewCount={3}
       contentClassName="max-w-2xl"
       extraContent={
-        <div className="border-t border-border py-4">
+        <div className="border-t border-border py-4 space-y-4">
           <InstallPathSelector onSelect={setSelectedPath} />
+          {agentTools.filter((t) => t.id !== "agents").length > 0 && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-2 font-medium">同时同步到其他编程工具（可选）</p>
+              <div className="flex flex-wrap gap-2">
+                {agentTools.filter((t) => t.id !== "agents").map((tool) => (
+                  <label key={tool.id} className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={selectedTools.has(tool.id)}
+                      onChange={() => toggleTool(tool.id)}
+                      className="accent-primary"
+                    />
+                    {tool.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       }
       footer={
@@ -1149,7 +1188,7 @@ function InstallConfirmDialog({
             {t("skills.marketplace.install.cancel")}
           </AlertDialogCancel>
           <SkillSecurityDialogConfirmButton
-            onClick={() => onConfirm(selectedPath)}
+            onClick={() => onConfirm(selectedPath, Array.from(selectedTools))}
             disabled={!selectedPath}
             loadingLabel={t("skills.installing")}
             label={

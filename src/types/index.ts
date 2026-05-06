@@ -40,7 +40,18 @@ export interface Skill {
   security_score?: number;
   security_issues?: SecurityIssue[];
   security_report?: SecurityReport;
-  installed_commit_sha?: string; // 安装时的 commit SHA，用于版本追踪
+  installed_commit_sha?: string;
+  source_path?: string;       // 统一源路径 (~/.agents/skills/<name>)
+  linked_tools?: string[];    // 已链接的工具 id 列表
+  is_local_only?: boolean;    // true = 用户手动放入，未经本工具安装
+}
+
+export interface AgentToolInfo {
+  id: string;
+  label: string;
+  path?: string;
+  present: boolean;
+  skill_count: number;
 }
 
 export interface Plugin {

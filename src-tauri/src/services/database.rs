@@ -261,6 +261,7 @@ impl Database {
         self.migrate_add_installed_commit_sha()?;
         self.migrate_add_plugin_claude_fields()?;
         self.migrate_add_plugin_install_commands()?;
+        self.migrate_add_agent_tool_fields()?;
 
         Ok(())
     }
@@ -444,11 +445,15 @@ impl Database {
             .transpose()
             .context("Failed to serialize skill local paths")?;
 
+        let linked_tools_json = serde_json::to_string(&skill.linked_tools)
+            .context("Failed to serialize skill linked_tools")?;
+
         conn.execute(
             "INSERT OR REPLACE INTO skills
             (id, name, description, repository_url, repository_owner, file_path, version, author,
-             installed, installed_at, local_path, local_paths, checksum, security_score, security_issues, security_level, security_report, scanned_at, installed_commit_sha)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+             installed, installed_at, local_path, local_paths, checksum, security_score, security_issues, security_level, security_report, scanned_at, installed_commit_sha,
+             source_path, linked_tools, is_local_only)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 skill.id,
                 skill.name,
@@ -469,6 +474,9 @@ impl Database {
                 security_report_json,
                 skill.scanned_at.as_ref().map(|d| d.to_rfc3339()),
                 skill.installed_commit_sha,
+                skill.source_path,
+                linked_tools_json,
+                skill.is_local_only as i32,
             ],
         )?;
 
@@ -480,7 +488,8 @@ impl Database {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, name, description, repository_url, repository_owner, file_path, version, author,
-                    installed, installed_at, local_path, local_paths, checksum, security_score, security_issues, security_level, security_report, scanned_at, installed_commit_sha
+                    installed, installed_at, local_path, local_paths, checksum, security_score, security_issues, security_level, security_report, scanned_at, installed_commit_sha,
+                    source_path, linked_tools, is_local_only
              FROM skills"
         )?;
 
@@ -503,6 +512,11 @@ impl Database {
 
                 let local_paths: Option<String> = row.get(11)?;
                 let local_paths = local_paths.and_then(|s| serde_json::from_str(&s).ok());
+
+                let linked_tools: Option<String> = row.get(20)?;
+                let linked_tools = linked_tools
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+                    .unwrap_or_default();
 
                 Ok(Skill {
                     id: row.get(0)?,
@@ -528,6 +542,9 @@ impl Database {
                         .get::<_, Option<String>>(17)?
                         .and_then(|s| s.parse().ok()),
                     installed_commit_sha: row.get(18)?,
+                    source_path: row.get(19)?,
+                    linked_tools,
+                    is_local_only: row.get::<_, Option<i32>>(21)?.unwrap_or(0) != 0,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -854,6 +871,15 @@ impl Database {
             [],
         );
 
+        Ok(())
+    }
+
+    /// 数据库迁移：添加多工具支持字段
+    fn migrate_add_agent_tool_fields(&self) -> Result<()> {
+        let conn = self.lock_conn();
+        let _ = conn.execute("ALTER TABLE skills ADD COLUMN source_path TEXT", []);
+        let _ = conn.execute("ALTER TABLE skills ADD COLUMN linked_tools TEXT", []);
+        let _ = conn.execute("ALTER TABLE skills ADD COLUMN is_local_only INTEGER NOT NULL DEFAULT 0", []);
         Ok(())
     }
 

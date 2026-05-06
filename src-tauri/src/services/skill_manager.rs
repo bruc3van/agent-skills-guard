@@ -1,5 +1,7 @@
 use crate::models::Skill;
 use crate::security::{ScanOptions, SecurityScanner};
+use crate::services::agent_tools::AgentTool;
+use crate::services::link_fs;
 use crate::services::{Database, GitHubService};
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -25,10 +27,14 @@ impl SkillManager {
         }
     }
 
-    /// 获取 skills 安装目录
+    /// 获取统一源 skills 安装目录（~/.agents/skills）
     fn get_skills_directory() -> PathBuf {
-        let home = dirs::home_dir().expect("Failed to get home directory");
-        home.join(".claude").join("skills")
+        AgentTool::Agents
+            .default_skills_dir()
+            .unwrap_or_else(|| {
+                let home = dirs::home_dir().expect("Failed to get home directory");
+                home.join(".agents").join("skills")
+            })
     }
 
     fn create_temp_install_dir(
@@ -576,7 +582,9 @@ impl SkillManager {
                 .context(format!("无法获取文件类型: {:?}", src_path))?;
 
             if file_type.is_symlink() {
-                anyhow::bail!("拒绝复制符号链接: {:?}", src_path);
+                // 拒绝复制来自 zip 解压缓存中的符号链接（防御恶意仓库）
+                log::warn!("跳过符号链接（源目录中不允许）: {:?}", src_path);
+                continue;
             } else if file_type.is_dir() {
                 std::fs::create_dir_all(&dst_path)
                     .context(format!("无法创建目标目录: {:?}", dst_path))?;
@@ -593,11 +601,13 @@ impl SkillManager {
     }
 
     /// 确认安装技能：从缓存复制到目标路径，标记为已安装
+    /// target_tools: 要同步链接的工具 id 列表（除 "agents" 外的工具）
     pub fn confirm_skill_installation(
         &self,
         skill_id: &str,
         install_path: Option<String>,
         allow_partial_scan: bool,
+        target_tools: Vec<String>,
     ) -> Result<()> {
         use anyhow::Context;
         use std::path::PathBuf;
@@ -662,18 +672,53 @@ impl SkillManager {
 
         self.replace_installation_directory(&prepared_dir, &final_install_dir)?;
 
-        // 更新安装路径
-        let install_path_str = final_install_dir.to_string_lossy().to_string();
+        // 更新源路径（~/.agents/skills/<name>）
+        let source_path_str = final_install_dir.to_string_lossy().to_string();
+
+        // 为其他工具创建 Junction/symlink 链接
+        let mut linked_tool_ids: Vec<String> = Vec::new();
+        let non_agent_tools: Vec<AgentTool> = target_tools
+            .iter()
+            .filter_map(|id| AgentTool::from_id(id))
+            .filter(|t| t != &AgentTool::Agents)
+            .collect();
+
+        for tool in &non_agent_tools {
+            if let Some(tool_dir) = tool.default_skills_dir() {
+                let link_path = tool_dir.join(skill_dir_name.as_str());
+                match link_fs::create_dir_link(&final_install_dir, &link_path) {
+                    Ok(()) => {
+                        log::info!("链接创建成功 [{:?}]: {:?}", tool.id(), link_path);
+                        linked_tool_ids.push(tool.id().to_string());
+                    }
+                    Err(e) => {
+                        log::warn!("链接创建失败 [{:?}]: {}", tool.id(), e);
+                    }
+                }
+            }
+        }
 
         // 更新 local_path（向后兼容）
-        skill.local_path = Some(install_path_str.clone());
+        skill.local_path = Some(source_path_str.clone());
 
-        // 更新 local_paths 数组（支持多路径安装）
-        let mut paths = skill.local_paths.clone().unwrap_or_default();
-        if !paths.contains(&install_path_str) {
-            paths.push(install_path_str);
+        // local_paths 包含源 + 所有成功创建的链接路径（与 linked_tool_ids 保持一致）
+        let mut paths = vec![source_path_str.clone()];
+        for tool_id in &linked_tool_ids {
+            if let Some(tool) = AgentTool::from_id(tool_id) {
+                if let Some(tool_dir) = tool.default_skills_dir() {
+                    let link_str = tool_dir.join(skill_dir_name.as_str()).to_string_lossy().to_string();
+                    if !paths.contains(&link_str) {
+                        paths.push(link_str);
+                    }
+                }
+            }
         }
         skill.local_paths = Some(paths);
+
+        // 设置新字段
+        skill.source_path = Some(source_path_str);
+        skill.linked_tools = linked_tool_ids;
+        skill.is_local_only = false;
 
         // 标记为已安装
         skill.installed = true;
@@ -729,19 +774,21 @@ impl SkillManager {
             .context("未找到该技能")?;
 
         // 删除所有安装路径的文件
+        // 链接路径（Junction/symlink）用 remove_dir_link 删除，避免 remove_dir_all 跟随链接删除源内容
         if let Some(local_paths) = &skill.local_paths {
             for local_path in local_paths {
                 let path = PathBuf::from(local_path);
-                if path.exists() {
-                    // 如果是目录，删除整个目录
+                if link_fs::is_dir_link(&path) {
+                    if let Err(e) = link_fs::remove_dir_link(&path) {
+                        log::warn!("删除技能链接失败: {:?}, 错误: {}", path, e);
+                    }
+                } else if path.exists() {
                     if path.is_dir() {
                         if let Err(e) = std::fs::remove_dir_all(&path) {
                             log::warn!("删除技能目录失败: {:?}, 错误: {}", path, e);
                         }
-                    } else {
-                        if let Err(e) = std::fs::remove_file(&path) {
-                            log::warn!("删除技能文件失败: {:?}, 错误: {}", path, e);
-                        }
+                    } else if let Err(e) = std::fs::remove_file(&path) {
+                        log::warn!("删除技能文件失败: {:?}, 错误: {}", path, e);
                     }
                 }
             }
@@ -751,7 +798,10 @@ impl SkillManager {
         if skill.local_paths.is_none() || skill.local_paths.as_ref().unwrap().is_empty() {
             if let Some(local_path) = &skill.local_path {
                 let path = PathBuf::from(local_path);
-                if path.exists() {
+                if link_fs::is_dir_link(&path) {
+                    link_fs::remove_dir_link(&path)
+                        .context("无法删除技能链接，请检查文件是否被占用")?;
+                } else if path.exists() {
                     if path.is_dir() {
                         std::fs::remove_dir_all(&path)
                             .context("无法删除技能目录，请检查文件是否被占用")?;
@@ -768,6 +818,9 @@ impl SkillManager {
         skill.installed_at = None;
         skill.local_path = None;
         skill.local_paths = None;
+        skill.source_path = None;
+        skill.linked_tools = Vec::new();
+        skill.is_local_only = false;
 
         self.db.save_skill(&skill).context("更新数据库失败")?;
 
@@ -785,9 +838,11 @@ impl SkillManager {
             .find(|s| s.id == skill_id)
             .context("未找到该技能")?;
 
-        // 删除指定路径的文件
+        // 删除指定路径的文件：链接用 remove_dir_link，真实目录用 remove_dir_all
         let path = PathBuf::from(path_to_remove);
-        if path.exists() {
+        if link_fs::is_dir_link(&path) {
+            link_fs::remove_dir_link(&path).context("无法删除技能链接，请检查文件是否被占用")?;
+        } else if path.exists() {
             if path.is_dir() {
                 std::fs::remove_dir_all(&path).context("无法删除技能目录，请检查文件是否被占用")?;
             } else {
@@ -833,12 +888,14 @@ impl SkillManager {
         Ok(skills.into_iter().filter(|s| s.installed).collect())
     }
 
-    /// 扫描本地 ~/.claude/skills/ 目录，导入未追踪的技能
+    /// 扫描所有工具 skill 目录，导入未追踪的技能；通过 realpath 去重，避免链接和源重复导入
     pub fn scan_local_skills(&self) -> Result<Vec<Skill>> {
         use std::collections::HashSet;
 
         let mut scanned_skills = Vec::new(); // 所有扫描到的技能
         let mut imported_skills = Vec::new(); // 新导入的技能（用于日志）
+        // 用于链接去重：realpath -> skill_id，避免 Junction 和真实目录重复导入
+        let mut seen_real_paths: HashSet<PathBuf> = HashSet::new();
 
         // 获取当前数据库中的所有技能（用于去重和提取路径）
         let existing_skills = self.db.get_skills()?;
@@ -855,8 +912,12 @@ impl SkillManager {
             }
         }
 
-        // 2. 添加默认的用户目录（确保始终扫描）
-        scan_dirs.insert(self.skills_dir.clone());
+        // 2. 添加所有工具的 skill 目录（确保始终扫描）
+        for tool in AgentTool::all() {
+            if let Some(dir) = tool.default_skills_dir() {
+                scan_dirs.insert(dir);
+            }
+        }
 
         log::info!("Will scan {} directories for local skills", scan_dirs.len());
 
@@ -882,6 +943,13 @@ impl SkillManager {
                     // 检查是否包含 SKILL.md
                     let skill_md_path = path.join("SKILL.md");
                     if !skill_md_path.exists() {
+                        continue;
+                    }
+
+                    // 通过 realpath 去重：Junction/symlink 和真实目录指向同一位置时只处理一次
+                    let real_path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+                    if !seen_real_paths.insert(real_path) {
+                        log::debug!("跳过重复（链接）路径: {:?}", path);
                         continue;
                     }
 
@@ -995,7 +1063,7 @@ impl SkillManager {
                                 installed: true,
                                 installed_at: Some(Utc::now()),
                                 local_path: Some(local_path_str.clone()),
-                                local_paths: Some(vec![local_path_str]),
+                                local_paths: Some(vec![local_path_str.clone()]),
                                 checksum: Some(checksum),
                                 security_score: Some(report.score),
                                 security_issues: Some(report.issues.clone()),
@@ -1003,6 +1071,9 @@ impl SkillManager {
                                 security_report: Some(report.clone()),
                                 scanned_at: Some(Utc::now()),
                                 installed_commit_sha: None,
+                                source_path: Some(local_path_str),
+                                linked_tools: Vec::new(),
+                                is_local_only: true,
                             };
 
                             // 保存到数据库
@@ -1652,7 +1723,9 @@ impl SkillManager {
             let dst_path = dst.join(&file_name);
 
             if file_type.is_symlink() {
-                anyhow::bail!("拒绝复制符号链接: {:?}", src_path);
+                // 跳过符号链接（缓存源中不允许，防御恶意仓库）
+                log::warn!("跳过符号链接（源目录中不允许）: {:?}", src_path);
+                continue;
             } else if file_type.is_dir() {
                 // 递归复制子目录
                 log::debug!("复制子目录: {:?}", file_name);
@@ -1692,6 +1765,96 @@ impl SkillManager {
 
         log::info!("目录复制完成: {:?}", dst);
         Ok(())
+    }
+
+    /// 为指定 skill 重建到目标工具的链接
+    /// - 先按当前 linked_tools 删除旧链接
+    /// - 再为 target_tools（不含 agents）创建新链接
+    pub fn sync_skill_to_tools(&self, skill_id: &str, target_tools: Vec<String>) -> Result<()> {
+        let mut skill = self
+            .db
+            .get_skills()?
+            .into_iter()
+            .find(|s| s.id == skill_id)
+            .context("未找到该技能")?;
+
+        let source_path = skill
+            .source_path
+            .as_ref()
+            .or(skill.local_path.as_ref())
+            .context("技能未安装（无 source_path）")?
+            .clone();
+        let source = PathBuf::from(&source_path);
+
+        let skill_dir_name = source
+            .file_name()
+            .context("无效的技能目录名")?
+            .to_string_lossy()
+            .to_string();
+
+        // 删除旧链接
+        for old_tool_id in &skill.linked_tools {
+            if let Some(tool) = AgentTool::from_id(old_tool_id) {
+                if let Some(tool_dir) = tool.default_skills_dir() {
+                    let link = tool_dir.join(&skill_dir_name);
+                    if link_fs::is_dir_link(&link) {
+                        if let Err(e) = link_fs::remove_dir_link(&link) {
+                            log::warn!("删除旧链接失败 [{:?}]: {}", link, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 创建新链接
+        let mut new_linked: Vec<String> = Vec::new();
+        let mut new_paths: Vec<String> = vec![source_path.clone()];
+
+        for tool_id in &target_tools {
+            let tool = match AgentTool::from_id(tool_id) {
+                Some(t) if t != AgentTool::Agents => t,
+                _ => continue,
+            };
+            if let Some(tool_dir) = tool.default_skills_dir() {
+                let link = tool_dir.join(&skill_dir_name);
+                match link_fs::create_dir_link(&source, &link) {
+                    Ok(()) => {
+                        new_linked.push(tool.id().to_string());
+                        new_paths.push(link.to_string_lossy().to_string());
+                    }
+                    Err(e) => {
+                        log::warn!("创建链接失败 [{:?}]: {}", link, e);
+                    }
+                }
+            }
+        }
+
+        skill.linked_tools = new_linked;
+        skill.local_paths = Some(new_paths);
+        self.db.save_skill(&skill)?;
+
+        log::info!("Synced skill '{}' to tools: {:?}", skill.name, target_tools);
+        Ok(())
+    }
+
+    /// 为所有受管 skill 批量同步到指定工具
+    pub fn sync_all_skills_to_tools(&self, target_tools: Vec<String>) -> Result<()> {
+        let skills = self.db.get_skills()?;
+        let managed: Vec<_> = skills.into_iter().filter(|s| s.installed && !s.is_local_only).collect();
+
+        let mut errors = Vec::new();
+        for skill in managed {
+            if let Err(e) = self.sync_skill_to_tools(&skill.id, target_tools.clone()) {
+                log::warn!("同步 skill '{}' 失败: {}", skill.name, e);
+                errors.push(format!("{}: {}", skill.name, e));
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            anyhow::bail!("部分技能同步失败:\n{}", errors.join("\n"))
+        }
     }
 }
 

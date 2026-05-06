@@ -43,6 +43,8 @@ import {
   SkillSecurityDialog,
   SkillSecurityDialogConfirmButton,
 } from "./ui/SkillSecurityDialog";
+import { ToolSyncDialog } from "./ui/ToolSyncDialog";
+import { useSyncSkillToTools, useSyncAllSkillsToTools } from "@/lib/agent-tools";
 
 const AVAILABLE_UPDATES_KEY = "available_updates";
 const AVAILABLE_PLUGIN_UPDATES_KEY = "available_plugin_updates";
@@ -129,6 +131,11 @@ export function InstalledSkillsPage() {
       updater(prev ?? defaultInstalledOps)
     );
   };
+
+  const syncSkillMutation = useSyncSkillToTools();
+  const syncAllMutation = useSyncAllSkillsToTools();
+  const [syncTargetSkill, setSyncTargetSkill] = useState<Skill | null>(null);
+  const [batchSyncOpen, setBatchSyncOpen] = useState(false);
 
   const [activeTab, setActiveTab] = useState<"all" | "skills" | "plugins" | "marketplaces">("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -982,6 +989,7 @@ export function InstalledSkillsPage() {
             appToast.error(`${t("skills.toast.updateFailed")}: ${error.message || error}`);
           }
         }}
+        onSync={() => setSyncTargetSkill(skill)}
         hasUpdate={availableUpdates.has(skill.id)}
         isUninstalling={uninstallingSkillId === skill.id}
         isPreparingUpdate={preparingUpdateSkillId === skill.id}
@@ -1103,6 +1111,20 @@ export function InstalledSkillsPage() {
             >
               <div className="flex items-center justify-between gap-4 mb-4">
                 <h1 className="text-headline text-foreground">{t("nav.installed")}</h1>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setBatchSyncOpen(true)}
+                    disabled={syncAllMutation.isPending}
+                    className="apple-button-secondary h-10 px-4 flex items-center gap-2 disabled:opacity-50 text-sm"
+                    title="批量同步所有受管 skill 到工具"
+                  >
+                    {syncAllMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
+                    批量同步
+                  </button>
                 <button
                   onClick={checkAllUpdates}
                   disabled={
@@ -1130,6 +1152,7 @@ export function InstalledSkillsPage() {
                     </>
                   )}
                 </button>
+                </div>
               </div>
             </div>
 
@@ -1566,6 +1589,45 @@ export function InstalledSkillsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* 单个 skill 同步对话框 */}
+      <ToolSyncDialog
+        open={!!syncTargetSkill}
+        onOpenChange={(open) => { if (!open) setSyncTargetSkill(null); }}
+        title={`同步「${syncTargetSkill?.name ?? ""}」到工具`}
+        description="选择要同步到的编程工具，将在目标工具 skill 目录创建链接。"
+        initialSelected={syncTargetSkill?.linked_tools ?? []}
+        loading={syncSkillMutation.isPending}
+        onConfirm={async (tools) => {
+          if (!syncTargetSkill) return;
+          try {
+            await syncSkillMutation.mutateAsync({ skillId: syncTargetSkill.id, tools });
+            setSyncTargetSkill(null);
+            appToast.success("同步成功");
+          } catch (e: any) {
+            appToast.error(`同步失败: ${e.message || e}`);
+          }
+        }}
+      />
+
+      {/* 批量同步对话框 */}
+      <ToolSyncDialog
+        open={batchSyncOpen}
+        onOpenChange={setBatchSyncOpen}
+        title="批量同步所有受管 Skill"
+        description="将为所有受管 skill 在选中工具的目录下创建/更新链接。"
+        initialSelected={[]}
+        loading={syncAllMutation.isPending}
+        onConfirm={async (tools) => {
+          try {
+            await syncAllMutation.mutateAsync(tools);
+            setBatchSyncOpen(false);
+            appToast.success("批量同步完成");
+          } catch (e: any) {
+            appToast.error(`批量同步失败: ${e.message || e}`);
+          }
+        }}
+      />
     </div>
   );
 }
@@ -1720,6 +1782,7 @@ interface SkillCardProps {
   onUninstall: () => void;
   onUninstallPath: (path: string) => void;
   onUpdate: () => void;
+  onSync: () => void;
   hasUpdate: boolean;
   isUninstalling: boolean;
   isPreparingUpdate: boolean;
@@ -1750,6 +1813,7 @@ function SkillCard({
   onUninstall,
   onUninstallPath,
   onUpdate,
+  onSync,
   hasUpdate,
   isUninstalling,
   isPreparingUpdate,
@@ -1773,6 +1837,16 @@ function SkillCard({
             >
               {formatRepositoryTag(skill)}
             </span>
+            {skill.is_local_only && (
+              <span className="text-xs px-2.5 py-1 rounded-full font-medium text-amber-600 bg-amber-500/10">
+                本地
+              </span>
+            )}
+            {!skill.is_local_only && skill.linked_tools && skill.linked_tools.length > 0 && (
+              <span className="text-xs px-2.5 py-1 rounded-full font-medium text-emerald-600 bg-emerald-500/10" title={`已链接: ${skill.linked_tools.join(", ")}`}>
+                已链接 {skill.linked_tools.length}
+              </span>
+            )}
             {pluginUpgradeCandidate && (
               <span className="text-xs px-2.5 py-1 rounded-full font-medium text-warning bg-warning/10">
                 {t("skills.installedPage.upgradeBadge")}
@@ -1815,6 +1889,18 @@ function SkillCard({
                   {t("skills.update")}
                 </>
               )}
+            </button>
+          )}
+          {!skill.is_local_only && (
+            <button
+              onClick={onSync}
+              disabled={isAnyOperationPending}
+              aria-label={`同步到工具: ${skill.name}`}
+              title="同步到其他编程工具"
+              className="apple-button-secondary h-8 px-3 text-xs flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              同步
             </button>
           )}
           <button

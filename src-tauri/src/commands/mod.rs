@@ -439,17 +439,23 @@ pub async fn prepare_skill_installation(
         .map_err(|e| e.to_string())
 }
 
-/// 确认安装技能：标记为已安装
+/// 确认安装技能：标记为已安装，并为 target_tools 创建链接
 #[tauri::command]
 pub async fn confirm_skill_installation(
     state: State<'_, AppState>,
     skill_id: String,
     install_path: Option<String>,
     allow_partial_scan: Option<bool>,
+    target_tools: Option<Vec<String>>,
 ) -> Result<(), String> {
     let manager = state.skill_manager.lock().await;
     manager
-        .confirm_skill_installation(&skill_id, install_path, allow_partial_scan.unwrap_or(false))
+        .confirm_skill_installation(
+            &skill_id,
+            install_path,
+            allow_partial_scan.unwrap_or(false),
+            target_tools.unwrap_or_default(),
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -742,9 +748,10 @@ pub async fn open_skill_directory(
     let allowed = {
         let mut allowed_paths: Vec<std::path::PathBuf> = Vec::new();
 
-        // 允许的目录：用户 .claude 目录
+        // 允许的目录：用户 .claude 目录 及统一源目录 .agents
         if let Some(home) = dirs::home_dir() {
             allowed_paths.push(home.join(".claude"));
+            allowed_paths.push(home.join(".agents"));
         }
 
         // 允许的目录：应用缓存目录
@@ -1216,4 +1223,53 @@ pub async fn auto_scan_unscanned_repositories(
 
     log::info!("自动扫描完成，成功扫描 {} 个仓库", scanned_repos.len());
     Ok(scanned_repos)
+}
+
+/// 列出所有支持的编程工具及其状态
+#[tauri::command]
+pub async fn list_agent_tools(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::services::AgentToolInfo>, String> {
+    use crate::services::agent_tools::{AgentTool, AgentToolInfo};
+
+    let skills = state.db.get_skills().map_err(|e| e.to_string())?;
+
+    let tool_list = AgentTool::all()
+        .into_iter()
+        .map(|tool| {
+            let count = skills.iter().filter(|s| {
+                s.installed
+                    && (s.linked_tools.contains(&tool.id().to_string())
+                        || (tool == AgentTool::Agents && !s.is_local_only))
+            }).count();
+            AgentToolInfo::from_tool(&tool, count)
+        })
+        .collect();
+
+    Ok(tool_list)
+}
+
+/// 为指定 skill 重建到目标工具的链接
+#[tauri::command]
+pub async fn sync_skill_to_tools(
+    state: State<'_, AppState>,
+    skill_id: String,
+    tools: Vec<String>,
+) -> Result<(), String> {
+    let manager = state.skill_manager.lock().await;
+    manager
+        .sync_skill_to_tools(&skill_id, tools)
+        .map_err(|e| e.to_string())
+}
+
+/// 批量为所有受管 skill 同步到指定工具
+#[tauri::command]
+pub async fn sync_all_skills_to_tools(
+    state: State<'_, AppState>,
+    tools: Vec<String>,
+) -> Result<(), String> {
+    let manager = state.skill_manager.lock().await;
+    manager
+        .sync_all_skills_to_tools(tools)
+        .map_err(|e| e.to_string())
 }
