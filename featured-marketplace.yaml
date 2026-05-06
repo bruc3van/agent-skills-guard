@@ -309,7 +309,7 @@ marketplace:
         featured: true
         plugins:
           - name: "marketing-skills"
-            install_command: "/plugin install marketing-skills"
+            install_command: "/plugin install marketing-skills@marketingskills"
             description:
               en: "Marketing skills bundle for Claude Code and AI agents covering CRO, copywriting, SEO, analytics, and growth engineering"
               zh: "面向 Claude Code 与 AI 代理的营销技能合集，涵盖 CRO、文案写作、SEO、数据分析与增长工程"
@@ -797,7 +797,7 @@ marketplace:
         featured: true
         plugins:
           - name: "sentry-skills"
-            install_command: "claude plugin install sentry-skills@sentry-skills"
+            install_command: "/plugin install sentry-skills@sentry-skills"
             description:
               en: "Sentry development skills bundle"
               zh: "Sentry 开发流程技能合集"
@@ -843,7 +843,7 @@ marketplace:
         featured: true
         plugins:
           - name: "claude-mem"
-            install_command: "/plugin install claude-mem"
+            install_command: "/plugin install claude-mem@claude-mem"
             description:
               en: "Persistent memory system with automatic context capture, AI-powered semantic compression, progressive disclosure retrieval, web viewer UI at localhost:37777, MCP search tools, and privacy control with <private> tags"
               zh: "持久记忆系统，具备自动上下文捕获、AI 驱动语义压缩、渐进式披露检索、localhost:37777 Web 查看器 UI、MCP 搜索工具以及 <private> 标签隐私控制"

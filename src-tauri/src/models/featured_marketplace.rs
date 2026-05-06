@@ -26,6 +26,7 @@ pub struct FeaturedMarketplaceCategory {
 pub struct FeaturedMarketplaceOwner {
     pub name: Option<String>,
     pub email: Option<String>,
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

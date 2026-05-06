@@ -267,32 +267,7 @@ impl PluginManager {
             // 不再要求 plugin.json 存在，marketplace.json 里的 plugins 条目足够 Claude Code CLI 安装
 
             if let Some(existing) = existing_map.get(&plugin.id) {
-                plugin.marketplace_add_command = existing.marketplace_add_command.clone();
-                plugin.plugin_install_command = existing.plugin_install_command.clone();
-                plugin.installed = existing.installed;
-                plugin.installed_at = existing.installed_at;
-                plugin.installed_version = existing.installed_version.clone();
-                plugin.claude_id = existing.claude_id.clone().or(plugin.claude_id);
-                plugin.discovery_source = existing
-                    .discovery_source
-                    .clone()
-                    .or(plugin.discovery_source);
-                plugin.claude_scope = existing.claude_scope.clone();
-                plugin.claude_enabled = existing.claude_enabled;
-                plugin.claude_install_path = existing.claude_install_path.clone();
-                plugin.claude_last_updated = existing.claude_last_updated;
-                plugin.security_score = existing.security_score;
-                plugin.security_level = existing.security_level.clone();
-                plugin.security_issues = existing.security_issues.clone();
-                plugin.security_report = existing.security_report.clone();
-                plugin.scanned_at = existing.scanned_at;
-                plugin.staging_path = existing.staging_path.clone();
-                plugin.install_log = existing.install_log.clone();
-                // 清除旧的 "unsupported" 状态，保留其他有效状态（如 blocked, installed 等）
-                let status = existing.install_status.clone();
-                if status.as_deref() != Some("unsupported") {
-                    plugin.install_status = status.or(plugin.install_status);
-                }
+                plugin.merge_existing(existing);
             }
 
             plugins.push(plugin);
@@ -1103,32 +1078,7 @@ impl PluginManager {
 
                 for mut plugin in plugins_to_sync {
                     if let Some(existing) = existing_map.get(&plugin.id) {
-                        if plugin.marketplace_add_command.is_none() {
-                            plugin.marketplace_add_command =
-                                existing.marketplace_add_command.clone();
-                        }
-                        if plugin.plugin_install_command.is_none() {
-                            plugin.plugin_install_command = existing.plugin_install_command.clone();
-                        }
-                        plugin.installed = existing.installed;
-                        plugin.installed_at = existing.installed_at;
-                        plugin.installed_version = existing.installed_version.clone();
-                        plugin.claude_id = existing.claude_id.clone().or(plugin.claude_id);
-                        plugin.claude_scope = existing.claude_scope.clone();
-                        plugin.claude_enabled = existing.claude_enabled;
-                        plugin.claude_install_path = existing.claude_install_path.clone();
-                        plugin.claude_last_updated = existing.claude_last_updated;
-                        plugin.security_score = existing.security_score;
-                        plugin.security_level = existing.security_level.clone();
-                        plugin.security_issues = existing.security_issues.clone();
-                        plugin.security_report = existing.security_report.clone();
-                        plugin.scanned_at = existing.scanned_at;
-                        plugin.staging_path = existing.staging_path.clone();
-                        plugin.install_log = existing.install_log.clone();
-                        plugin.install_status = match existing.install_status.as_deref() {
-                            Some("unsupported") => None,
-                            _ => existing.install_status.clone(),
-                        };
+                        plugin.merge_existing(existing);
                     }
 
                     self.db.save_plugin(&plugin)?;
@@ -1204,23 +1154,7 @@ impl PluginManager {
 
         for resolved in &mut resolved_plugins {
             if let Some(existing) = existing_map.get(&resolved.plugin.id) {
-                resolved.plugin.installed = existing.installed;
-                resolved.plugin.installed_at = existing.installed_at;
-                resolved.plugin.installed_version = existing.installed_version.clone();
-                resolved.plugin.claude_id = existing
-                    .claude_id
-                    .clone()
-                    .or(resolved.plugin.claude_id.clone());
-                resolved.plugin.discovery_source = existing
-                    .discovery_source
-                    .clone()
-                    .or(resolved.plugin.discovery_source.clone());
-                resolved.plugin.claude_scope = existing.claude_scope.clone();
-                resolved.plugin.claude_enabled = existing.claude_enabled;
-                resolved.plugin.claude_install_path = existing.claude_install_path.clone();
-                resolved.plugin.claude_last_updated = existing.claude_last_updated;
-                resolved.plugin.install_log = existing.install_log.clone();
-                resolved.plugin.install_status = existing.install_status.clone();
+                resolved.plugin.merge_existing(existing);
             }
         }
 

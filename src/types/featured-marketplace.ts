@@ -19,6 +19,7 @@ export interface FeaturedMarketplaceCategory {
 export interface FeaturedMarketplaceOwner {
   name?: string;
   email?: string;
+  url?: string;
 }
 
 export interface FeaturedMarketplace {

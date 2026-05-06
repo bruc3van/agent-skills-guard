@@ -87,6 +87,35 @@ impl Plugin {
         format!("{}@{}", self.name, self.marketplace_name)
     }
 
+    /// 从已存在的 plugin 记录合并安装状态和元数据。
+    /// 新发现的字段（如 description、version）保留 self 的值，
+    /// 已有的安装状态和安全数据从 existing 复制。
+    pub fn merge_existing(&mut self, existing: &Plugin) {
+        // 用户配置的命令始终以 existing 为准
+        self.marketplace_add_command = existing.marketplace_add_command.clone();
+        self.plugin_install_command = existing.plugin_install_command.clone();
+        self.installed = existing.installed;
+        self.installed_at = existing.installed_at;
+        self.installed_version = existing.installed_version.clone();
+        self.claude_id = existing.claude_id.clone().or(self.claude_id.take());
+        self.discovery_source = existing.discovery_source.clone().or(self.discovery_source.take());
+        self.claude_scope = existing.claude_scope.clone();
+        self.claude_enabled = existing.claude_enabled;
+        self.claude_install_path = existing.claude_install_path.clone();
+        self.claude_last_updated = existing.claude_last_updated;
+        self.security_score = existing.security_score;
+        self.security_level = existing.security_level.clone();
+        self.security_issues = existing.security_issues.clone();
+        self.security_report = existing.security_report.clone();
+        self.scanned_at = existing.scanned_at;
+        self.staging_path = existing.staging_path.clone();
+        self.install_log = existing.install_log.clone();
+        // 清除旧的 "unsupported" 状态，保留其他有效状态
+        if existing.install_status.as_deref() != Some("unsupported") {
+            self.install_status = existing.install_status.clone().or(self.install_status.take());
+        }
+    }
+
     fn parse_repository_owner(repository_url: &str) -> String {
         if repository_url == "local" {
             return "local".to_string();

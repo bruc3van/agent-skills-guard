@@ -317,14 +317,14 @@ pub async fn scan_repository(
 mod tests {
     use super::*;
 
-    #[test]
-    fn merge_scanned_skill_preserves_install_state_and_security_metadata() {
+    fn make_existing_skill_with_security() -> Skill {
         let mut existing = Skill::new(
             "Original".to_string(),
             "https://github.com/example/repo".to_string(),
             "skill-a".to_string(),
         );
         existing.description = Some("existing description".to_string());
+        existing.checksum = Some("same-checksum".to_string());
         existing.installed = true;
         existing.installed_at = Some(chrono::Utc::now());
         existing.local_path = Some("/tmp/skill-a".to_string());
@@ -354,6 +354,43 @@ mod tests {
         existing.installed_commit_sha = Some("abc1234".to_string());
         existing.version = Some("1.0.0".to_string());
         existing.author = Some("Bruce".to_string());
+        existing
+    }
+
+    #[test]
+    fn merge_scanned_skill_preserves_security_when_checksum_unchanged() {
+        let existing = make_existing_skill_with_security();
+
+        let mut scanned = Skill::new(
+            "Updated".to_string(),
+            "https://github.com/example/repo".to_string(),
+            "skill-a".to_string(),
+        );
+        scanned.description = Some("new description".to_string());
+        scanned.checksum = Some("same-checksum".to_string());
+
+        let merged = merge_scanned_skill(Some(&existing), scanned);
+
+        assert_eq!(merged.name, "Updated");
+        assert_eq!(merged.description.as_deref(), Some("new description"));
+        assert_eq!(merged.checksum.as_deref(), Some("same-checksum"));
+        assert!(merged.installed);
+        assert_eq!(merged.local_path.as_deref(), Some("/tmp/skill-a"));
+        assert_eq!(
+            merged.local_paths,
+            Some(vec!["/tmp/skill-a".to_string(), "/tmp/skill-b".to_string()])
+        );
+        assert_eq!(merged.security_score, Some(88));
+        assert_eq!(merged.security_level.as_deref(), Some("Low"));
+        assert!(merged.security_report.is_some());
+        assert_eq!(merged.installed_commit_sha.as_deref(), Some("abc1234"));
+        assert_eq!(merged.version.as_deref(), Some("1.0.0"));
+        assert_eq!(merged.author.as_deref(), Some("Bruce"));
+    }
+
+    #[test]
+    fn merge_scanned_skill_clears_security_when_checksum_changes() {
+        let existing = make_existing_skill_with_security();
 
         let mut scanned = Skill::new(
             "Updated".to_string(),
@@ -370,13 +407,12 @@ mod tests {
         assert_eq!(merged.checksum.as_deref(), Some("new-checksum"));
         assert!(merged.installed);
         assert_eq!(merged.local_path.as_deref(), Some("/tmp/skill-a"));
-        assert_eq!(
-            merged.local_paths,
-            Some(vec!["/tmp/skill-a".to_string(), "/tmp/skill-b".to_string()])
-        );
-        assert_eq!(merged.security_score, Some(88));
-        assert_eq!(merged.security_level.as_deref(), Some("Low"));
-        assert!(merged.security_report.is_some());
+        // Security data should be cleared when checksum changes
+        assert_eq!(merged.security_score, None);
+        assert_eq!(merged.security_level, None);
+        assert!(merged.security_report.is_none());
+        assert_eq!(merged.scanned_at, None);
+        // Non-security metadata should still be preserved
         assert_eq!(merged.installed_commit_sha.as_deref(), Some("abc1234"));
         assert_eq!(merged.version.as_deref(), Some("1.0.0"));
         assert_eq!(merged.author.as_deref(), Some("Bruce"));
@@ -870,8 +906,10 @@ pub async fn select_custom_install_path(app: tauri::AppHandle) -> Result<Option<
     }
 }
 
-const FEATURED_REPOSITORIES_REMOTE_URL: &str =
-    "https://raw.githubusercontent.com/bruc3van/agent-skills-guard/main/featured-marketplace.yaml";
+use crate::commands::featured_marketplaces::{
+    download_yaml_to_cache, FEATURED_MARKETPLACES_REMOTE_URL,
+};
+
 const DEFAULT_FEATURED_REPOSITORIES_YAML: &str = include_str!("../../../featured-marketplace.yaml");
 
 fn featured_repositories_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -883,7 +921,7 @@ fn featured_repositories_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, S
     std::fs::create_dir_all(&app_dir)
         .map_err(|e| format!("Failed to create app data directory: {}", e))?;
 
-    Ok(app_dir.join("featured-marketplace.yaml"))
+    Ok(app_dir.join("featured-repositories.yaml"))
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -934,43 +972,12 @@ pub async fn get_featured_repositories(
 pub async fn refresh_featured_repositories(
     app: tauri::AppHandle,
 ) -> Result<FeaturedRepositoriesConfig, String> {
-    use std::io::Write;
-
-    let yaml_content = reqwest::Client::new()
-        .get(FEATURED_REPOSITORIES_REMOTE_URL)
-        .header(reqwest::header::USER_AGENT, "agent-skills-guard")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to download featured repositories: {}", e))?
-        .error_for_status()
-        .map_err(|e| format!("Failed to download featured repositories: {}", e))?
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read featured repositories content: {}", e))?;
-
-    // 先校验解析成功，再落盘
-    let config = parse_featured_repositories_yaml(&yaml_content)
-        .map_err(|e| format!("Failed to parse downloaded featured repositories: {}", e))?;
-
     let cache_path = featured_repositories_cache_path(&app)?;
-    let cache_dir = cache_path
-        .parent()
-        .ok_or_else(|| "Failed to get featured repositories cache directory".to_string())?;
+    let yaml_content =
+        download_yaml_to_cache(FEATURED_MARKETPLACES_REMOTE_URL, &cache_path).await?;
 
-    let mut tmp = tempfile::NamedTempFile::new_in(cache_dir)
-        .map_err(|e| format!("Failed to create temp file: {}", e))?;
-    tmp.write_all(yaml_content.as_bytes())
-        .map_err(|e| format!("Failed to write temp file: {}", e))?;
-    tmp.flush()
-        .map_err(|e| format!("Failed to flush temp file: {}", e))?;
-
-    if cache_path.exists() {
-        let _ = std::fs::remove_file(&cache_path);
-    }
-    tmp.persist(&cache_path)
-        .map_err(|e| format!("Failed to persist featured repositories cache: {}", e))?;
-
-    Ok(config)
+    parse_featured_repositories_yaml(&yaml_content)
+        .map_err(|e| format!("Failed to parse downloaded featured repositories: {}", e))
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

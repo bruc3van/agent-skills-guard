@@ -2,7 +2,7 @@ use crate::models::FeaturedMarketplacesConfig;
 use std::path::PathBuf;
 use tauri::Manager;
 
-const FEATURED_MARKETPLACES_REMOTE_URL: &str =
+pub const FEATURED_MARKETPLACES_REMOTE_URL: &str =
     "https://raw.githubusercontent.com/bruc3van/agent-skills-guard/main/featured-marketplace.yaml";
 const DEFAULT_FEATURED_MARKETPLACES_YAML: &str = include_str!("../../../featured-marketplace.yaml");
 
@@ -16,6 +16,43 @@ fn featured_marketplaces_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, S
         .map_err(|e| format!("Failed to create app data directory: {}", e))?;
 
     Ok(app_dir.join("featured-marketplace.yaml"))
+}
+
+/// 从远程 URL 下载 YAML 内容并原子写入缓存文件，返回 YAML 字符串。
+pub async fn download_yaml_to_cache(url: &str, cache_path: &PathBuf) -> Result<String, String> {
+    use std::io::Write;
+    use std::time::Duration;
+
+    let yaml_content = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "agent-skills-guard")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download: {}", e))?
+        .error_for_status()
+        .map_err(|e| format!("Failed to download: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read content: {}", e))?;
+
+    let cache_dir = cache_path
+        .parent()
+        .ok_or_else(|| "Failed to get cache directory".to_string())?;
+
+    let mut tmp = tempfile::NamedTempFile::new_in(cache_dir)
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+    tmp.write_all(yaml_content.as_bytes())
+        .map_err(|e| format!("Failed to write temp file: {}", e))?;
+    tmp.flush()
+        .map_err(|e| format!("Failed to flush temp file: {}", e))?;
+
+    tmp.persist(cache_path)
+        .map_err(|e| format!("Failed to persist cache: {}", e))?;
+
+    Ok(yaml_content)
 }
 
 /// 获取精选插件市场列表
@@ -48,41 +85,9 @@ pub async fn get_featured_marketplaces(
 pub async fn refresh_featured_marketplaces(
     app: tauri::AppHandle,
 ) -> Result<FeaturedMarketplacesConfig, String> {
-    use std::io::Write;
-
-    let yaml_content = reqwest::Client::new()
-        .get(FEATURED_MARKETPLACES_REMOTE_URL)
-        .header(reqwest::header::USER_AGENT, "agent-skills-guard")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to download featured marketplaces: {}", e))?
-        .error_for_status()
-        .map_err(|e| format!("Failed to download featured marketplaces: {}", e))?
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read featured marketplaces content: {}", e))?;
-
-    // 先校验解析成功，再落盘
-    let config: FeaturedMarketplacesConfig = serde_yaml::from_str(&yaml_content)
-        .map_err(|e| format!("Failed to parse downloaded featured marketplaces: {}", e))?;
-
     let cache_path = featured_marketplaces_cache_path(&app)?;
-    let cache_dir = cache_path
-        .parent()
-        .ok_or_else(|| "Failed to get featured marketplaces cache directory".to_string())?;
+    let yaml_content = download_yaml_to_cache(FEATURED_MARKETPLACES_REMOTE_URL, &cache_path).await?;
 
-    let mut tmp = tempfile::NamedTempFile::new_in(cache_dir)
-        .map_err(|e| format!("Failed to create temp file: {}", e))?;
-    tmp.write_all(yaml_content.as_bytes())
-        .map_err(|e| format!("Failed to write temp file: {}", e))?;
-    tmp.flush()
-        .map_err(|e| format!("Failed to flush temp file: {}", e))?;
-
-    if cache_path.exists() {
-        let _ = std::fs::remove_file(&cache_path);
-    }
-    tmp.persist(&cache_path)
-        .map_err(|e| format!("Failed to persist featured marketplaces cache: {}", e))?;
-
-    Ok(config)
+    serde_yaml::from_str::<FeaturedMarketplacesConfig>(&yaml_content)
+        .map_err(|e| format!("Failed to parse downloaded featured marketplaces: {}", e))
 }
