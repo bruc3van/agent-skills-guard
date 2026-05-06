@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { normalizeInstalledSkills } from "./installed-skills";
+import {
+  getDisplayedToolIds,
+  getVisibleInstalledPaths,
+  groupSkillsByName,
+  normalizeInstalledSkills,
+} from "./installed-skills";
 import type { Skill } from "../types";
 
 function buildSkill(overrides: Partial<Skill>): Skill {
@@ -52,5 +57,86 @@ describe("normalizeInstalledSkills", () => {
 
     expect(skill.local_paths).toEqual(["/tmp/a"]);
     expect(skill.local_path).toBe("/tmp/a");
+  });
+});
+
+describe("groupSkillsByName", () => {
+  it("keeps same-name skills from different repositories as separate cards", () => {
+    const skills = groupSkillsByName([
+      buildSkill({ id: "repo-a::skill", local_path: "/tmp/a" }),
+      buildSkill({
+        id: "repo-b::skill",
+        repository_url: "https://github.com/example/another",
+        file_path: "skill-b",
+        local_path: "/tmp/b",
+      }),
+    ]);
+
+    expect(skills).toHaveLength(2);
+    expect(skills.map((skill) => skill.id)).toEqual(["repo-a::skill", "repo-b::skill"]);
+  });
+});
+
+describe("getVisibleInstalledPaths", () => {
+  it("shows default tool paths for local-only skills", () => {
+    const skill = buildSkill({
+      id: "local::skill",
+      repository_url: "local",
+      repository_owner: "local",
+      is_local_only: true,
+      local_paths: [
+        "C:/Users/Bruce/.claude/skills/example",
+        "C:/Users/Bruce/.codex/skills/example",
+      ],
+    });
+
+    expect(getVisibleInstalledPaths(skill)).toEqual([
+      "C:/Users/Bruce/.claude/skills/example",
+      "C:/Users/Bruce/.codex/skills/example",
+    ]);
+  });
+
+  it("hides default tool paths for managed skills", () => {
+    const skill = buildSkill({
+      id: "repo-a::skill",
+      is_local_only: false,
+      local_paths: [
+        "C:/Users/Bruce/.agents/skills/example",
+        "C:/Users/Bruce/.codex/skills/example",
+        "C:/Users/Bruce/VSCodeProject/project/.agents/skills/example",
+      ],
+    });
+
+    expect(getVisibleInstalledPaths(skill)).toEqual([
+      "C:/Users/Bruce/VSCodeProject/project/.agents/skills/example",
+    ]);
+  });
+});
+
+describe("getDisplayedToolIds", () => {
+  it("infers active tools from local-only skill paths", () => {
+    const skill = buildSkill({
+      id: "local::skill",
+      repository_url: "local",
+      repository_owner: "local",
+      is_local_only: true,
+      local_paths: [
+        "C:/Users/Bruce/.claude/skills/example",
+        "C:/Users/Bruce/.codex/skills/example",
+      ],
+      linked_tools: [],
+    });
+
+    expect(getDisplayedToolIds(skill)).toEqual(["claude-code", "codex"]);
+  });
+
+  it("shows agents plus linked tools for managed skills", () => {
+    const skill = buildSkill({
+      id: "repo-a::skill",
+      is_local_only: false,
+      linked_tools: ["codex"],
+    });
+
+    expect(getDisplayedToolIds(skill)).toEqual(["agents", "codex"]);
   });
 });

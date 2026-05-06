@@ -1099,42 +1099,9 @@ impl SkillManager {
         Ok(scanned_skills)
     }
 
-    /// 解析 SKILL.md 的 frontmatter
+    /// 解析 SKILL.md 的 frontmatter（使用 serde_yaml，支持多行 block scalar 等 YAML 语法）
     fn parse_frontmatter(&self, content: &str) -> Result<(String, Option<String>)> {
-        let lines: Vec<&str> = content.lines().collect();
-
-        if lines.is_empty() || lines[0] != "---" {
-            anyhow::bail!("Invalid SKILL.md format: missing frontmatter");
-        }
-
-        // 找到第二个 "---"
-        let end_index = lines
-            .iter()
-            .skip(1)
-            .position(|&line| line == "---")
-            .context("Invalid SKILL.md format: frontmatter not closed")?;
-
-        // 提取 frontmatter 内容
-        let frontmatter_lines = &lines[1..=end_index];
-        let _frontmatter_str = frontmatter_lines.join("\n");
-
-        // 简单的 YAML 解析（只提取 name 和 description）
-        let mut name = String::new();
-        let mut description: Option<String> = None;
-
-        for line in frontmatter_lines {
-            if let Some(stripped) = line.strip_prefix("name:") {
-                name = stripped.trim().to_string();
-            } else if let Some(stripped) = line.strip_prefix("description:") {
-                description = Some(stripped.trim().to_string());
-            }
-        }
-
-        if name.is_empty() {
-            anyhow::bail!("Missing 'name' field in frontmatter");
-        }
-
-        Ok((name, description))
+        self.github.parse_skill_frontmatter(content)
     }
 
     /// 从网络下载并安装技能（降级方案）

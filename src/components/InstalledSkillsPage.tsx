@@ -28,7 +28,12 @@ import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
-import { normalizeInstalledSkills } from "@/lib/installed-skills";
+import {
+  getDisplayedToolIds,
+  getVisibleInstalledPaths,
+  groupSkillsByName,
+  normalizeInstalledSkills,
+} from "@/lib/installed-skills";
 import { PageBusyNotice } from "./ui/PageBusyNotice";
 import {
   AlertDialog,
@@ -44,6 +49,7 @@ import {
   SkillSecurityDialogConfirmButton,
 } from "./ui/SkillSecurityDialog";
 import { ToolSyncDialog } from "./ui/ToolSyncDialog";
+import { ToolIcons } from "./ui/ToolIcons";
 import { useSyncSkillToTools, useSyncAllSkillsToTools } from "@/lib/agent-tools";
 
 const AVAILABLE_UPDATES_KEY = "available_updates";
@@ -136,6 +142,7 @@ export function InstalledSkillsPage() {
   const syncAllMutation = useSyncAllSkillsToTools();
   const [syncTargetSkill, setSyncTargetSkill] = useState<Skill | null>(null);
   const [batchSyncOpen, setBatchSyncOpen] = useState(false);
+  const [pendingToggleToolId, setPendingToggleToolId] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<"all" | "skills" | "plugins" | "marketplaces">("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -551,6 +558,12 @@ export function InstalledSkillsPage() {
     [installedSkills]
   );
 
+  // 只去重同一 DB 记录，避免把不同来源的同名 skill 合并到同一个操作目标。
+  const mergedInstalledSkills = useMemo(
+    () => groupSkillsByName(normalizedInstalledSkills),
+    [normalizedInstalledSkills]
+  );
+
   const { data: skillPluginUpgradeCandidates = [] } = useQuery<SkillPluginUpgradeCandidate[]>({
     queryKey: ["skillPluginUpgradeCandidates"],
     queryFn: () => api.getSkillPluginUpgradeCandidates(),
@@ -693,12 +706,12 @@ export function InstalledSkillsPage() {
 
   const tabCounts = useMemo(
     () => ({
-      all: normalizedInstalledSkills.length + installedPlugins.length + installedMarketplaces.length,
-      skills: normalizedInstalledSkills.length,
+      all: mergedInstalledSkills.length + installedPlugins.length + installedMarketplaces.length,
+      skills: mergedInstalledSkills.length,
       plugins: installedPlugins.length,
       marketplaces: installedMarketplaces.length,
     }),
-    [installedMarketplaces.length, installedPlugins.length, normalizedInstalledSkills.length]
+    [installedMarketplaces.length, installedPlugins.length, mergedInstalledSkills.length]
   );
 
   const repositoryOptions: CyberSelectOption[] = useMemo(() => {
@@ -706,11 +719,11 @@ export function InstalledSkillsPage() {
 
     const items =
       activeTab === "skills"
-        ? normalizedInstalledSkills.map((skill) => ({ owner: skill.repository_owner || "unknown" }))
+        ? mergedInstalledSkills.map((skill) => ({ owner: skill.repository_owner || "unknown" }))
         : activeTab === "plugins"
           ? installedPlugins.map((plugin) => ({ owner: plugin.repository_owner || "unknown" }))
           : [
-              ...normalizedInstalledSkills.map((skill) => ({
+              ...mergedInstalledSkills.map((skill) => ({
                 owner: skill.repository_owner || "unknown",
               })),
               ...installedPlugins.map((plugin) => ({
@@ -745,10 +758,10 @@ export function InstalledSkillsPage() {
         label: `${repo.displayName} (${repo.count})`,
       })),
     ];
-  }, [activeTab, installedPlugins, installedMarketplaces, normalizedInstalledSkills, i18n.language, t]);
+  }, [activeTab, installedPlugins, installedMarketplaces, mergedInstalledSkills, i18n.language, t]);
 
   const filteredSkills = useMemo(() => {
-    let items = normalizedInstalledSkills;
+    let items = mergedInstalledSkills;
     const query = searchQuery.trim().toLowerCase();
 
     if (selectedRepository !== "all") {
@@ -780,7 +793,7 @@ export function InstalledSkillsPage() {
       if (timeA !== timeB) return timeB - timeA;
       return a.name.localeCompare(b.name);
     });
-  }, [availableUpdates, normalizedInstalledSkills, searchQuery, selectedRepository, showUpdatesOnly]);
+  }, [availableUpdates, mergedInstalledSkills, searchQuery, selectedRepository, showUpdatesOnly]);
 
   const filteredPlugins = useMemo(() => {
     let items = installedPlugins;
@@ -860,7 +873,7 @@ export function InstalledSkillsPage() {
 
   const filteredAllItems = useMemo<InstalledEntry[]>(() => {
     const items: InstalledEntry[] = [
-      ...normalizedInstalledSkills.map((skill): InstalledEntry => ({ kind: "skill", item: skill })),
+      ...mergedInstalledSkills.map((skill): InstalledEntry => ({ kind: "skill", item: skill })),
       ...installedPlugins.map((plugin): InstalledEntry => ({ kind: "plugin", item: plugin })),
       ...installedMarketplaces.map((marketplace): InstalledEntry => ({
         kind: "marketplace",
@@ -926,7 +939,7 @@ export function InstalledSkillsPage() {
     installedMarketplaces,
     installedPlugins,
     marketplaceDescriptions,
-    normalizedInstalledSkills,
+    mergedInstalledSkills,
     searchQuery,
     selectedRepository,
     showUpdatesOnly,
@@ -990,6 +1003,22 @@ export function InstalledSkillsPage() {
           }
         }}
         onSync={() => setSyncTargetSkill(skill)}
+        onToggleTool={async (toolId: string, active: boolean) => {
+          const current = skill.linked_tools ?? [];
+          const newTools = active
+            ? current.filter((id) => id !== toolId)
+            : [...new Set([...current, toolId])];
+          setPendingToggleToolId(toolId);
+          try {
+            await syncSkillMutation.mutateAsync({ skillId: skill.id, tools: newTools });
+            appToast.success(active ? "已移除同步" : "同步成功");
+          } catch (e: any) {
+            appToast.error(`操作失败: ${e.message || e}`);
+          } finally {
+            setPendingToggleToolId(null);
+          }
+        }}
+        pendingToolId={pendingToggleToolId}
         hasUpdate={availableUpdates.has(skill.id)}
         isUninstalling={uninstallingSkillId === skill.id}
         isPreparingUpdate={preparingUpdateSkillId === skill.id}
@@ -1001,7 +1030,10 @@ export function InstalledSkillsPage() {
           confirmingUpdateSkillId !== null ||
           uninstallingPluginId !== null ||
           updatingPluginId !== null ||
-          updatingMarketplaceName !== null
+          updatingMarketplaceName !== null ||
+          syncSkillMutation.isPending ||
+          syncAllMutation.isPending ||
+          pendingToggleToolId !== null
         }
         t={t}
       />
@@ -1783,6 +1815,8 @@ interface SkillCardProps {
   onUninstallPath: (path: string) => void;
   onUpdate: () => void;
   onSync: () => void;
+  onToggleTool: (toolId: string, active: boolean) => void;
+  pendingToolId?: string | null;
   hasUpdate: boolean;
   isUninstalling: boolean;
   isPreparingUpdate: boolean;
@@ -1814,6 +1848,8 @@ function SkillCard({
   onUninstallPath,
   onUpdate,
   onSync,
+  onToggleTool,
+  pendingToolId,
   hasUpdate,
   isUninstalling,
   isPreparingUpdate,
@@ -1840,11 +1876,6 @@ function SkillCard({
             {skill.is_local_only && (
               <span className="text-xs px-2.5 py-1 rounded-full font-medium text-amber-600 bg-amber-500/10">
                 本地
-              </span>
-            )}
-            {!skill.is_local_only && skill.linked_tools && skill.linked_tools.length > 0 && (
-              <span className="text-xs px-2.5 py-1 rounded-full font-medium text-emerald-600 bg-emerald-500/10" title={`已链接: ${skill.linked_tools.join(", ")}`}>
-                已链接 {skill.linked_tools.length}
               </span>
             )}
             {pluginUpgradeCandidate && (
@@ -1896,7 +1927,7 @@ function SkillCard({
               onClick={onSync}
               disabled={isAnyOperationPending}
               aria-label={`同步到工具: ${skill.name}`}
-              title="同步到其他编程工具"
+              title="批量同步到工具"
               className="apple-button-secondary h-8 px-3 text-xs flex items-center gap-1.5"
             >
               <RefreshCw className="w-3.5 h-3.5" />
@@ -1952,59 +1983,72 @@ function SkillCard({
         )}
       </div>
 
-      {/* Installed Paths */}
-      {skill.local_paths && skill.local_paths.length > 0 && (
-        <div className="pt-4 border-t border-border/60">
-          <div className="text-xs font-medium text-blue-500 mb-3">
-            {t("skills.installedPaths")} ({skill.local_paths.length})
-          </div>
-          <div className="space-y-2">
-            {skill.local_paths.map((path, idx) => (
-              <div
-                key={idx}
-                className="flex items-center justify-between gap-3 p-3 bg-secondary/50 rounded-xl"
-              >
-                <div className="flex items-center gap-3 flex-1 min-w-0">
-                  <button
-                    onClick={async () => {
-                      try {
-                        try {
-                          await invoke("open_skill_directory", { localPath: path });
-                        } catch {
-                          await openPath(path);
-                        }
-                        appToast.success(t("skills.folder.opened"), { duration: 5000 });
-                      } catch (error: any) {
-                        appToast.error(
-                          t("skills.folder.openFailed", { error: error?.message || String(error) }),
-                          { duration: 5000 }
-                        );
-                      }
-                    }}
-                    aria-label={`${t("skills.folder.opened")}: ${path}`}
-                    title={`${t("skills.folder.opened")}: ${path}`}
-                    className="text-blue-500 hover:text-blue-600 transition-colors"
-                  >
-                    <FolderOpen className="w-4 h-4" />
-                  </button>
-                  <span className="text-sm text-muted-foreground truncate" title={path}>
-                    {path}
-                  </span>
-                </div>
-                <button
-                  onClick={() => onUninstallPath(path)}
-                  disabled={isAnyOperationPending}
-                  aria-label={`${t("skills.uninstall")}: ${path}`}
-                  title={`${t("skills.uninstall")}: ${path}`}
-                  className="text-red-500 hover:text-red-600 transition-colors disabled:opacity-50"
+      {/* Tool Icons */}
+      <ToolIcons
+        activeToolIds={getDisplayedToolIds(skill)}
+        isLocalOnly={skill.is_local_only}
+        onToggle={onToggleTool}
+        disabled={isAnyOperationPending}
+        pendingToolId={pendingToolId}
+      />
+
+      {/* Installed Paths — 仅显示非默认工具目录的路径（如 VS Code 项目目录） */}
+      {(() => {
+        const extraPaths = getVisibleInstalledPaths(skill);
+        if (extraPaths.length === 0) return null;
+        return (
+          <div className="pt-4 border-t border-border/60">
+            <div className="text-xs font-medium text-blue-500 mb-3">
+              项目安装路径 ({extraPaths.length})
+            </div>
+            <div className="space-y-2">
+              {extraPaths.map((path, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between gap-3 p-3 bg-secondary/50 rounded-xl"
                 >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <button
+                      onClick={async () => {
+                        try {
+                          try {
+                            await invoke("open_skill_directory", { localPath: path });
+                          } catch {
+                            await openPath(path);
+                          }
+                          appToast.success(t("skills.folder.opened"), { duration: 5000 });
+                        } catch (error: any) {
+                          appToast.error(
+                            t("skills.folder.openFailed", { error: error?.message || String(error) }),
+                            { duration: 5000 }
+                          );
+                        }
+                      }}
+                      aria-label={`${t("skills.folder.opened")}: ${path}`}
+                      title={`${t("skills.folder.opened")}: ${path}`}
+                      className="text-blue-500 hover:text-blue-600 transition-colors"
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                    </button>
+                    <span className="text-sm text-muted-foreground truncate" title={path}>
+                      {path}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => onUninstallPath(path)}
+                    disabled={isAnyOperationPending}
+                    aria-label={`${t("skills.uninstall")}: ${path}`}
+                    title={`${t("skills.uninstall")}: ${path}`}
+                    className="text-red-500 hover:text-red-600 transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
