@@ -140,7 +140,6 @@ export function InstalledSkillsPage() {
 
   const syncSkillMutation = useSyncSkillToTools();
   const syncAllMutation = useSyncAllSkillsToTools();
-  const [syncTargetSkill, setSyncTargetSkill] = useState<Skill | null>(null);
   const [batchSyncOpen, setBatchSyncOpen] = useState(false);
   const [pendingToggleToolId, setPendingToggleToolId] = useState<string | null>(null);
 
@@ -1025,7 +1024,6 @@ export function InstalledSkillsPage() {
             appToast.error(`${t("skills.toast.updateFailed")}: ${error.message || error}`);
           }
         }}
-        onSync={() => setSyncTargetSkill(skill)}
         onToggleTool={async (toolId: string, active: boolean) => {
           // 本地 skill 的 linked_tools 为空，需从路径推断当前所在工具列表
           const current = skill.is_local_only
@@ -1677,30 +1675,6 @@ export function InstalledSkillsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* 单个 skill 同步对话框 */}
-      <ToolSyncDialog
-        open={!!syncTargetSkill}
-        onOpenChange={(open) => { if (!open) setSyncTargetSkill(null); }}
-        title={`同步「${syncTargetSkill?.name ?? ""}」到工具`}
-        description={syncTargetSkill?.is_local_only
-          ? "本地 skill 将被移至通用目录（~/.agents/skills），然后通过链接同步到选中的工具。"
-          : "选择要同步到的编程工具，将在目标工具 skill 目录创建链接。"}
-        initialSelected={syncTargetSkill?.is_local_only
-          ? getDisplayedToolIds(syncTargetSkill)
-          : syncTargetSkill?.linked_tools ?? []}
-        loading={syncSkillMutation.isPending}
-        onConfirm={async (tools) => {
-          if (!syncTargetSkill) return;
-          try {
-            await syncSkillMutation.mutateAsync({ skillId: syncTargetSkill.id, tools });
-            setSyncTargetSkill(null);
-            appToast.success("同步成功");
-          } catch (e: any) {
-            appToast.error(`同步失败: ${e.message || e}`);
-          }
-        }}
-      />
-
       {/* 批量同步对话框 */}
       <ToolSyncDialog
         open={batchSyncOpen}
@@ -1873,7 +1847,6 @@ interface SkillCardProps {
   onUninstall: () => void;
   onUninstallPath: (path: string) => void;
   onUpdate: () => void;
-  onSync: () => void;
   onToggleTool: (toolId: string, active: boolean) => void;
   pendingToolId?: string | null;
   hasUpdate: boolean;
@@ -1906,7 +1879,6 @@ function SkillCard({
   onUninstall,
   onUninstallPath,
   onUpdate,
-  onSync,
   onToggleTool,
   pendingToolId,
   hasUpdate,
@@ -1981,16 +1953,6 @@ function SkillCard({
               )}
             </button>
           )}
-          <button
-            onClick={onSync}
-            disabled={isAnyOperationPending}
-            aria-label={`同步到工具: ${skill.name}`}
-            title={skill.is_local_only ? "同步到工具（将移至通用目录）" : "批量同步到工具"}
-            className="apple-button-secondary h-8 px-3 text-xs flex items-center gap-1.5"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            同步
-          </button>
           <button
             onClick={onUninstall}
             disabled={isAnyOperationPending}

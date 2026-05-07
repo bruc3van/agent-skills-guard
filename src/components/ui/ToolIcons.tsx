@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Globe, Loader2, FolderOpen } from "lucide-react";
+import { Network, Loader2, FolderOpen } from "lucide-react";
 import type { FC, SVGProps } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -111,21 +111,21 @@ export function ToolIcons({
         </div>
         <div className="flex flex-wrap gap-2">
           {activeToolIds.includes("agents") ? (
-            /* 已在通用目录 — 静态徽章 + 悬停时显示打开目录按钮 */
-            <div className="group flex items-center">
+            /* 已在通用目录 — 静态徽章 + 始终显示打开目录按钮 */
+            <div className="flex items-center">
               <div
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg group-hover:rounded-r-none border group-hover:border-r-0 border-emerald-500/50 bg-emerald-500/10 transition-all"
+                className={`flex items-center px-2 py-1.5 border border-emerald-500/50 bg-emerald-500/10 text-emerald-500
+                  ${toolPathMap.get("agents") ? "rounded-l-lg rounded-r-none border-r-0" : "rounded-lg"}`}
                 title="Universal (.agents)"
               >
-                <Globe className="w-4 h-4 text-emerald-500" />
-                <span className="text-xs text-emerald-600">.agents</span>
+                <Network className="w-4 h-4" />
               </div>
               {toolPathMap.get("agents") && (
                 <button
                   type="button"
                   onClick={() => openToolDir(toolPathMap.get("agents")!)}
                   title={`打开目录: ${toolPathMap.get("agents")}`}
-                  className="h-full px-1.5 py-1.5 rounded-r-lg border border-emerald-500/50 bg-emerald-500/10 opacity-0 group-hover:opacity-100 transition-opacity text-emerald-600 hover:text-emerald-700"
+                  className="h-full px-1.5 py-1.5 rounded-r-lg border border-emerald-500/50 bg-emerald-500/10 text-emerald-600 hover:text-emerald-700 transition-colors"
                 >
                   <FolderOpen className="w-3 h-3" />
                 </button>
@@ -139,7 +139,7 @@ export function ToolIcons({
               disabled={disabled || pendingToolId === "agents"}
               title="点击同步到通用目录（~/.agents/skills），原位置替换为链接"
               className={`
-                flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer
+                flex items-center px-2 py-1.5 rounded-lg border transition-all cursor-pointer
                 border-border/60 opacity-50 hover:opacity-80
                 ${disabled || pendingToolId === "agents" ? "opacity-30 cursor-not-allowed" : ""}
               `}
@@ -147,9 +147,8 @@ export function ToolIcons({
               {pendingToolId === "agents" ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
-                <Globe className="w-4 h-4 grayscale opacity-50" />
+                <Network className="w-4 h-4 grayscale opacity-50" />
               )}
-              <span className="text-xs font-medium">.agents</span>
             </button>
           ) : null}
 
@@ -158,6 +157,7 @@ export function ToolIcons({
             const isPending = pendingToolId === tool.id;
             const interactionDisabled = disabled || isPending;
             const toolPath = toolPathMap.get(tool.id);
+            const hasFolder = !!toolPath;
 
             const toggleBtn = (
               <button
@@ -175,8 +175,9 @@ export function ToolIcons({
                     : `点击同步到 ${tool.label}`
                 }
                 className={`
-                  flex items-center gap-1.5 px-2.5 py-1.5 border transition-all cursor-pointer rounded-lg
-                  ${active ? "group-hover:rounded-r-none group-hover:border-r-0 shadow-sm border-current" : "border-border/60 opacity-50 hover:opacity-80"}
+                  flex items-center px-2 py-1.5 border transition-all cursor-pointer
+                  ${hasFolder ? "rounded-l-lg rounded-r-none border-r-0" : "rounded-lg"}
+                  ${active ? "shadow-sm border-current" : "border-border/60 opacity-50 hover:opacity-80"}
                   ${interactionDisabled ? "opacity-30" : ""}
                 `}
                 style={
@@ -194,19 +195,22 @@ export function ToolIcons({
                     style={!active ? { filter: "grayscale(1)", opacity: 0.5 } : undefined}
                   />
                 )}
-                <span className="text-xs font-medium">{tool.label}</span>
               </button>
             );
 
-            return active && toolPath ? (
-              <div key={tool.id} className="group flex items-center">
+            return hasFolder ? (
+              <div key={tool.id} className="flex items-center">
                 {toggleBtn}
                 <button
                   type="button"
-                  onClick={() => openToolDir(toolPath)}
+                  onClick={() => openToolDir(toolPath!)}
                   title={`打开目录: ${toolPath}`}
-                  className="h-full px-1.5 py-1.5 rounded-r-lg border border-l-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                  style={{ borderColor: tool.color, backgroundColor: tool.bg, color: tool.color }}
+                  className={`h-full px-1.5 py-1.5 rounded-r-lg border transition-colors
+                    ${active
+                      ? ""
+                      : "border-border/60 opacity-50 hover:opacity-80"
+                    }`}
+                  style={active ? { borderColor: tool.color, backgroundColor: tool.bg, color: tool.color } : undefined}
                 >
                   <FolderOpen className="w-3 h-3" />
                 </button>
