@@ -141,7 +141,7 @@ export function InstalledSkillsPage() {
   const syncSkillMutation = useSyncSkillToTools();
   const syncAllMutation = useSyncAllSkillsToTools();
   const [batchSyncOpen, setBatchSyncOpen] = useState(false);
-  const [pendingToggleToolId, setPendingToggleToolId] = useState<string | null>(null);
+  const [pendingToggleTarget, setPendingToggleTarget] = useState<{ skillId: string; toolId: string } | null>(null);
 
   const [activeTab, setActiveTab] = useState<"all" | "skills" | "plugins" | "marketplaces">("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -351,19 +351,21 @@ export function InstalledSkillsPage() {
   const checkUpdatesWithRefresh = async (
     options?: { silent?: boolean }
   ): Promise<{ count: number; error?: string }> => {
+    let phase: "scanning" | "checking" = "scanning";
     try {
       // 第一步：刷新本地技能
       setIsScanning(true);
       const localSkills = await api.scanLocalSkills();
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
-      queryClient.invalidateQueries({ queryKey: ["skills"] });
-      queryClient.invalidateQueries({ queryKey: ["scanResults"] });
+      await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
+      await queryClient.refetchQueries({ queryKey: ["skills"] });
+      await queryClient.refetchQueries({ queryKey: ["scanResults"] });
       if (!options?.silent) {
         appToast.success(t("skills.installedPage.scanCompleted", { count: localSkills.length }));
       }
       setIsScanning(false);
 
       // 第二步：检查更新
+      phase = "checking";
       setIsCheckingUpdates(true);
       const updates = await api.checkSkillsUpdates();
       const updateMap = new Map(updates.map(([skillId, latestSha]) => [skillId, latestSha]));
@@ -379,7 +381,7 @@ export function InstalledSkillsPage() {
     } catch (error: any) {
       const message = error?.message || String(error);
       if (!options?.silent) {
-        if (isScanning) {
+        if (phase === "scanning") {
           appToast.error(t("skills.installedPage.scanFailed", { error: message }));
         } else {
           appToast.error(t("skills.installedPage.checkUpdatesFailed", { error: message }));
@@ -1032,14 +1034,14 @@ export function InstalledSkillsPage() {
 
           // 点击 .agents 按钮（仅本地 skill）→ 提升到通用目录，保留原工具链接
           if (toolId === "agents") {
-            setPendingToggleToolId("agents");
+            setPendingToggleTarget({ skillId: skill.id, toolId: "agents" });
             try {
               await syncSkillMutation.mutateAsync({ skillId: skill.id, tools: current });
               appToast.success("已提升到通用目录");
             } catch (e: any) {
               appToast.error(`操作失败: ${e.message || e}`);
             } finally {
-              setPendingToggleToolId(null);
+              setPendingToggleTarget(null);
             }
             return;
           }
@@ -1047,17 +1049,17 @@ export function InstalledSkillsPage() {
           const newTools = active
             ? current.filter((id) => id !== toolId)
             : [...new Set([...current, toolId])];
-          setPendingToggleToolId(toolId);
+          setPendingToggleTarget({ skillId: skill.id, toolId });
           try {
             await syncSkillMutation.mutateAsync({ skillId: skill.id, tools: newTools });
             appToast.success(active ? "已移除同步" : "同步成功");
           } catch (e: any) {
             appToast.error(`操作失败: ${e.message || e}`);
           } finally {
-            setPendingToggleToolId(null);
+            setPendingToggleTarget(null);
           }
         }}
-        pendingToolId={pendingToggleToolId}
+        pendingToolId={pendingToggleTarget?.skillId === skill.id ? pendingToggleTarget.toolId : null}
         hasUpdate={availableUpdates.has(skill.id)}
         isUninstalling={uninstallingSkillId === skill.id}
         isPreparingUpdate={preparingUpdateSkillId === skill.id}
@@ -1072,7 +1074,7 @@ export function InstalledSkillsPage() {
           updatingMarketplaceName !== null ||
           syncSkillMutation.isPending ||
           syncAllMutation.isPending ||
-          pendingToggleToolId !== null
+          pendingToggleTarget !== null
         }
         t={t}
       />

@@ -580,7 +580,7 @@ export function MarketplacePage({
         open={pendingInstall !== null}
         onClose={() => {
           const skillId = pendingInstall?.skill.id;
-          const shouldCancel = skillId && installingSkillId !== skillId;
+          const shouldCancel = skillId && installingSkillId === null;
           setInstallStatus((prev) => ({
             ...prev,
             pendingInstall: null,
@@ -1117,18 +1117,22 @@ function InstallConfirmDialog({
   const [selectedPath, setSelectedPath] = useState<string>("");
   const { data: agentTools = [] } = useAgentTools();
   const [selectedTools, setSelectedTools] = useState<Set<string>>(() => new Set());
+  const prevOpenRef = useRef(open);
 
   useEffect(() => {
-    if (!open) {
+    if (open && !prevOpenRef.current) {
+      // 只在从 closed → open 时重置默认值
       setSelectedPath("");
-    } else {
-      // 默认勾选已检测到的工具（present=true）且非 agents 的工具
       const defaults = agentTools
         .filter((t) => t.present && t.id !== "agents")
         .map((t) => t.id);
       setSelectedTools(new Set(defaults));
     }
-  }, [open]);
+    if (!open) {
+      setSelectedPath("");
+    }
+    prevOpenRef.current = open;
+  }, [open, agentTools]);
 
   function toggleTool(id: string) {
     setSelectedTools((prev) => {
