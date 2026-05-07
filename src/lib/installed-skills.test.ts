@@ -75,6 +75,44 @@ describe("groupSkillsByName", () => {
     expect(skills).toHaveLength(2);
     expect(skills.map((skill) => skill.id)).toEqual(["repo-a::skill", "repo-b::skill"]);
   });
+
+  it("keeps same-name local and managed skills as separate operation targets", () => {
+    const skills = groupSkillsByName([
+      buildSkill({ id: "repo-a::skill", local_path: "/tmp/managed" }),
+      buildSkill({
+        id: "local::abc",
+        repository_url: "local",
+        repository_owner: "local",
+        is_local_only: true,
+        local_path: "/tmp/local",
+      }),
+    ]);
+
+    expect(skills).toHaveLength(2);
+    expect(skills.map((skill) => skill.id)).toEqual(["repo-a::skill", "local::abc"]);
+  });
+
+  it("keeps same-name local skills with different ids as separate operation targets", () => {
+    const skills = groupSkillsByName([
+      buildSkill({
+        id: "local::abc",
+        repository_url: "local",
+        repository_owner: "local",
+        is_local_only: true,
+        local_path: "/tmp/local-a",
+      }),
+      buildSkill({
+        id: "local::def",
+        repository_url: "local",
+        repository_owner: "local",
+        is_local_only: true,
+        local_path: "/tmp/local-b",
+      }),
+    ]);
+
+    expect(skills).toHaveLength(2);
+    expect(skills.map((skill) => skill.id)).toEqual(["local::abc", "local::def"]);
+  });
 });
 
 describe("getVisibleInstalledPaths", () => {

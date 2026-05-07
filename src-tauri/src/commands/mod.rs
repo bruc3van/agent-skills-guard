@@ -54,6 +54,9 @@ fn merge_scanned_skill(existing: Option<&Skill>, scanned: Skill) -> Skill {
     merged.local_path = existing.local_path.clone();
     merged.local_paths = existing.local_paths.clone();
     merged.installed_commit_sha = existing.installed_commit_sha.clone();
+    merged.source_path = existing.source_path.clone();
+    merged.linked_tools = existing.linked_tools.clone();
+    merged.is_local_only = existing.is_local_only;
 
     if checksum_changed {
         // 文件已变化，清除旧安全数据，下次安装/更新时重新扫描
@@ -354,6 +357,9 @@ mod tests {
         existing.installed_commit_sha = Some("abc1234".to_string());
         existing.version = Some("1.0.0".to_string());
         existing.author = Some("Bruce".to_string());
+        existing.source_path = Some("/tmp/source/skill-a".to_string());
+        existing.linked_tools = vec!["codex".to_string(), "claude-code".to_string()];
+        existing.is_local_only = false;
         existing
     }
 
@@ -386,6 +392,12 @@ mod tests {
         assert_eq!(merged.installed_commit_sha.as_deref(), Some("abc1234"));
         assert_eq!(merged.version.as_deref(), Some("1.0.0"));
         assert_eq!(merged.author.as_deref(), Some("Bruce"));
+        assert_eq!(merged.source_path.as_deref(), Some("/tmp/source/skill-a"));
+        assert_eq!(
+            merged.linked_tools,
+            vec!["codex".to_string(), "claude-code".to_string()]
+        );
+        assert!(!merged.is_local_only);
     }
 
     #[test]
@@ -1259,11 +1271,14 @@ pub async fn list_agent_tools(
     let tool_list = AgentTool::all()
         .into_iter()
         .map(|tool| {
-            let count = skills.iter().filter(|s| {
-                s.installed
-                    && (s.linked_tools.contains(&tool.id().to_string())
-                        || (tool == AgentTool::Agents && !s.is_local_only))
-            }).count();
+            let count = skills
+                .iter()
+                .filter(|s| {
+                    s.installed
+                        && (s.linked_tools.contains(&tool.id().to_string())
+                            || (tool == AgentTool::Agents && !s.is_local_only))
+                })
+                .count();
             AgentToolInfo::from_tool(&tool, count)
         })
         .collect();

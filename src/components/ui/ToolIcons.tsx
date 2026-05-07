@@ -91,6 +91,7 @@ export function ToolIcons({
   const [confirmTarget, setConfirmTarget] = useState<ToolDef | null>(null);
   const { data: agentTools = [] } = useAgentTools();
   const toolPathMap = new Map(agentTools.map((t) => [t.id, t.path]));
+  const agentsPath = toolPathMap.get("agents");
 
   function handleClick(tool: ToolDef, active: boolean) {
     if (disabled) return;
@@ -115,16 +116,16 @@ export function ToolIcons({
             <div className="flex items-center">
               <div
                 className={`flex items-center px-2 py-1.5 border border-emerald-500/50 bg-emerald-500/10 text-emerald-500
-                  ${toolPathMap.get("agents") ? "rounded-l-lg rounded-r-none border-r-0" : "rounded-lg"}`}
+                  ${agentsPath ? "rounded-l-lg rounded-r-none border-r-0" : "rounded-lg"}`}
                 title="Universal (.agents)"
               >
                 <Network className="w-4 h-4" />
               </div>
-              {toolPathMap.get("agents") && (
+              {agentsPath && (
                 <button
                   type="button"
-                  onClick={() => openToolDir(toolPathMap.get("agents")!)}
-                  title={`打开目录: ${toolPathMap.get("agents")}`}
+                  onClick={() => openToolDir(agentsPath)}
+                  title={`打开目录: ${agentsPath}`}
                   className="h-full px-1.5 py-1.5 rounded-r-lg border border-emerald-500/50 bg-emerald-500/10 text-emerald-600 hover:text-emerald-700 transition-colors"
                 >
                   <FolderOpen className="w-3 h-3" />
@@ -133,23 +134,36 @@ export function ToolIcons({
             </div>
           ) : isLocalOnly ? (
             /* 本地 skill 尚未提升 — 可点击的非激活按钮 */
-            <button
-              type="button"
-              onClick={() => !disabled && onToggle("agents", false)}
-              disabled={disabled || pendingToolId === "agents"}
-              title="点击同步到通用目录（~/.agents/skills），原位置替换为链接"
-              className={`
-                flex items-center px-2 py-1.5 rounded-lg border transition-all cursor-pointer
-                border-border/60 opacity-50 hover:opacity-80
-                ${disabled || pendingToolId === "agents" ? "opacity-30 cursor-not-allowed" : ""}
-              `}
-            >
-              {pendingToolId === "agents" ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Network className="w-4 h-4 grayscale opacity-50" />
+            <div className="flex items-center">
+              <button
+                type="button"
+                onClick={() => !disabled && onToggle("agents", false)}
+                disabled={disabled || pendingToolId === "agents"}
+                title="点击同步到通用目录（~/.agents/skills），原位置替换为链接"
+                className={`
+                  flex items-center px-2 py-1.5 border transition-all cursor-pointer
+                  ${agentsPath ? "rounded-l-lg rounded-r-none border-r-0" : "rounded-lg"}
+                  border-border/60 opacity-50 hover:opacity-80
+                  ${disabled || pendingToolId === "agents" ? "opacity-30 cursor-not-allowed" : ""}
+                `}
+              >
+                {pendingToolId === "agents" ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Network className="w-4 h-4 grayscale opacity-50" />
+                )}
+              </button>
+              {agentsPath && (
+                <button
+                  type="button"
+                  onClick={() => openToolDir(agentsPath)}
+                  title={`打开目录: ${agentsPath}`}
+                  className="h-full px-1.5 py-1.5 rounded-r-lg border border-border/60 opacity-50 hover:opacity-80 transition-colors"
+                >
+                  <FolderOpen className="w-3 h-3" />
+                </button>
               )}
-            </button>
+            </div>
           ) : null}
 
           {TOOLS.map((tool) => {
