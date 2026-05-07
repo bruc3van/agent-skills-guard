@@ -29,7 +29,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
 import {
+  getDisplayedPluginToolIds,
   getDisplayedToolIds,
+  getOperationSkillIds,
   getVisibleInstalledPaths,
   groupSkillsByName,
   normalizeInstalledSkills,
@@ -44,10 +46,8 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
 } from "./ui/alert-dialog";
-import {
-  SkillSecurityDialog,
-  SkillSecurityDialogConfirmButton,
-} from "./ui/SkillSecurityDialog";
+import { SkillSecurityDialog, SkillSecurityDialogConfirmButton } from "./ui/SkillSecurityDialog";
+import { SkillUninstallConfirmDialog } from "./SkillUninstallConfirmDialog";
 import { ToolSyncDialog } from "./ui/ToolSyncDialog";
 import { ToolIcons } from "./ui/ToolIcons";
 import { useSyncSkillToTools, useSyncAllSkillsToTools, useAgentTools } from "@/lib/agent-tools";
@@ -103,7 +103,8 @@ export function InstalledSkillsPage() {
       runtimePluginsQuery.isLoading &&
       runtimePluginsQuery.data === undefined &&
       cachedPluginsQuery.data === undefined);
-  const { data: claudeMarketplaces = [], isLoading: isMarketplacesLoading } = useClaudeMarketplaces();
+  const { data: claudeMarketplaces = [], isLoading: isMarketplacesLoading } =
+    useClaudeMarketplaces();
   const { data: featuredMarketplaces } = useQuery({
     queryKey: ["featured-marketplaces"],
     queryFn: api.getFeaturedMarketplaces,
@@ -141,7 +142,10 @@ export function InstalledSkillsPage() {
   const syncSkillMutation = useSyncSkillToTools();
   const syncAllMutation = useSyncAllSkillsToTools();
   const [batchSyncOpen, setBatchSyncOpen] = useState(false);
-  const [pendingToggleTarget, setPendingToggleTarget] = useState<{ skillId: string; toolId: string } | null>(null);
+  const [pendingToggleTarget, setPendingToggleTarget] = useState<{
+    skillId: string;
+    toolId: string;
+  } | null>(null);
 
   const [activeTab, setActiveTab] = useState<"all" | "skills" | "plugins" | "marketplaces">("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -179,6 +183,7 @@ export function InstalledSkillsPage() {
   } | null>(null);
   const [pendingSkillPluginUpgrade, setPendingSkillPluginUpgrade] =
     useState<SkillPluginUpgradeCandidate | null>(null);
+  const [pendingSkillUninstall, setPendingSkillUninstall] = useState<Skill | null>(null);
 
   const [availablePluginUpdates, setAvailablePluginUpdates] = useState<Map<string, string>>(() => {
     try {
@@ -231,9 +236,12 @@ export function InstalledSkillsPage() {
       return;
     }
 
-    const timer = window.setTimeout(() => {
-      setShouldLoadUpgradeCandidates(true);
-    }, activeTab === "all" ? 1200 : 300);
+    const timer = window.setTimeout(
+      () => {
+        setShouldLoadUpgradeCandidates(true);
+      },
+      activeTab === "all" ? 1200 : 300
+    );
 
     return () => window.clearTimeout(timer);
   }, [activeTab]);
@@ -348,9 +356,9 @@ export function InstalledSkillsPage() {
     }
   }, [claudeMarketplaces, availableMarketplaceUpdates]);
 
-  const checkUpdatesWithRefresh = async (
-    options?: { silent?: boolean }
-  ): Promise<{ count: number; error?: string }> => {
+  const checkUpdatesWithRefresh = async (options?: {
+    silent?: boolean;
+  }): Promise<{ count: number; error?: string }> => {
     let phase: "scanning" | "checking" = "scanning";
     try {
       // 第一步：刷新本地技能
@@ -394,9 +402,9 @@ export function InstalledSkillsPage() {
     }
   };
 
-  const checkPluginUpdates = async (
-    options?: { silent?: boolean }
-  ): Promise<{ count: number; error?: string }> => {
+  const checkPluginUpdates = async (options?: {
+    silent?: boolean;
+  }): Promise<{ count: number; error?: string }> => {
     if (isCheckingPluginUpdates) return { count: 0 };
     setIsCheckingPluginUpdates(true);
     try {
@@ -418,9 +426,9 @@ export function InstalledSkillsPage() {
     }
   };
 
-  const checkMarketplaceUpdates = async (
-    options?: { silent?: boolean }
-  ): Promise<{ count: number; error?: string }> => {
+  const checkMarketplaceUpdates = async (options?: {
+    silent?: boolean;
+  }): Promise<{ count: number; error?: string }> => {
     if (isCheckingMarketplaceUpdates) return { count: 0 };
     setIsCheckingMarketplaceUpdates(true);
     try {
@@ -434,9 +442,7 @@ export function InstalledSkillsPage() {
     } catch (error: any) {
       const message = error?.message || String(error);
       if (!options?.silent) {
-        appToast.error(
-          t("plugins.marketplaces.updates.checkFailed", { error: message })
-        );
+        appToast.error(t("plugins.marketplaces.updates.checkFailed", { error: message }));
       }
       return { count: 0, error: message };
     } finally {
@@ -469,9 +475,7 @@ export function InstalledSkillsPage() {
       if (marketplacesResult?.error) failures.push(t("installed.checkUpdatesTargets.marketplaces"));
       if (failures.length > 0) {
         const separator = i18n.language === "zh" ? "、" : ", ";
-        appToast.error(
-          t("installed.checkUpdatesFailed", { targets: failures.join(separator) })
-        );
+        appToast.error(t("installed.checkUpdatesFailed", { targets: failures.join(separator) }));
         return;
       }
       if (total > 0) {
@@ -811,7 +815,14 @@ export function InstalledSkillsPage() {
       if (timeA !== timeB) return timeB - timeA;
       return a.name.localeCompare(b.name);
     });
-  }, [availableUpdates, mergedInstalledSkills, searchQuery, selectedRepository, selectedTool, showUpdatesOnly]);
+  }, [
+    availableUpdates,
+    mergedInstalledSkills,
+    searchQuery,
+    selectedRepository,
+    selectedTool,
+    showUpdatesOnly,
+  ]);
 
   const filteredPlugins = useMemo(() => {
     let items = installedPlugins;
@@ -893,10 +904,12 @@ export function InstalledSkillsPage() {
     const items: InstalledEntry[] = [
       ...mergedInstalledSkills.map((skill): InstalledEntry => ({ kind: "skill", item: skill })),
       ...installedPlugins.map((plugin): InstalledEntry => ({ kind: "plugin", item: plugin })),
-      ...installedMarketplaces.map((marketplace): InstalledEntry => ({
-        kind: "marketplace",
-        item: marketplace,
-      })),
+      ...installedMarketplaces.map(
+        (marketplace): InstalledEntry => ({
+          kind: "marketplace",
+          item: marketplace,
+        })
+      ),
     ];
 
     if (!items.length) return [];
@@ -915,7 +928,7 @@ export function InstalledSkillsPage() {
           ? marketplaceDescriptions.get(entry.item.name)
           : entry.item.description;
       const marketplaceName =
-        entry.kind === "plugin" ? entry.item.marketplace_name?.toLowerCase() ?? "" : "";
+        entry.kind === "plugin" ? (entry.item.marketplace_name?.toLowerCase() ?? "") : "";
 
       const matchesSearch =
         !query ||
@@ -931,7 +944,8 @@ export function InstalledSkillsPage() {
 
       const matchesTool =
         selectedTool === "all" ||
-        (entry.kind === "skill" && getDisplayedToolIds(entry.item).includes(selectedTool));
+        (entry.kind === "skill" && getDisplayedToolIds(entry.item).includes(selectedTool)) ||
+        (entry.kind === "plugin" && getDisplayedPluginToolIds(entry.item).includes(selectedTool));
 
       return matchesSearch && matchesRepo && matchesUpdate && matchesTool;
     });
@@ -976,6 +990,28 @@ export function InstalledSkillsPage() {
     setSearchQuery("");
   };
 
+  const executeSkillUninstall = async (skill: Skill) => {
+    setInstalledOps((prev) => ({ ...prev, uninstallingSkillId: skill.id }));
+    const operationSkillIds = getOperationSkillIds(skill);
+    const errors: string[] = [];
+    try {
+      for (const operationSkillId of operationSkillIds) {
+        try {
+          await uninstallMutation.mutateAsync(operationSkillId);
+        } catch (error: any) {
+          errors.push(error?.message || String(error));
+        }
+      }
+    } finally {
+      setInstalledOps((prev) => ({ ...prev, uninstallingSkillId: null }));
+    }
+    if (errors.length === 0) {
+      appToast.success(t("skills.toast.uninstalled"));
+    } else {
+      appToast.error(`${t("skills.toast.uninstallFailed")}: ${errors[0]}`);
+    }
+  };
+
   const renderSkillCard = (skill: Skill, index: number) => {
     const upgradeCandidate = skillPluginUpgradeByName.get(skill.name.toLowerCase());
     return (
@@ -987,24 +1023,7 @@ export function InstalledSkillsPage() {
         onShowPluginUpgrade={() => {
           if (upgradeCandidate) setPendingSkillPluginUpgrade(upgradeCandidate);
         }}
-        onUninstall={async () => {
-          setInstalledOps((prev) => ({ ...prev, uninstallingSkillId: skill.id }));
-          const errors: string[] = [];
-          try {
-            try {
-              await uninstallMutation.mutateAsync(skill.id);
-            } catch (error: any) {
-              errors.push(error?.message || String(error));
-            }
-          } finally {
-            setInstalledOps((prev) => ({ ...prev, uninstallingSkillId: null }));
-          }
-          if (errors.length === 0) {
-            appToast.success(t("skills.toast.uninstalled"));
-          } else {
-            appToast.error(`${t("skills.toast.uninstallFailed")}: ${errors[0]}`);
-          }
-        }}
+        onUninstall={() => setPendingSkillUninstall(skill)}
         onUninstallPath={(path: string) => {
           uninstallPathMutation.mutate(
             { skillId: skill.id, path },
@@ -1059,7 +1078,9 @@ export function InstalledSkillsPage() {
             setPendingToggleTarget(null);
           }
         }}
-        pendingToolId={pendingToggleTarget?.skillId === skill.id ? pendingToggleTarget.toolId : null}
+        pendingToolId={
+          pendingToggleTarget?.skillId === skill.id ? pendingToggleTarget.toolId : null
+        }
         hasUpdate={availableUpdates.has(skill.id)}
         isUninstalling={uninstallingSkillId === skill.id}
         isPreparingUpdate={preparingUpdateSkillId === skill.id}
@@ -1172,6 +1193,14 @@ export function InstalledSkillsPage() {
     return lines.join("\n");
   }, [pendingSkillPluginUpgrade]);
 
+  const pendingSkillUninstallOperationCount = pendingSkillUninstall
+    ? getOperationSkillIds(pendingSkillUninstall).length
+    : 0;
+  const pendingSkillUninstallPathCount = pendingSkillUninstall
+    ? (pendingSkillUninstall.local_paths?.length ?? (pendingSkillUninstall.local_path ? 1 : 0))
+    : 0;
+  const pendingSkillUninstallName = pendingSkillUninstall?.name ?? "";
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex-shrink-0 border-b border-border/50">
@@ -1198,33 +1227,33 @@ export function InstalledSkillsPage() {
                     )}
                     批量同步
                   </button>
-                <button
-                  onClick={checkAllUpdates}
-                  disabled={
-                    isCheckingAllUpdates ||
+                  <button
+                    onClick={checkAllUpdates}
+                    disabled={
+                      isCheckingAllUpdates ||
+                      isScanning ||
+                      isCheckingUpdates ||
+                      isCheckingPluginUpdates ||
+                      isCheckingMarketplaceUpdates
+                    }
+                    className="apple-button-primary h-10 px-5 flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {isCheckingAllUpdates ||
                     isScanning ||
                     isCheckingUpdates ||
                     isCheckingPluginUpdates ||
-                    isCheckingMarketplaceUpdates
-                  }
-                  className="apple-button-primary h-10 px-5 flex items-center gap-2 disabled:opacity-50"
-                >
-                  {isCheckingAllUpdates ||
-                  isScanning ||
-                  isCheckingUpdates ||
-                  isCheckingPluginUpdates ||
-                  isCheckingMarketplaceUpdates ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      {t("skills.installedPage.checkingUpdates")}
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="w-4 h-4" />
-                      {t("skills.installedPage.checkUpdates")}
-                    </>
-                  )}
-                </button>
+                    isCheckingMarketplaceUpdates ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {t("skills.installedPage.checkingUpdates")}
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-4 h-4" />
+                        {t("skills.installedPage.checkUpdates")}
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1421,26 +1450,32 @@ export function InstalledSkillsPage() {
           ) : (
             <div className="flex flex-col items-center justify-center py-20 apple-card">
               <div className="w-20 h-20 rounded-full bg-secondary flex items-center justify-center mb-5">
-                {searchQuery || (activeTab !== "marketplaces" && selectedRepository !== "all") || selectedTool !== "all" ? (
+                {searchQuery ||
+                (activeTab !== "marketplaces" && selectedRepository !== "all") ||
+                selectedTool !== "all" ? (
                   <SearchX className="w-10 h-10 text-muted-foreground" />
                 ) : (
                   <Package className="w-10 h-10 text-muted-foreground" />
                 )}
               </div>
               <p className="text-sm text-muted-foreground">
-                {searchQuery || (activeTab !== "marketplaces" && selectedRepository !== "all") || selectedTool !== "all"
+                {searchQuery ||
+                (activeTab !== "marketplaces" && selectedRepository !== "all") ||
+                selectedTool !== "all"
                   ? t("installed.empty.noResults", { query: searchQuery })
                   : showUpdatesOnly
                     ? t("installed.empty.noUpdates")
-                  : activeTab === "all"
-                    ? t("installed.empty.all")
-                    : activeTab === "skills"
-                      ? t("skills.installedPage.empty")
-                      : activeTab === "plugins"
-                        ? t("installed.plugins.empty")
-                        : t("installed.marketplaces.empty")}
+                    : activeTab === "all"
+                      ? t("installed.empty.all")
+                      : activeTab === "skills"
+                        ? t("skills.installedPage.empty")
+                        : activeTab === "plugins"
+                          ? t("installed.plugins.empty")
+                          : t("installed.marketplaces.empty")}
               </p>
-              {(searchQuery || (activeTab !== "marketplaces" && selectedRepository !== "all") || selectedTool !== "all") && (
+              {(searchQuery ||
+                (activeTab !== "marketplaces" && selectedRepository !== "all") ||
+                selectedTool !== "all") && (
                 <button
                   onClick={() => {
                     setSearchQuery("");
@@ -1452,20 +1487,49 @@ export function InstalledSkillsPage() {
                   {t("installed.empty.clearFilters")}
                 </button>
               )}
-              {!searchQuery &&
-                selectedRepository === "all" &&
-                showUpdatesOnly && (
-                  <button
-                    onClick={() => setShowUpdatesOnly(false)}
-                    className="mt-5 apple-button-secondary"
-                  >
-                    {t("installed.updatesFocus.showAll")}
-                  </button>
-                )}
+              {!searchQuery && selectedRepository === "all" && showUpdatesOnly && (
+                <button
+                  onClick={() => setShowUpdatesOnly(false)}
+                  className="mt-5 apple-button-secondary"
+                >
+                  {t("installed.updatesFocus.showAll")}
+                </button>
+              )}
             </div>
           )}
         </div>
       </div>
+
+      <SkillUninstallConfirmDialog
+        open={pendingSkillUninstall !== null}
+        skillName={pendingSkillUninstallName}
+        operationCount={pendingSkillUninstallOperationCount}
+        pathCount={pendingSkillUninstallPathCount}
+        isConfirming={
+          pendingSkillUninstall ? uninstallingSkillId === pendingSkillUninstall.id : false
+        }
+        labels={{
+          title: t("skills.installedPage.uninstallDialog.title"),
+          description: t("skills.installedPage.uninstallDialog.description", {
+            name: pendingSkillUninstallName,
+          }),
+          impact: t("skills.installedPage.uninstallDialog.impact", {
+            records: pendingSkillUninstallOperationCount,
+            paths: pendingSkillUninstallPathCount,
+          }),
+          cancel: t("skills.cancel"),
+          confirm: t("skills.installedPage.uninstallDialog.confirm"),
+          confirming: t("skills.uninstalling"),
+        }}
+        onCancel={() => {
+          if (!uninstallingSkillId) setPendingSkillUninstall(null);
+        }}
+        onConfirm={async () => {
+          if (!pendingSkillUninstall || uninstallingSkillId) return;
+          await executeSkillUninstall(pendingSkillUninstall);
+          setPendingSkillUninstall(null);
+        }}
+      />
 
       <UpdateConfirmDialog
         open={pendingUpdate !== null}
@@ -1487,7 +1551,9 @@ export function InstalledSkillsPage() {
               await api.confirmSkillUpdate(
                 pendingUpdate.skill.id,
                 forceOverwrite,
-                Boolean(pendingUpdate.report.partial_scan || pendingUpdate.report.skipped_files?.length)
+                Boolean(
+                  pendingUpdate.report.partial_scan || pendingUpdate.report.skipped_files?.length
+                )
               );
               await queryClient.refetchQueries({ queryKey: ["skills"] });
               await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
@@ -2040,7 +2106,9 @@ function SkillCard({
                           appToast.success(t("skills.folder.opened"), { duration: 5000 });
                         } catch (error: any) {
                           appToast.error(
-                            t("skills.folder.openFailed", { error: error?.message || String(error) }),
+                            t("skills.folder.openFailed", {
+                              error: error?.message || String(error),
+                            }),
                             { duration: 5000 }
                           );
                         }

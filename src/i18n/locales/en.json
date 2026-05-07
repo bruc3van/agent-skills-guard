@@ -233,6 +233,12 @@
         "copy": "COPY_COMMANDS",
         "copied": "COPIED",
         "copyFailed": "COPY_FAILED: {{error}}"
+      },
+      "uninstallDialog": {
+        "title": "Confirm Uninstall All",
+        "description": "Uninstall all installations of \"{{name}}\"? This will remove this Skill's files from every linked directory.",
+        "impact": "Will process {{records}} records and remove {{paths}} install paths.",
+        "confirm": "Confirm Uninstall"
       }
     },
     "folder": {

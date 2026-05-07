@@ -233,6 +233,12 @@
         "copy": "复制命令",
         "copied": "已复制到剪贴板",
         "copyFailed": "复制失败：{{error}}"
+      },
+      "uninstallDialog": {
+        "title": "确认卸载全部",
+        "description": "确定要卸载 \"{{name}}\" 的全部安装吗？该操作会删除此 Skill 在所有已关联目录中的文件。",
+        "impact": "将处理 {{records}} 条记录，删除 {{paths}} 个安装路径。",
+        "confirm": "确认卸载"
       }
     },
     "folder": {

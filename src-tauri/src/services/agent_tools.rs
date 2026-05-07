@@ -76,6 +76,18 @@ impl AgentTool {
         ]
     }
 
+    /// 从技能目录路径反推所属工具
+    pub fn from_skills_dir(path: &std::path::Path) -> Option<Self> {
+        for tool in Self::all() {
+            if let Some(dir) = tool.default_skills_dir() {
+                if path == dir {
+                    return Some(tool);
+                }
+            }
+        }
+        None
+    }
+
     /// 检测本机已存在（父目录存在）的工具，仅用于 UI 默认勾选
     pub fn detect_present_tools() -> Vec<Self> {
         let home = match dirs::home_dir() {

@@ -42,6 +42,46 @@ fn build_synced_tool_state(
     (linked_tool_ids, paths)
 }
 
+fn build_local_skill_id(checksum: &str, local_path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut normalized_path = local_path.to_string_lossy().replace('\\', "/");
+    if cfg!(windows) {
+        normalized_path = normalized_path.to_ascii_lowercase();
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(checksum.as_bytes());
+    hasher.update(b":");
+    hasher.update(normalized_path.as_bytes());
+    let digest = hex::encode(hasher.finalize());
+
+    format!("local::{}", &digest[..16])
+}
+
+fn normalize_path_for_compare(path: &Path) -> String {
+    let mut normalized = path.to_string_lossy().replace('\\', "/");
+    while normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+    if cfg!(windows) {
+        normalized = normalized.to_ascii_lowercase();
+    }
+    normalized
+}
+
+fn paths_point_to_same_location(left: &Path, right: &Path) -> bool {
+    if normalize_path_for_compare(left) == normalize_path_for_compare(right) {
+        return true;
+    }
+
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => {
+            normalize_path_for_compare(&left) == normalize_path_for_compare(&right)
+        }
+        _ => false,
+    }
+}
+
 impl SkillManager {
     pub fn new(db: Arc<Database>) -> Self {
         let skills_dir = Self::get_skills_directory();
@@ -599,6 +639,8 @@ impl SkillManager {
     ) -> Result<()> {
         use anyhow::Context;
 
+        std::fs::create_dir_all(dst).context(format!("无法创建目标目录: {:?}", dst))?;
+
         for entry in std::fs::read_dir(src).context(format!("无法读取源目录: {:?}", src))? {
             let entry = entry?;
             let src_path = entry.path();
@@ -914,14 +956,14 @@ impl SkillManager {
 
     /// 扫描所有工具 skill 目录，导入未追踪的技能；通过 realpath 去重，避免链接和源重复导入
     pub fn scan_local_skills(&self) -> Result<Vec<Skill>> {
-        use std::collections::HashSet;
+        use std::collections::{HashMap, HashSet};
 
         // 所有扫描到的技能
         let mut scanned_skills = Vec::new();
         // 新导入的技能（用于日志）
         let mut imported_skills = Vec::new();
-        // 用于链接去重，避免 Junction 和真实目录重复导入
-        let mut seen_real_paths: HashSet<PathBuf> = HashSet::new();
+        // realpath -> scanned_skills 索引，用于去重并关联多工具
+        let mut seen_real_paths: HashMap<PathBuf, usize> = HashMap::new();
 
         // 获取当前数据库中的所有技能（用于去重和提取路径）
         let existing_skills = self.db.get_skills()?;
@@ -942,8 +984,10 @@ impl SkillManager {
         }
 
         // 2. 添加所有工具的 skill 目录（确保始终扫描）
+        let mut dir_to_tool: HashMap<PathBuf, String> = HashMap::new();
         for tool in AgentTool::all() {
             if let Some(dir) = tool.default_skills_dir() {
+                dir_to_tool.insert(dir.clone(), tool.id().to_string());
                 scan_dirs.insert(dir);
             }
         }
@@ -952,6 +996,7 @@ impl SkillManager {
 
         // 3. 扫描所有目录
         for scan_dir in scan_dirs {
+            let scan_dir_tool = dir_to_tool.get(&scan_dir).cloned();
             if !scan_dir.exists() {
                 log::debug!("Skipping non-existent directory: {:?}", scan_dir);
                 continue;
@@ -975,12 +1020,65 @@ impl SkillManager {
                         continue;
                     }
 
-                    // 通过 realpath 去重：Junction/symlink 和真实目录指向同一位置时只处理一次
+                    // 通过 realpath 去重：同一技能出现在多个工具目录时，关联所有工具
                     let real_path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-                    if !seen_real_paths.insert(real_path) {
-                        log::debug!("跳过重复（链接）路径: {:?}", path);
+                    if let Some(&idx) = seen_real_paths.get(&real_path) {
+                        // 同一技能已在本次扫描中处理过，将当前目录的工具关联上去
+                        if let Some(ref tool_id) = scan_dir_tool {
+                            let existing: &mut Skill = &mut scanned_skills[idx];
+                            if !existing.linked_tools.contains(tool_id) {
+                                existing.linked_tools.push(tool_id.clone());
+                                log::info!(
+                                    "关联工具 '{}' 到技能 '{}'（来自 {:?}）",
+                                    tool_id,
+                                    existing.name,
+                                    path
+                                );
+                            }
+                            let path_str = path.to_string_lossy().to_string();
+                            let paths = existing.local_paths.get_or_insert_with(Vec::new);
+                            if !paths.contains(&path_str) {
+                                paths.push(path_str);
+                            }
+                            let _ = self.db.save_skill(existing);
+                        }
                         continue;
                     }
+                    // 也检查 DB 中已有记录（前次扫描导入的）
+                    if let Some(ref tool_id) = scan_dir_tool {
+                        let path_str = path.to_string_lossy().to_string();
+                        for db_skill in &existing_skills {
+                            if !db_skill.installed {
+                                continue;
+                            }
+                            let db_real = db_skill
+                                .local_path
+                                .as_deref()
+                                .and_then(|p| std::fs::canonicalize(p).ok());
+                            if db_real.as_deref() == Some(&real_path) {
+                                let mut updated = db_skill.clone();
+                                if !updated.linked_tools.contains(tool_id) {
+                                    updated.linked_tools.push(tool_id.clone());
+                                    log::info!(
+                                        "关联工具 '{}' 到已有技能 '{}'（来自 {:?}）",
+                                        tool_id,
+                                        updated.name,
+                                        path
+                                    );
+                                }
+                                if let Some(ref mut paths) = updated.local_paths {
+                                    if !paths.contains(&path_str) {
+                                        paths.push(path_str);
+                                    }
+                                } else {
+                                    updated.local_paths = Some(vec![path_str]);
+                                }
+                                let _ = self.db.save_skill(&updated);
+                                break;
+                            }
+                        }
+                    }
+                    seen_real_paths.insert(real_path, scanned_skills.len());
 
                     // 读取 SKILL.md 内容
                     match std::fs::read_to_string(&skill_md_path) {
@@ -1031,6 +1129,13 @@ impl SkillManager {
                                     != Some(local_path_str.as_str())
                                 {
                                     existing_skill.local_path = Some(local_path_str.clone());
+                                }
+
+                                // 关联当前目录对应的工具
+                                if let Some(ref tool_id) = scan_dir_tool {
+                                    if !existing_skill.linked_tools.contains(tool_id) {
+                                        existing_skill.linked_tools.push(tool_id.clone());
+                                    }
                                 }
 
                                 // 更新 checksum（基于 SKILL.md 内容）
@@ -1110,7 +1215,7 @@ impl SkillManager {
                             }
 
                             // 生成技能 ID
-                            let skill_id = format!("local::{}", checksum[..16].to_string());
+                            let skill_id = build_local_skill_id(&checksum, &path);
 
                             // 扫描整个技能目录
                             let locale = rust_i18n::locale();
@@ -1131,6 +1236,7 @@ impl SkillManager {
 
                             // 创建 skill 对象（使用之前解析的元数据）
                             let local_path_str = path.to_string_lossy().to_string();
+                            let linked_tools = scan_dir_tool.iter().cloned().collect::<Vec<_>>();
                             let skill = Skill {
                                 id: skill_id,
                                 name: skill_name,
@@ -1152,7 +1258,7 @@ impl SkillManager {
                                 scanned_at: Some(Utc::now()),
                                 installed_commit_sha: None,
                                 source_path: Some(local_path_str),
-                                linked_tools: Vec::new(),
+                                linked_tools,
                                 is_local_only: true,
                             };
 
@@ -1957,28 +2063,39 @@ impl SkillManager {
             // 确保通用目录的父目录存在
             std::fs::create_dir_all(&self.skills_dir).context("无法创建通用技能目录")?;
 
-            // 复制到通用目录
-            let mut files_copied = 0;
-            self.copy_dir_recursive(&original, &common_dir, &mut files_copied)?;
-            log::info!(
-                "已将本地技能复制到通用目录: {:?} ({} 个文件)",
-                common_dir,
-                files_copied
-            );
+            let already_in_common_dir = paths_point_to_same_location(&original, &common_dir);
 
-            // 删除原目录，替换为指向通用目录的 Junction
-            if link_fs::is_dir_link(&original) {
-                link_fs::remove_dir_link(&original)?;
+            if already_in_common_dir {
+                log::info!("本地技能已位于通用目录，无需复制: {:?}", common_dir);
             } else {
-                std::fs::remove_dir_all(&original).context("无法删除原技能目录")?;
+                // 复制到通用目录
+                let mut files_copied = 0;
+                self.copy_dir_recursive(&original, &common_dir, &mut files_copied)?;
+                log::info!(
+                    "已将本地技能复制到通用目录: {:?} ({} 个文件)",
+                    common_dir,
+                    files_copied
+                );
+
+                // 删除原目录，替换为指向通用目录的 Junction
+                if link_fs::is_dir_link(&original) {
+                    link_fs::remove_dir_link(&original)?;
+                } else {
+                    std::fs::remove_dir_all(&original).context("无法删除原技能目录")?;
+                }
+                link_fs::create_dir_link(&common_dir, &original)
+                    .context("无法将原位置替换为链接")?;
             }
-            link_fs::create_dir_link(&common_dir, &original).context("无法将原位置替换为链接")?;
 
             // 更新技能记录
             let common_str = common_dir.to_string_lossy().to_string();
             skill.source_path = Some(common_str.clone());
             skill.local_path = Some(common_str.clone());
-            skill.local_paths = Some(vec![common_str, original_path.clone()]);
+            skill.local_paths = if already_in_common_dir {
+                Some(vec![common_str])
+            } else {
+                Some(vec![common_str, original_path.clone()])
+            };
             skill.is_local_only = false;
 
             // 识别原路径所属工具并加入 linked_tools
@@ -2115,8 +2232,10 @@ fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::build_synced_tool_state;
+    use super::{build_local_skill_id, build_synced_tool_state, paths_point_to_same_location};
+    use crate::services::Database;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     #[test]
     fn build_synced_tool_state_replaces_previous_links_with_requested_targets() {
@@ -2143,5 +2262,45 @@ mod tests {
 
         assert!(linked_tools.is_empty());
         assert_eq!(local_paths, vec!["/tmp/.agents/skills/example".to_string()]);
+    }
+
+    #[test]
+    fn local_skill_id_includes_path_not_only_checksum() {
+        let checksum = "b81e2ff87ed8fa4d0b81e2ff87ed8fa4d";
+        let agents_path = PathBuf::from("C:/Users/Bruce/.agents/skills/frontend-design");
+        let claude_path = PathBuf::from("C:/Users/Bruce/.claude/skills/frontend-design");
+
+        assert_ne!(
+            build_local_skill_id(checksum, &agents_path),
+            build_local_skill_id(checksum, &claude_path)
+        );
+    }
+
+    #[test]
+    fn same_path_detection_handles_already_promoted_local_skill() {
+        let original = PathBuf::from("C:/Users/Bruce/.agents/skills/frontend-design");
+        let common = PathBuf::from("C:/Users/Bruce/.agents/skills/frontend-design");
+
+        assert!(paths_point_to_same_location(&original, &common));
+    }
+
+    #[test]
+    fn copy_dir_recursive_creates_destination_root_before_copying_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(db);
+        let src = temp.path().join("source");
+        let dst = temp.path().join("missing-destination");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join(".gitignore"), "target\n").unwrap();
+
+        let mut copied = 0;
+        manager.copy_dir_recursive(&src, &dst, &mut copied).unwrap();
+
+        assert_eq!(copied, 1);
+        assert_eq!(
+            std::fs::read_to_string(dst.join(".gitignore")).unwrap(),
+            "target\n"
+        );
     }
 }
