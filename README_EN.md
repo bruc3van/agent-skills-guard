@@ -6,7 +6,7 @@
 
 ### Making Claude Code Skills Management as Simple and Secure as an App Store
 
-[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 
@@ -45,8 +45,9 @@ Manage Claude Code skills like managing mobile apps, from discovery, installatio
 - ✅ **One-click install**: Install directly from featured or custom repositories
 - 🔌 **Plugin-style installation**: Support installing skills as plugins using Claude non-interactive commands, avoiding compatibility issues
 - 🔄 **Smart updates**: Automatically detect skill and plugin updates, support online upgrades
-- 🗑️ **Easy uninstall**: Support multi-path installation management, clean on demand
+- 🗑️ **Easy uninstall**: Support multi-path installation management, clean on demand, with confirmation dialog
 - 📂 **Custom paths**: Flexibly choose skill installation locations
+- 🔗 **Tool sync**: Sync installed skills to IDE and other programming tools, with batch sync support
 
 ### 🛡️ Community-Leading Security Scanning
 
@@ -103,7 +104,8 @@ No GUI required, perfect for developers who prefer working in the terminal.
 | **Install skills**          | ❌ Command line, error-prone          | ✅ Visual UI, plugin-style install, click to install    |
 | **Manage skills/plugins**   | ❌ Folder digging, unclear usage      | ✅ Intuitive list, clear status                         |
 | **Update skills/plugins**   | ❌ Manual check, repetitive           | ✅ Auto detect, batch update                            |
-| **Uninstall skills**        | ❌ Manual delete, worried leftovers   | ✅ One-click uninstall, auto cleanup                    |
+| **Sync to tools**           | ❌ Manually copy to tool directories  | ✅ One-click sync to IDE, batch operations              |
+| **Uninstall skills**        | ❌ Manual delete, worried leftovers   | ✅ One-click uninstall, confirmation dialog, auto cleanup |
 
 ---
 

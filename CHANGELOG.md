@@ -5,6 +5,50 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] - 2026-05-07
+
+### ✨ 新增功能
+
+- **编程工具同步** - 支持将已安装的技能同步到编程工具（IDE 等），实现技能与开发工具的无缝集成。
+  - 新增 ToolSyncDialog 组件，支持单个和批量同步技能到工具。
+  - 新增 ToolIcons 组件，可视化展示技能与工具的同步状态。
+  - 后端新增跨平台目录链接服务（link_fs），支持技能文件的符号链接管理。
+  - 新增 Agent Tools 后端服务，管理工具列表与技能关联。
+  - Marketplace 和仓库页面安装时支持选择目标编程工具。
+- **技能卸载确认弹窗** - 新增 SkillUninstallConfirmDialog 组件，卸载技能前展示详细确认信息，支持多副本批量卸载。
+- **技能信息解析增强** - 使用 `parse_skill_frontmatter` 替换自定义 frontmatter 解析，提升 YAML 兼容性。
+- **同名技能智能合并** - 新增 `groupSkillsByName` 函数，自动合并来自不同仓库的同名技能，保留各自独有属性。
+- **已安装技能管理增强** - InstalledSkillsPage 全面升级，支持工具同步操作、技能分组展示、批量管理等。
+- **ToolIcons 测试** - 新增 ToolIcons 组件的单元测试，确保工具同步状态展示的正确性。
+- **已安装技能工具测试** - 新增 installed-skills 相关工具函数的测试覆盖。
+
+### 🐛 问题修复
+
+- 修复 marketplace 模块缓存冲突问题，仓库配置改用 `featured-repositories.yaml`。
+- 修复 `marketing-skills`、`claude-sentry-skills` 等 YAML 安装命令缺少 `@marketplace` 后缀的问题。
+- 修复 `sentry-skills` 安装命令缺少前导斜杠的问题。
+- 修复技能合并逻辑在 checksum 变更时未清除安全数据的问题。
+- 修复 `pendingToggle` 作用域问题，切换工具时不再影响其他技能的 loading 状态。
+- 修复扫描数量不匹配问题。
+- 修复已卸载技能的处理逻辑和路径对账问题。
+- 修复已安装技能的扫描逻辑。
+- 修复 InstallConfirmDialog 在 agentTools 更新时重置用户已选工具的问题。
+- 修复工具同步查询的缓存刷新问题，确保同步后 UI 立即更新。
+- 安装对话框在安装进行中禁止关闭，避免逻辑漏洞。
+
+### 🔧 优化改进
+
+- 抽取 `Plugin::merge_existing()` 方法，消除 3 处合并逻辑重复代码。
+- 抽取共享的 `download_yaml_to_cache()` 方法，消除刷新命令中的重复代码。
+- 远程 YAML 下载新增 30 秒超时，避免请求挂起。
+- 优化 OverviewPage 扫描状态展示。
+- 优化安全扫描器逻辑，提升扫描准确性。
+
+### ♻️ 代码重构
+
+- 使用 `parse_skill_frontmatter` 替换自定义 frontmatter 解析逻辑，提升 YAML 支持能力。
+- Marketplace 模块代码去重与结构优化。
+
 ## [1.0.2] - 2026-04-06
 
 ### ⚡ 性能优化

@@ -6,7 +6,7 @@
 
 ### 让 Claude Code 技能管理像应用商店一样简单安全
 
-[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 
@@ -57,8 +57,9 @@
 - ✅ **一键安装**：从精选仓库或自定义仓库直接安装
 - 🔌 **插件形态安装**：支持以插件形式安装技能，使用 Claude 非交互子命令，避免兼容性问题
 - 🔄 **智能更新**：自动检测技能和插件更新，支持在线升级
-- 🗑️ **轻松卸载**：支持多路径安装管理，按需清理
+- 🗑️ **轻松卸载**：支持多路径安装管理，按需清理，卸载前确认弹窗
 - 📂 **自定义路径**：灵活选择技能安装位置
+- 🔗 **编程工具同步**：将已安装技能同步到 IDE 等编程工具，支持批量同步
 
 ### 🛡️ 社区领先安全扫描
 
@@ -115,7 +116,8 @@
 | **安装技能**      | ❌ 命令行操作，容易出错     | ✅ 可视化界面，支持插件形态安装，点击即装   |
 | **管理技能/插件** | ❌ 文件夹翻找，不知道用途   | ✅ 直观列表，状态一目了然                   |
 | **更新技能/插件** | ❌ 手动检查，重复操作       | ✅ 自动检测，批量更新                       |
-| **卸载技能**      | ❌ 手动删除，担心残留       | ✅ 一键卸载，自动清理                       |
+| **同步到工具**    | ❌ 手动复制到各工具目录     | ✅ 一键同步到 IDE，支持批量操作             |
+| **卸载技能**      | ❌ 手动删除，担心残留       | ✅ 一键卸载，确认弹窗，自动清理             |
 
 ---
 
