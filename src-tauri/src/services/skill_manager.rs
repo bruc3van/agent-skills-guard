@@ -82,6 +82,27 @@ fn paths_point_to_same_location(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn resolve_update_target_install_dir(raw: &Path) -> PathBuf {
+    if !link_fs::is_dir_link(raw) {
+        return raw.to_path_buf();
+    }
+
+    let linked_target = match link_fs::read_dir_link_target(raw) {
+        Ok(target) => target,
+        Err(_) => return std::fs::canonicalize(raw).unwrap_or_else(|_| raw.to_path_buf()),
+    };
+
+    let resolved = if linked_target.is_absolute() {
+        linked_target
+    } else {
+        raw.parent()
+            .map(|parent| parent.join(&linked_target))
+            .unwrap_or(linked_target)
+    };
+
+    std::fs::canonicalize(&resolved).unwrap_or(resolved)
+}
+
 impl SkillManager {
     pub fn new(db: Arc<Database>) -> Self {
         let skills_dir = Self::get_skills_directory();
@@ -1662,13 +1683,22 @@ impl SkillManager {
             anyhow::bail!("技能没有有效的安装路径");
         }
 
-        // 始终以当前活跃安装路径（local_path / local_paths 最后一个）为更新目标
-        let target_install_dir = skill
-            .local_paths
-            .as_ref()
-            .and_then(|paths| paths.last())
-            .map(PathBuf::from)
-            .context("技能没有有效的活跃安装路径")?;
+        // 始终以当前活跃安装路径（local_path / local_paths 最后一个）为更新目标。
+        // 若该路径是软链接，解析为真实路径：更新真实目录后所有指向它的软链接自动生效。
+        let target_install_dir = {
+            let raw = skill
+                .local_paths
+                .as_ref()
+                .and_then(|paths| paths.last())
+                .map(PathBuf::from)
+                .context("技能没有有效的活跃安装路径")?;
+
+            let real = resolve_update_target_install_dir(&raw);
+            if !paths_point_to_same_location(&raw, &real) {
+                log::info!("更新目标是目录链接，解析为真实路径: {:?} -> {:?}", raw, real);
+            }
+            real
+        };
 
         #[derive(Debug)]
         enum BackupDir {
@@ -1761,12 +1791,15 @@ impl SkillManager {
             allow_partial_scan,
         )?;
 
-        // 如果前面“移动备份”成功，目标目录已不存在；先创建一个干净目录
+        // 确保目标目录干净：
+        //   - rename备份成功：目标已不存在，创建新空目录
+        //   - copy备份成功：备份已完成，安全清空原目录后重建
+        //   - force_overwrite：无论是否有备份，强制清空
+        let should_clear = matches!(backup_dir, Some(BackupDir::Copied(_))) || force_overwrite;
         if !target_install_dir.exists() {
             std::fs::create_dir_all(&target_install_dir)
                 .context(format!("无法创建目标目录: {:?}", target_install_dir))?;
-        } else if force_overwrite {
-            // 强制覆盖时，尽量清空旧目录以避免遗留文件
+        } else if should_clear {
             if let Err(clear_err) = std::fs::remove_dir_all(&target_install_dir) {
                 log::warn!(
                     "无法清空旧技能目录，将尝试直接覆盖写入（可能保留部分旧文件）: {}",
@@ -2232,8 +2265,11 @@ fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_local_skill_id, build_synced_tool_state, paths_point_to_same_location};
-    use crate::services::Database;
+    use super::{
+        build_local_skill_id, build_synced_tool_state, paths_point_to_same_location,
+        resolve_update_target_install_dir,
+    };
+    use crate::services::{link_fs, Database};
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -2282,6 +2318,23 @@ mod tests {
         let common = PathBuf::from("C:/Users/Bruce/.agents/skills/frontend-design");
 
         assert!(paths_point_to_same_location(&original, &common));
+    }
+
+    #[test]
+    fn update_target_resolution_follows_directory_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let real_dir = temp.path().join("real-skill");
+        let link_dir = temp.path().join("linked-skill");
+        std::fs::create_dir_all(&real_dir).unwrap();
+        std::fs::write(real_dir.join("SKILL.md"), "test").unwrap();
+        link_fs::create_dir_link(&real_dir, &link_dir).unwrap();
+
+        let resolved = resolve_update_target_install_dir(&link_dir);
+
+        assert!(
+            paths_point_to_same_location(&resolved, &real_dir),
+            "updates must write through directory links so every linked tool sees the new files"
+        );
     }
 
     #[test]
