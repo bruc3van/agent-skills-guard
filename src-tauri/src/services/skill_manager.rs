@@ -219,7 +219,8 @@ impl SkillManager {
 
         // 安全扫描
         let content_str = String::from_utf8_lossy(&content);
-        let report = self.scanner.scan_file(&content_str, "SKILL.md", "zh")?;
+        let locale = rust_i18n::locale();
+        let report = self.scanner.scan_file(&content_str, "SKILL.md", &locale)?;
 
         // 更新 skill 信息
         Self::apply_scan_report(skill, &report);
@@ -341,10 +342,11 @@ impl SkillManager {
         }
 
         // 扫描整个技能目录
+        let locale = rust_i18n::locale();
         let scan_report = self.scanner.scan_directory_with_options(
             prepared_dir.to_str().context("技能目录路径无效")?,
             &skill.id,
-            "zh",
+            &locale,
             ScanOptions { skip_readme: true },
             None,
         )?;
@@ -479,8 +481,11 @@ impl SkillManager {
 
         // 更新 skill 安全信息到数据库（但不标记为已安装）
         Self::apply_scan_report(&mut skill, &scan_report);
-        // 注意：这里暂时保存缓存路径，确认安装时会更新为实际安装路径
-        skill.local_path = Some(skill_cache_dir.to_string_lossy().to_string());
+        // 使用 __cache__: 前缀标记临时缓存路径，避免 scan_local_skills 误认为已安装
+        skill.local_path = Some(format!(
+            "__cache__:{}",
+            skill_cache_dir.to_string_lossy()
+        ));
 
         // 保存安全信息到数据库，但不标记为已安装
         self.db.save_skill(&skill)?;
@@ -621,11 +626,14 @@ impl SkillManager {
             .find(|s| s.id == skill_id)
             .context("未找到该技能")?;
 
-        // 获取缓存中的技能路径（prepare阶段保存的）
-        let cache_path = skill
+        // 获取缓存中的技能路径（prepare阶段保存的，可能带 __cache__: 前缀）
+        let raw_cache_path = skill
             .local_path
             .as_ref()
             .context("技能尚未准备，请先调用prepare_skill_installation")?;
+        let cache_path = raw_cache_path
+            .strip_prefix("__cache__:")
+            .unwrap_or(raw_cache_path);
         let cache_dir = PathBuf::from(cache_path);
 
         // 获取仓库的 cached_commit_sha
@@ -903,9 +911,12 @@ impl SkillManager {
         // 1. 获取所有 unique 的 local_path 父目录
         let mut scan_dirs: HashSet<PathBuf> = HashSet::new();
 
-        // 从已安装技能的 local_path 提取父目录
+        // 从已安装技能的 local_path 提取父目录（跳过临时缓存/staging路径）
         for skill in &existing_skills {
             if let Some(local_path) = &skill.local_path {
+                if local_path.starts_with("__cache__:") || local_path.starts_with("__staging__:") {
+                    continue;
+                }
                 if let Some(parent) = PathBuf::from(local_path).parent() {
                     scan_dirs.insert(parent.to_path_buf());
                 }
@@ -1019,10 +1030,11 @@ impl SkillManager {
 
                                 // 仅在 checksum 变化时重新扫描，避免每次扫描全量安全检查的性能开销
                                 if checksum_changed {
+                                    let locale = rust_i18n::locale();
                                     let report = self.scanner.scan_directory_with_options(
                                         path.to_str().unwrap_or(""),
                                         &existing_skill.id,
-                                        "zh",
+                                        &locale,
                                         ScanOptions { skip_readme: true },
                                         None,
                                     )?;
@@ -1062,10 +1074,11 @@ impl SkillManager {
                                 existing_skill.description = skill_description;
                                 existing_skill.file_path = local_path_str.clone();
 
+                                let locale = rust_i18n::locale();
                                 let report = self.scanner.scan_directory_with_options(
                                     path.to_str().unwrap_or(""),
                                     &existing_skill.id,
-                                    "zh",
+                                    &locale,
                                     ScanOptions { skip_readme: true },
                                     None,
                                 )?;
@@ -1080,10 +1093,11 @@ impl SkillManager {
                             let skill_id = format!("local::{}", checksum[..16].to_string());
 
                             // 扫描整个技能目录
+                            let locale = rust_i18n::locale();
                             let report = self.scanner.scan_directory_with_options(
                                 path.to_str().unwrap_or(""),
                                 &skill_id,
-                                "zh",
+                                &locale,
                                 ScanOptions { skip_readme: true },
                                 None,
                             )?;

@@ -990,8 +990,7 @@ impl SecurityScanner {
             }
             let entry = rule_hits
                 .entry(matched._rule_id.clone())
-                .or_insert_with(|| (matched.weight, HashSet::new()));
-            entry.0 = matched.weight;
+                .or_insert((matched.weight, HashSet::new()));
             entry.1.insert(matched.file_path.clone());
         }
 
@@ -1006,23 +1005,6 @@ impl SecurityScanner {
         }
 
         base_score.max(0.0).round() as i32
-    }
-
-    /// 旧的计算方法（保留兼容性）
-    pub fn calculate_score(&self, issues: &[SecurityIssue]) -> i32 {
-        let mut base_score = 100;
-
-        for issue in issues {
-            let deduction = match issue.severity {
-                IssueSeverity::Critical => 30,
-                IssueSeverity::Error => 20,
-                IssueSeverity::Warning => 10,
-                IssueSeverity::Info => 5,
-            };
-            base_score -= deduction;
-        }
-
-        base_score.max(0)
     }
 
     /// 映射 Severity 到 IssueSeverity

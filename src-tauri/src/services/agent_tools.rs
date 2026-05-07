@@ -11,7 +11,7 @@ pub enum AgentTool {
     ClaudeCode,
     /// Codex ~/.codex/skills
     Codex,
-    /// Antigravity ~/.antigravity/skills
+    /// Antigravity ~/.gemini/antigravity/skills
     Antigravity,
     /// OpenCode ~/.config/opencode/skills
     OpenCode,
@@ -47,7 +47,7 @@ impl AgentTool {
             Self::Agents => home.join(".agents").join("skills"),
             Self::ClaudeCode => home.join(".claude").join("skills"),
             Self::Codex => home.join(".codex").join("skills"),
-            Self::Antigravity => home.join(".antigravity").join("skills"),
+            Self::Antigravity => home.join(".gemini").join("antigravity").join("skills"),
             Self::OpenCode => home.join(".config").join("opencode").join("skills"),
         };
         Some(path)
@@ -91,7 +91,7 @@ impl AgentTool {
         if home.join(".codex").exists() {
             present.push(Self::Codex);
         }
-        if home.join(".antigravity").exists() {
+        if home.join(".gemini").exists() {
             present.push(Self::Antigravity);
         }
         if home.join(".config").join("opencode").exists() {

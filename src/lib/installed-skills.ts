@@ -4,7 +4,7 @@ const DEFAULT_TOOL_PATH_PATTERNS: Array<{ id: string; pattern: RegExp }> = [
   { id: "agents", pattern: /(?:^~|^[A-Za-z]:\/Users\/[^/]+|^\/Users\/[^/]+|^\/home\/[^/]+|^\/root)\/\.agents\/skills(?:\/|$)/ },
   { id: "claude-code", pattern: /(?:^~|^[A-Za-z]:\/Users\/[^/]+|^\/Users\/[^/]+|^\/home\/[^/]+|^\/root)\/\.claude\/skills(?:\/|$)/ },
   { id: "codex", pattern: /(?:^~|^[A-Za-z]:\/Users\/[^/]+|^\/Users\/[^/]+|^\/home\/[^/]+|^\/root)\/\.codex\/skills(?:\/|$)/ },
-  { id: "antigravity", pattern: /(?:^~|^[A-Za-z]:\/Users\/[^/]+|^\/Users\/[^/]+|^\/home\/[^/]+|^\/root)\/\.antigravity\/skills(?:\/|$)/ },
+  { id: "antigravity", pattern: /(?:^~|^[A-Za-z]:\/Users\/[^/]+|^\/Users\/[^/]+|^\/home\/[^/]+|^\/root)\/\.gemini\/antigravity\/skills(?:\/|$)/ },
   { id: "opencode", pattern: /(?:^~|^[A-Za-z]:\/Users\/[^/]+|^\/Users\/[^/]+|^\/home\/[^/]+|^\/root)\/\.config\/opencode\/skills(?:\/|$)/ },
 ];
 

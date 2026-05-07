@@ -602,7 +602,8 @@
       "confirmUninstall": "CONFIRM_UNINSTALL_SKILL?",
       "issueCount": "{{count}} {{level}}",
       "expand": "EXPAND",
-      "collapse": "COLLAPSE"
+      "collapse": "COLLAPSE",
+      "lineNumber": "(Line {{line}})"
     }
   },
   "update": {

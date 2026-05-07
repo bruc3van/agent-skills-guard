@@ -602,7 +602,8 @@
       "confirmUninstall": "确定要卸载此技能吗？",
       "issueCount": "{{count}} 个{{level}}风险",
       "expand": "展开",
-      "collapse": "收起"
+      "collapse": "收起",
+      "lineNumber": "(行 {{line}})"
     }
   },
   "update": {

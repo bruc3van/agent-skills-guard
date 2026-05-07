@@ -103,11 +103,8 @@ export function OverviewPage() {
         isScanning: true,
         itemProgress: { scanned: 0, total: 0 },
       }));
-      const isPendingScan = mode === "pending";
-      let localSkillsCount = 0;
-      let installedPluginsCount = 0;
+
       let scannedPluginsCount = 0;
-      let installedSkillsCount = 0;
       let failedSkillsCount = 0;
       let failedPluginsCount = 0;
 
@@ -135,26 +132,15 @@ export function OverviewPage() {
         await Promise.all(workers);
       };
 
-      const pendingSkillsSnapshot = pendingSkills;
-      const pendingPluginsSnapshot = pendingPlugins;
-      if (isPendingScan) {
-        const pendingTotal = pendingSkillsSnapshot.length + pendingPluginsSnapshot.length;
-        setScanStatus((prev) => ({
-          ...prev,
-          itemProgress: { scanned: 0, total: pendingTotal },
-        }));
-
-        const results: SkillScanResult[] = [];
-        let extraLocalScannedCount = 0;
-
+      const scanPluginItems = async (items: Plugin[]) => {
         try {
-          await runWithConcurrency(pendingPluginsSnapshot, scanConcurrency, async (plugin) => {
+          await runWithConcurrency(items, scanConcurrency, async (plugin) => {
             try {
               await api.scanInstalledPlugin(plugin.id, i18n.language, undefined, undefined, true);
               scannedPluginsCount += 1;
             } catch (e) {
               failedPluginsCount += 1;
-              console.error("补扫插件失败:", plugin.name, e);
+              console.error("扫描插件失败:", plugin.name, e);
             } finally {
               setScanStatus((prev) => {
                 const next =
@@ -169,17 +155,20 @@ export function OverviewPage() {
             }
           });
         } catch (error: any) {
-          console.error("补扫插件失败:", error);
+          console.error("扫描插件失败:", error);
         }
+      };
 
+      const scanSkillItems = async (items: Skill[]): Promise<SkillScanResult[]> => {
+        const results: SkillScanResult[] = [];
         try {
-          await runWithConcurrency(pendingSkillsSnapshot, scanConcurrency, async (skill) => {
+          await runWithConcurrency(items, scanConcurrency, async (skill) => {
             try {
               const result = await api.scanInstalledSkill(skill.id, i18n.language);
               results.push(result);
             } catch (e) {
               failedSkillsCount += 1;
-              console.error("补扫技能失败:", skill.name, e);
+              console.error("扫描技能失败:", skill.name, e);
             } finally {
               setScanStatus((prev) => {
                 const next =
@@ -194,92 +183,54 @@ export function OverviewPage() {
             }
           });
         } catch (error: any) {
-          console.error("补扫技能失败:", error);
+          console.error("扫描技能失败:", error);
         }
+        return results;
+      };
 
-        // 等待后台任务完成并刷新数据
-        const backgroundLocalSkills = api.scanLocalSkills().catch((error) => {
-          console.error("本地技能发现失败:", error);
-          return [] as Skill[];
-        });
-
-        const backgroundPluginsSync = api.getPlugins(i18n.language).catch((error) => {
-          console.error("插件 CLI 同步失败:", error);
-          return [] as Plugin[];
-        });
-
-        const backgroundMarketplaces = api.getClaudeMarketplaces().catch((error) => {
-          console.error("Marketplace 同步失败:", error);
-          return [];
-        });
-
-        const [localSkills] = await Promise.all([
-          backgroundLocalSkills,
-          backgroundPluginsSync,
-          backgroundMarketplaces,
-        ]);
-        const scannedSkillIds = new Set(results.map((result) => result.skill_id));
-        extraLocalScannedCount = localSkills.filter(
-          (skill) => !scannedSkillIds.has(skill.id)
-        ).length;
-        await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
-        await queryClient.refetchQueries({ queryKey: ["skills"] });
-        await queryClient.refetchQueries({ queryKey: ["plugins"] });
-        await queryClient.refetchQueries({ queryKey: ["claudeMarketplaces"] });
-
-        // 获取最新的数据
-        let updatedSkills: Skill[] = [];
-        try {
-          updatedSkills = await api.getInstalledSkills();
-        } catch (error: any) {
-          console.error("刷新已安装技能失败:", error);
-        }
-
-        let updatedPlugins: Plugin[] = [];
-        try {
-          const latestPlugins = await api.getPluginsCached();
-          updatedPlugins = latestPlugins.filter((p) => p.installed);
-        } catch (error: any) {
-          console.error("刷新已安装插件失败:", error);
-        }
-
-        localSkillsCount = updatedSkills.length;
-        installedPluginsCount = updatedPlugins.length;
-
-        return {
-          results,
-          localSkillsCount,
-          installedPluginsCount,
-          scannedPluginsCount,
-          extraLocalScannedCount,
-          failedSkillsCount,
-          failedPluginsCount,
-        };
-      }
-
-      let scanSkills: Skill[] = [];
+      // Re-fetch current data inside mutation to avoid stale closures
+      let currentSkills: Skill[] = [];
       try {
-        scanSkills = await api.getInstalledSkills();
-        installedSkillsCount = scanSkills.length;
-        localSkillsCount = installedSkillsCount;
+        currentSkills = await api.getInstalledSkills();
       } catch (error: any) {
         console.error("获取已安装技能失败:", error);
       }
 
-      let scanPlugins: Plugin[] = [];
+      let currentPlugins: Plugin[] = [];
       try {
         const latestPlugins = await api.getPluginsCached();
-        scanPlugins = latestPlugins.filter((p) => p.installed);
-        installedPluginsCount = scanPlugins.length;
+        currentPlugins = latestPlugins.filter((p) => p.installed);
       } catch (error: any) {
         console.error("获取已安装插件失败:", error);
       }
 
+      const pendingSkillsToScan = currentSkills.filter(
+        (skill) => skill.installed && skill.security_score == null
+      );
+      const pendingPluginsToScan = currentPlugins.filter(
+        (plugin) => plugin.installed && plugin.security_score == null
+      );
+
+      const scanSkills = mode === "pending" ? pendingSkillsToScan : currentSkills;
+      const scanPlugins = mode === "pending" ? pendingPluginsToScan : currentPlugins;
+
+      const totalItems = scanSkills.length + scanPlugins.length;
+      setScanStatus((prev) => ({
+        ...prev,
+        itemProgress: { scanned: 0, total: totalItems },
+      }));
+
+      await scanPluginItems(scanPlugins);
+      const results = await scanSkillItems(scanSkills);
+
+      // Background tasks: discover local skills, sync plugins & marketplaces
       const backgroundLocalSkills = api.scanLocalSkills().catch((error) => {
         console.error("本地技能发现失败:", error);
-        appToast.error(t("overview.scan.localSkillsFailed", { error: error.message }), {
-          duration: 4000,
-        });
+        if (mode === "full") {
+          appToast.error(t("overview.scan.localSkillsFailed", { error: error.message }), {
+            duration: 4000,
+          });
+        }
         return [] as Skill[];
       });
 
@@ -293,91 +244,36 @@ export function OverviewPage() {
         return [];
       });
 
-      const totalItems = installedSkillsCount + installedPluginsCount;
-      setScanStatus((prev) => ({
-        ...prev,
-        itemProgress: { scanned: 0, total: totalItems },
-      }));
-
-      try {
-        await runWithConcurrency(scanPlugins, scanConcurrency, async (plugin) => {
-          try {
-            await api.scanInstalledPlugin(plugin.id, i18n.language, undefined, undefined, true);
-            scannedPluginsCount += 1;
-          } catch (e) {
-            failedPluginsCount += 1;
-            console.error("扫描插件失败:", plugin.name, e);
-          } finally {
-            setScanStatus((prev) => {
-              const next =
-                prev.itemProgress.total > 0
-                  ? Math.min(prev.itemProgress.total, prev.itemProgress.scanned + 1)
-                  : 0;
-              return {
-                ...prev,
-                itemProgress: { ...prev.itemProgress, scanned: next },
-              };
-            });
-          }
-        });
-      } catch (error: any) {
-        console.error("安全扫描插件失败:", error);
-      }
-
-      const results: SkillScanResult[] = [];
-      try {
-        await runWithConcurrency(scanSkills, scanConcurrency, async (skill) => {
-          try {
-            const result = await api.scanInstalledSkill(skill.id, i18n.language);
-            results.push(result);
-          } catch (e) {
-            failedSkillsCount += 1;
-            console.error("扫描技能失败:", skill.name, e);
-          } finally {
-            setScanStatus((prev) => {
-              const next =
-                prev.itemProgress.total > 0
-                  ? Math.min(prev.itemProgress.total, prev.itemProgress.scanned + 1)
-                  : 0;
-              return {
-                ...prev,
-                itemProgress: { ...prev.itemProgress, scanned: next },
-              };
-            });
-          }
-        });
-      } catch (error: any) {
-        console.error("安全扫描技能失败:", error);
-      }
-
       const [localSkills] = await Promise.all([
         backgroundLocalSkills,
         backgroundPluginsSync,
         backgroundMarketplaces,
       ]);
+
+      // Refresh all queries
       await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
       await queryClient.refetchQueries({ queryKey: ["skills"] });
       await queryClient.refetchQueries({ queryKey: ["plugins"] });
       await queryClient.refetchQueries({ queryKey: ["claudeMarketplaces"] });
 
-      let updatedSkills: Skill[] = [];
+      // Get updated counts
+      let localSkillsCount = 0;
       try {
-        updatedSkills = await api.getInstalledSkills();
+        const updatedSkills = await api.getInstalledSkills();
+        localSkillsCount = updatedSkills.length;
       } catch (error: any) {
         console.error("刷新已安装技能失败:", error);
+        localSkillsCount = currentSkills.length;
       }
 
-      let updatedPlugins: Plugin[] = [];
+      let installedPluginsCount = 0;
       try {
         const latestPlugins = await api.getPluginsCached();
-        updatedPlugins = latestPlugins.filter((p) => p.installed);
+        installedPluginsCount = latestPlugins.filter((p) => p.installed).length;
       } catch (error: any) {
         console.error("刷新已安装插件失败:", error);
+        installedPluginsCount = currentPlugins.length;
       }
-
-      installedSkillsCount = updatedSkills.length;
-      installedPluginsCount = updatedPlugins.length;
-      localSkillsCount = installedSkillsCount;
 
       const scannedSkillIds = new Set(results.map((result) => result.skill_id));
       const extraLocalScannedCount = localSkills.filter(
@@ -712,10 +608,13 @@ function buildReportFromPlugin(plugin: Plugin): SecurityReport {
     return plugin.security_report;
   }
 
+  const score = plugin.security_score ?? 0;
+  const level = plugin.security_level ?? scoreToLevel(score);
+
   return {
     skill_id: plugin.id,
-    score: plugin.security_score ?? 0,
-    level: plugin.security_level ?? "Unknown",
+    score,
+    level,
     issues: plugin.security_issues ?? [],
     recommendations: [],
     blocked: false,
@@ -724,4 +623,12 @@ function buildReportFromPlugin(plugin: Plugin): SecurityReport {
     partial_scan: false,
     skipped_files: [],
   };
+}
+
+function scoreToLevel(score: number): string {
+  if (score >= 90) return "Safe";
+  if (score >= 70) return "Low";
+  if (score >= 50) return "Medium";
+  if (score >= 30) return "High";
+  return "Critical";
 }

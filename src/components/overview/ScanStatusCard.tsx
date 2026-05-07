@@ -26,7 +26,8 @@ export function ScanStatusCard({
 }: ScanStatusCardProps) {
   const { t, i18n } = useTranslation();
 
-  const progress = totalCount > 0 ? Math.min(100, (scannedCount / totalCount) * 100) : 0;
+  const rawProgress = totalCount > 0 ? Math.min(100, (scannedCount / totalCount) * 100) : 0;
+  const progress = isScanning ? Math.min(rawProgress, 99) : rawProgress;
   const isComplete = totalCount > 0 && scannedCount >= totalCount;
   const fileProgressDisplay =
     fileProgress && fileProgress.total > 0 ? fileProgress : null;

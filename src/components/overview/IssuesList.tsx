@@ -51,6 +51,13 @@ const mapSeverityTo3Levels = (severity: string): keyof typeof levelConfig => {
   return "Safe";
 };
 
+const normalizeLevel = (level: string): keyof typeof levelConfig => {
+  if (level === "Critical" || level === "High") return "Critical";
+  if (level === "Medium" || level === "Low") return "Medium";
+  if (level === "Safe") return "Safe";
+  return "Safe";
+};
+
 const getScoreColor = (score: number) => {
   if (score >= 90) return "text-green-600";
   if (score >= 70) return "text-orange-600";
@@ -115,7 +122,7 @@ export function IssuesList({ issues, onOpenDirectory }: IssuesListProps) {
     <div className="divide-y divide-border/60">
       {issues.map((issue) => {
         const isExpanded = expandedSkills.has(issue.skill_id);
-        const config = levelConfig[issue.level as keyof typeof levelConfig] || levelConfig.Medium;
+        const config = levelConfig[normalizeLevel(issue.level)];
         const LevelIcon = config.icon;
 
         const issueStats = issue.report.issues.reduce(
@@ -265,7 +272,7 @@ export function IssuesList({ issues, onOpenDirectory }: IssuesListProps) {
                           </span>
                           {item.line_number && (
                             <span className="text-muted-foreground text-xs ml-2">
-                              (行 {item.line_number})
+                              {t("overview.issues.lineNumber", { line: item.line_number })}
                             </span>
                           )}
                         </div>
