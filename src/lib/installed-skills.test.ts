@@ -4,6 +4,7 @@ import {
   getDisplayedToolIds,
   getOperationSkillIds,
   getVisibleInstalledPaths,
+  getVisiblePluginInstallPath,
   groupSkillsByName,
   normalizeInstalledSkills,
 } from "./installed-skills";
@@ -298,5 +299,36 @@ describe("getDisplayedPluginToolIds", () => {
     });
 
     expect(getDisplayedPluginToolIds(plugin)).toEqual(["claude-code"]);
+  });
+
+  it("classifies Windows extended-length Claude Code plugin cache paths", () => {
+    const plugin = buildPlugin({
+      claude_install_path:
+        "\\\\?\\C:\\Users\\Bruce\\.claude\\plugins\\cache\\superpowers-marketplace\\superpowers\\4.0.3",
+    });
+
+    expect(getDisplayedPluginToolIds(plugin)).toEqual(["claude-code"]);
+  });
+});
+
+describe("getVisiblePluginInstallPath", () => {
+  it("hides default Claude Code plugin cache paths", () => {
+    const plugin = buildPlugin({
+      claude_install_path:
+        "C:/Users/Bruce/.claude/plugins/cache/superpowers-marketplace/superpowers/4.0.3",
+    });
+
+    expect(getVisiblePluginInstallPath(plugin)).toBeUndefined();
+  });
+
+  it("shows non-default plugin install paths", () => {
+    const plugin = buildPlugin({
+      claude_install_path:
+        "C:/Users/Bruce/VSCodeProject/project/.claude/plugins/cache/local-plugin/1.0.0",
+    });
+
+    expect(getVisiblePluginInstallPath(plugin)).toBe(
+      "C:/Users/Bruce/VSCodeProject/project/.claude/plugins/cache/local-plugin/1.0.0"
+    );
   });
 });

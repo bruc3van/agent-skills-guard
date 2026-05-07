@@ -164,6 +164,14 @@ export function getDefaultToolIdForPluginPath(path: string): string | null {
   return DEFAULT_PLUGIN_PATH_PATTERNS.find(({ pattern }) => pattern.test(normalized))?.id ?? null;
 }
 
+export function getVisiblePluginInstallPath(
+  plugin: Pick<Plugin, "claude_install_path">
+): string | undefined {
+  const installPath = plugin.claude_install_path?.trim();
+  if (!installPath || getDefaultToolIdForPluginPath(installPath)) return undefined;
+  return installPath;
+}
+
 export function getDisplayedPluginToolIds(plugin: Pick<Plugin, "claude_install_path">): string[] {
   const installPath = plugin.claude_install_path?.trim();
   if (!installPath) return [];

@@ -33,6 +33,7 @@ import {
   getDisplayedToolIds,
   getOperationSkillIds,
   getVisibleInstalledPaths,
+  getVisiblePluginInstallPath,
   groupSkillsByName,
   normalizeInstalledSkills,
 } from "@/lib/installed-skills";
@@ -2164,7 +2165,7 @@ function InstalledPluginCard({
   onUninstall,
 }: InstalledPluginCardProps) {
   const { t } = useTranslation();
-  const installPath = plugin.claude_install_path?.trim();
+  const installPath = getVisiblePluginInstallPath(plugin);
 
   return (
     <div className="apple-card p-6 pt-10 group flex flex-col h-full relative">
