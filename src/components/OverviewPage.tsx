@@ -16,6 +16,7 @@ import type { SecurityReport } from "@/types/security";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useClaudeMarketplaces, usePlugins } from "@/hooks/usePlugins";
 import { getScanConcurrency } from "@/lib/storage";
+import { groupSkillsByName, getSkillGroupKey } from "@/lib/installed-skills";
 
 export function OverviewPage() {
   const { t, i18n } = useTranslation();
@@ -74,24 +75,33 @@ export function OverviewPage() {
   });
 
   const uniqueInstalledSkills = useMemo(() => {
-    const byId = new Map<string, Skill>();
+    return groupSkillsByName(installedSkills);
+  }, [installedSkills]);
+
+  // Build skill_id → group key so scan results can be deduplicated the same way as skills
+  const skillIdToGroupKey = useMemo(() => {
+    const map = new Map<string, string>();
     installedSkills.forEach((skill) => {
-      byId.set(skill.id, skill);
+      map.set(skill.id, getSkillGroupKey(skill));
     });
-    return Array.from(byId.values());
+    return map;
   }, [installedSkills]);
 
   const uniqueScanResults = useMemo(() => {
-    const byId = new Map<string, SkillScanResult>();
+    const byGroupKey = new Map<string, SkillScanResult>();
     scanResults.forEach((result) => {
-      byId.set(result.skill_id, result);
+      const key = skillIdToGroupKey.get(result.skill_id) ?? `id::${result.skill_id}`;
+      const existing = byGroupKey.get(key);
+      if (!existing || new Date(result.scanned_at) > new Date(existing.scanned_at)) {
+        byGroupKey.set(key, result);
+      }
     });
-    return Array.from(byId.values());
-  }, [scanResults]);
+    return Array.from(byGroupKey.values());
+  }, [scanResults, skillIdToGroupKey]);
 
   const pendingSkills = useMemo(() => {
-    return installedSkills.filter((skill) => skill.installed && skill.security_score == null);
-  }, [installedSkills]);
+    return uniqueInstalledSkills.filter((skill) => skill.installed && skill.security_score == null);
+  }, [uniqueInstalledSkills]);
 
   const pendingPlugins = useMemo(() => {
     return plugins.filter((plugin) => plugin.installed && plugin.security_score == null);
@@ -191,7 +201,8 @@ export function OverviewPage() {
       // Re-fetch current data inside mutation to avoid stale closures
       let currentSkills: Skill[] = [];
       try {
-        currentSkills = await api.getInstalledSkills();
+        const rawSkills = await api.getInstalledSkills();
+        currentSkills = groupSkillsByName(rawSkills);
       } catch (error: any) {
         console.error("获取已安装技能失败:", error);
       }
@@ -244,11 +255,12 @@ export function OverviewPage() {
         return [];
       });
 
-      const [localSkills] = await Promise.all([
+      const [localSkillsRaw] = await Promise.all([
         backgroundLocalSkills,
         backgroundPluginsSync,
         backgroundMarketplaces,
       ]);
+      const localSkills = groupSkillsByName(localSkillsRaw);
 
       // Refresh all queries
       await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
@@ -268,9 +280,13 @@ export function OverviewPage() {
         installedPluginsCount = currentPlugins.length;
       }
 
-      const scannedSkillIds = new Set(results.map((result) => result.skill_id));
+      // Build a set of group keys already covered by explicit scan results
+      const currentSkillIdToKey = new Map(currentSkills.map((s) => [s.id, getSkillGroupKey(s)]));
+      const scannedGroupKeys = new Set(
+        results.map((r) => currentSkillIdToKey.get(r.skill_id) ?? `id::${r.skill_id}`)
+      );
       const extraLocalScannedCount = localSkills.filter(
-        (skill) => !scannedSkillIds.has(skill.id)
+        (skill) => !scannedGroupKeys.has(getSkillGroupKey(skill))
       ).length;
 
       return {

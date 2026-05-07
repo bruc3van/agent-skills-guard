@@ -82,7 +82,7 @@ export function normalizeInstalledSkills(skills: Skill[]): Skill[] {
 
 const nonEmpty = (v?: string | null) => (v && v !== "local" ? v : undefined);
 
-function getSkillGroupKey(skill: Skill): string {
+export function getSkillGroupKey(skill: Skill): string {
   if (skill.repository_url === "local" && skill.checksum) {
     return `local::${skill.name.trim().toLowerCase()}::${skill.checksum}`;
   }
