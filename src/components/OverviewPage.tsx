@@ -256,15 +256,8 @@ export function OverviewPage() {
       await queryClient.refetchQueries({ queryKey: ["plugins"] });
       await queryClient.refetchQueries({ queryKey: ["claudeMarketplaces"] });
 
-      // Get updated counts
-      let localSkillsCount = 0;
-      try {
-        const updatedSkills = await api.getInstalledSkills();
-        localSkillsCount = updatedSkills.length;
-      } catch (error: any) {
-        console.error("刷新已安装技能失败:", error);
-        localSkillsCount = currentSkills.length;
-      }
+      // Use pre-scan count to match scannedCount semantics
+      const localSkillsCount = currentSkills.length;
 
       let installedPluginsCount = 0;
       try {
