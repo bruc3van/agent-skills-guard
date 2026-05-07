@@ -245,6 +245,21 @@ describe("getVisibleInstalledPaths", () => {
 
     expect(getVisibleInstalledPaths(skill)).toEqual([]);
   });
+
+  it("shows project-level Codex skill paths", () => {
+    const skill = buildSkill({
+      id: "repo-a::skill",
+      is_local_only: false,
+      local_paths: [
+        "C:/Users/Bruce/.codex/skills/example",
+        "C:/Users/Bruce/VSCodeProject/project/.codex/skills/example",
+      ],
+    });
+
+    expect(getVisibleInstalledPaths(skill)).toEqual([
+      "C:/Users/Bruce/VSCodeProject/project/.codex/skills/example",
+    ]);
+  });
 });
 
 describe("getDisplayedToolIds", () => {
