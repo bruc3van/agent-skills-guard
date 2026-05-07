@@ -50,7 +50,7 @@ import {
 } from "./ui/SkillSecurityDialog";
 import { ToolSyncDialog } from "./ui/ToolSyncDialog";
 import { ToolIcons } from "./ui/ToolIcons";
-import { useSyncSkillToTools, useSyncAllSkillsToTools } from "@/lib/agent-tools";
+import { useSyncSkillToTools, useSyncAllSkillsToTools, useAgentTools } from "@/lib/agent-tools";
 
 const AVAILABLE_UPDATES_KEY = "available_updates";
 const AVAILABLE_PLUGIN_UPDATES_KEY = "available_plugin_updates";
@@ -147,7 +147,9 @@ export function InstalledSkillsPage() {
   const [activeTab, setActiveTab] = useState<"all" | "skills" | "plugins" | "marketplaces">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedRepository, setSelectedRepository] = useState("all");
+  const [selectedTool, setSelectedTool] = useState("all");
   const [showUpdatesOnly, setShowUpdatesOnly] = useState(false);
+  const { data: agentTools = [] } = useAgentTools();
   const [isScanning, setIsScanning] = useState(false);
   const {
     uninstallingSkillId,
@@ -760,9 +762,24 @@ export function InstalledSkillsPage() {
     ];
   }, [activeTab, installedPlugins, installedMarketplaces, mergedInstalledSkills, i18n.language, t]);
 
+  const toolFilterOptions: CyberSelectOption[] = useMemo(() => {
+    if (activeTab !== "all" && activeTab !== "skills") return [];
+    const options: CyberSelectOption[] = [{ value: "all", label: "全部工具" }];
+    for (const tool of agentTools) {
+      if (tool.present || tool.skill_count > 0) {
+        options.push({ value: tool.id, label: tool.label });
+      }
+    }
+    return options;
+  }, [activeTab, agentTools]);
+
   const filteredSkills = useMemo(() => {
     let items = mergedInstalledSkills;
     const query = searchQuery.trim().toLowerCase();
+
+    if (selectedTool !== "all") {
+      items = items.filter((skill) => getDisplayedToolIds(skill).includes(selectedTool));
+    }
 
     if (selectedRepository !== "all") {
       items = items.filter((skill) => (skill.repository_owner || "unknown") === selectedRepository);
@@ -793,7 +810,7 @@ export function InstalledSkillsPage() {
       if (timeA !== timeB) return timeB - timeA;
       return a.name.localeCompare(b.name);
     });
-  }, [availableUpdates, mergedInstalledSkills, searchQuery, selectedRepository, showUpdatesOnly]);
+  }, [availableUpdates, mergedInstalledSkills, searchQuery, selectedRepository, selectedTool, showUpdatesOnly]);
 
   const filteredPlugins = useMemo(() => {
     let items = installedPlugins;
@@ -911,7 +928,11 @@ export function InstalledSkillsPage() {
         (entry.kind === "plugin" && availablePluginUpdates.has(entry.item.id)) ||
         (entry.kind === "marketplace" && availableMarketplaceUpdates.has(entry.item.name));
 
-      return matchesSearch && matchesRepo && matchesUpdate;
+      const matchesTool =
+        selectedTool === "all" ||
+        (entry.kind === "skill" && getDisplayedToolIds(entry.item).includes(selectedTool));
+
+      return matchesSearch && matchesRepo && matchesUpdate && matchesTool;
     });
 
     return [...filtered].sort((a, b) => {
@@ -942,6 +963,7 @@ export function InstalledSkillsPage() {
     mergedInstalledSkills,
     searchQuery,
     selectedRepository,
+    selectedTool,
     showUpdatesOnly,
   ]);
 
@@ -949,6 +971,7 @@ export function InstalledSkillsPage() {
     setActiveTab(tab);
     setShowUpdatesOnly(true);
     setSelectedRepository("all");
+    setSelectedTool("all");
     setSearchQuery("");
   };
 
@@ -1004,7 +1027,25 @@ export function InstalledSkillsPage() {
         }}
         onSync={() => setSyncTargetSkill(skill)}
         onToggleTool={async (toolId: string, active: boolean) => {
-          const current = skill.linked_tools ?? [];
+          // 本地 skill 的 linked_tools 为空，需从路径推断当前所在工具列表
+          const current = skill.is_local_only
+            ? getDisplayedToolIds(skill).filter((id) => id !== "agents")
+            : (skill.linked_tools ?? []);
+
+          // 点击 .agents 按钮（仅本地 skill）→ 提升到通用目录，保留原工具链接
+          if (toolId === "agents") {
+            setPendingToggleToolId("agents");
+            try {
+              await syncSkillMutation.mutateAsync({ skillId: skill.id, tools: current });
+              appToast.success("已提升到通用目录");
+            } catch (e: any) {
+              appToast.error(`操作失败: ${e.message || e}`);
+            } finally {
+              setPendingToggleToolId(null);
+            }
+            return;
+          }
+
           const newTools = active
             ? current.filter((id) => id !== toolId)
             : [...new Set([...current, toolId])];
@@ -1194,6 +1235,7 @@ export function InstalledSkillsPage() {
                 onClick={() => {
                   setActiveTab("all");
                   setSelectedRepository("all");
+                  setSelectedTool("all");
                   setSearchQuery("");
                 }}
                 label={t("installed.tabs.all", { count: tabCounts.all })}
@@ -1203,6 +1245,7 @@ export function InstalledSkillsPage() {
                 onClick={() => {
                   setActiveTab("skills");
                   setSelectedRepository("all");
+                  setSelectedTool("all");
                   setSearchQuery("");
                 }}
                 label={t("installed.tabs.skills", { count: tabCounts.skills })}
@@ -1212,6 +1255,7 @@ export function InstalledSkillsPage() {
                 onClick={() => {
                   setActiveTab("plugins");
                   setSelectedRepository("all");
+                  setSelectedTool("all");
                   setSearchQuery("");
                 }}
                 label={t("installed.tabs.plugins", { count: tabCounts.plugins })}
@@ -1221,6 +1265,7 @@ export function InstalledSkillsPage() {
                 onClick={() => {
                   setActiveTab("marketplaces");
                   setSelectedRepository("all");
+                  setSelectedTool("all");
                   setSearchQuery("");
                 }}
                 label={t("installed.tabs.marketplaces", { count: tabCounts.marketplaces })}
@@ -1246,6 +1291,15 @@ export function InstalledSkillsPage() {
                   className="apple-input w-full h-10 pl-11 pr-4"
                 />
               </div>
+
+              {(activeTab === "all" || activeTab === "skills") && toolFilterOptions.length > 1 && (
+                <CyberSelect
+                  value={selectedTool}
+                  onChange={setSelectedTool}
+                  options={toolFilterOptions}
+                  className="min-w-[160px]"
+                />
+              )}
 
               {activeTab !== "marketplaces" && (
                 <CyberSelect
@@ -1367,14 +1421,14 @@ export function InstalledSkillsPage() {
           ) : (
             <div className="flex flex-col items-center justify-center py-20 apple-card">
               <div className="w-20 h-20 rounded-full bg-secondary flex items-center justify-center mb-5">
-                {searchQuery || (activeTab !== "marketplaces" && selectedRepository !== "all") ? (
+                {searchQuery || (activeTab !== "marketplaces" && selectedRepository !== "all") || selectedTool !== "all" ? (
                   <SearchX className="w-10 h-10 text-muted-foreground" />
                 ) : (
                   <Package className="w-10 h-10 text-muted-foreground" />
                 )}
               </div>
               <p className="text-sm text-muted-foreground">
-                {searchQuery || (activeTab !== "marketplaces" && selectedRepository !== "all")
+                {searchQuery || (activeTab !== "marketplaces" && selectedRepository !== "all") || selectedTool !== "all"
                   ? t("installed.empty.noResults", { query: searchQuery })
                   : showUpdatesOnly
                     ? t("installed.empty.noUpdates")
@@ -1386,11 +1440,12 @@ export function InstalledSkillsPage() {
                         ? t("installed.plugins.empty")
                         : t("installed.marketplaces.empty")}
               </p>
-              {(searchQuery || (activeTab !== "marketplaces" && selectedRepository !== "all")) && (
+              {(searchQuery || (activeTab !== "marketplaces" && selectedRepository !== "all") || selectedTool !== "all") && (
                 <button
                   onClick={() => {
                     setSearchQuery("");
                     setSelectedRepository("all");
+                    setSelectedTool("all");
                   }}
                   className="mt-5 apple-button-secondary"
                 >

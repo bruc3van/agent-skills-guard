@@ -26,11 +26,10 @@ export function useSyncSkillToTools() {
     mutationFn: ({ skillId, tools }: { skillId: string; tools: string[] }) =>
       api.syncSkillToTools(skillId, tools),
     onSuccess: () => {
-      // refetchType: 'active' 强制立即重新请求已挂载的查询，而不是仅标记为 stale
-      // Tauri 桌面应用不会触发 window focus 事件，必须显式触发 refetch
-      qc.invalidateQueries({ queryKey: ["skills"], refetchType: 'active' });
-      qc.invalidateQueries({ queryKey: ["skills", "installed"], refetchType: 'active' });
-      qc.invalidateQueries({ queryKey: AGENT_TOOLS_KEY, refetchType: 'active' });
+      // refetchQueries 强制立即重新拉取，不受 staleTime 影响
+      // Tauri 桌面应用不触发 window focus 事件，invalidateQueries 的后台调度可能延迟
+      qc.refetchQueries({ queryKey: ["skills", "installed"] });
+      qc.refetchQueries({ queryKey: AGENT_TOOLS_KEY });
     },
   });
 }
@@ -40,9 +39,8 @@ export function useSyncAllSkillsToTools() {
   return useMutation({
     mutationFn: (tools: string[]) => api.syncAllSkillsToTools(tools),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["skills"], refetchType: 'active' });
-      qc.invalidateQueries({ queryKey: ["skills", "installed"], refetchType: 'active' });
-      qc.invalidateQueries({ queryKey: AGENT_TOOLS_KEY, refetchType: 'active' });
+      qc.refetchQueries({ queryKey: ["skills", "installed"] });
+      qc.refetchQueries({ queryKey: AGENT_TOOLS_KEY });
     },
   });
 }

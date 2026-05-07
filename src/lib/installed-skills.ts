@@ -50,54 +50,79 @@ export function normalizeInstalledSkills(skills: Skill[]): Skill[] {
   });
 }
 
+const nonEmpty = (v?: string | null) => (v && v !== "local" ? v : undefined);
+
+function mergeSingleGroup(group: Skill[]): Skill {
+  if (group.length === 1) return group[0];
+
+  const base = group[0];
+  const linkedSet = new Set<string>();
+  for (const s of group) {
+    for (const tool of s.linked_tools ?? []) linkedSet.add(tool);
+  }
+  const paths = uniqueValues(group.flatMap(pathsForSkill));
+
+  return {
+    ...base,
+    linked_tools: Array.from(linkedSet),
+    local_paths: paths.length > 0 ? paths : undefined,
+    local_path: base.local_path ?? paths[0],
+    is_local_only: group.every((s) => s.is_local_only),
+    description: group.map((s) => s.description).find(nonEmpty) ?? base.description,
+    repository_url: group.map((s) => s.repository_url).find(nonEmpty) ?? base.repository_url,
+    version: group.map((s) => s.version).find(nonEmpty) ?? base.version,
+    author: group.map((s) => s.author).find(nonEmpty) ?? base.author,
+  };
+}
+
+function isLocalSkill(skill: Skill): boolean {
+  return skill.is_local_only === true || !skill.repository_url || skill.repository_url === "local";
+}
+
 /**
- * 合并同一 DB 记录的重复返回项。
- * 注意：不能只按 name 合并，不同仓库/来源可能存在同名 skill；后续操作仍以 skill.id 为目标。
- * 合并规则：
- *   - linked_tools：取并集
- *   - local_paths：取并集
- *   - is_local_only：若任一实例为 false，则合并后为 false
- *   - description / repository_url 等：取第一个非空值
+ * 两阶段合并：
+ *   Pass 1 — 按 skill.id 合并同一 DB 记录的重复返回项
+ *   Pass 2 — 按 name 合并：
+ *     - local + local（同名，不同工具目录）→ 合并为一张卡片，两个按钮均点亮
+ *     - local + managed（同名）          → 合并到 managed，保留 GitHub URL
+ *     - managed + managed（同名，不同仓库）→ 保持独立（不同项目的同名 skill）
  */
 export function groupSkillsByName(skills: Skill[]): Skill[] {
-  const groups = new Map<string, Skill[]>();
+  // Pass 1: 按 id 去重同一 DB 记录
+  const idGroups = new Map<string, Skill[]>();
   for (const skill of skills) {
-    const key = skill.id;
-    const group = groups.get(key);
-    if (group) {
-      group.push(skill);
+    const arr = idGroups.get(skill.id);
+    if (arr) arr.push(skill);
+    else idGroups.set(skill.id, [skill]);
+  }
+  const pass1 = Array.from(idGroups.values()).map(mergeSingleGroup);
+
+  // Pass 2: 按规范化 name 分组，合并 local 与 managed
+  const byName = new Map<string, { managed: Skill[]; local: Skill[] }>();
+  for (const skill of pass1) {
+    const name = skill.name.toLowerCase();
+    const entry = byName.get(name) ?? { managed: [], local: [] };
+    if (isLocalSkill(skill)) entry.local.push(skill);
+    else entry.managed.push(skill);
+    byName.set(name, entry);
+  }
+
+  const result: Skill[] = [];
+  for (const { managed, local } of byName.values()) {
+    if (local.length === 0) {
+      // 无 local —— 不同仓库的同名 managed 各自保持独立
+      result.push(...managed);
+    } else if (managed.length === 0) {
+      // 纯 local —— 合并（同一 skill 散落在多个工具目录）
+      result.push(mergeSingleGroup(local));
     } else {
-      groups.set(key, [skill]);
+      // local + managed：将所有 local 合并进第一个 managed；其余 managed 各自保持独立
+      result.push(mergeSingleGroup([managed[0], ...local]));
+      result.push(...managed.slice(1));
     }
   }
 
-  return Array.from(groups.values()).map((group) => {
-    if (group.length === 1) return group[0];
-
-    const base = group[0];
-
-    // linked_tools 取并集（保持顺序，去重）
-    const linkedSet = new Set<string>();
-    for (const s of group) {
-      for (const tool of s.linked_tools ?? []) linkedSet.add(tool);
-    }
-
-    const paths = uniqueValues(group.flatMap(pathsForSkill));
-
-    const nonEmpty = (v?: string | null) => v && v !== "local" ? v : undefined;
-
-    return {
-      ...base,
-      linked_tools: Array.from(linkedSet),
-      local_paths: paths.length > 0 ? paths : undefined,
-      local_path: base.local_path ?? paths[0],
-      is_local_only: group.every((s) => s.is_local_only),
-      description: group.map((s) => s.description).find(nonEmpty) ?? base.description,
-      repository_url: group.map((s) => s.repository_url).find(nonEmpty) ?? base.repository_url,
-      version: group.map((s) => s.version).find(nonEmpty) ?? base.version,
-      author: group.map((s) => s.author).find(nonEmpty) ?? base.author,
-    };
-  });
+  return result;
 }
 
 export function getVisibleInstalledPaths(skill: Skill): string[] {

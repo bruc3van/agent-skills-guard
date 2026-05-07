@@ -1,6 +1,9 @@
 import { useState } from "react";
-import { Globe, Loader2 } from "lucide-react";
+import { Globe, Loader2, FolderOpen } from "lucide-react";
 import type { FC, SVGProps } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
+import { useAgentTools } from "@/lib/agent-tools";
 
 type IconComponent = FC<SVGProps<SVGSVGElement> & { size?: number }>;
 
@@ -70,6 +73,14 @@ const TOOLS: ToolDef[] = [
   },
 ];
 
+async function openToolDir(path: string) {
+  try {
+    await invoke("open_skill_directory", { localPath: path });
+  } catch {
+    await openPath(path);
+  }
+}
+
 export function ToolIcons({
   activeToolIds,
   isLocalOnly = false,
@@ -78,6 +89,8 @@ export function ToolIcons({
   pendingToolId = null,
 }: ToolIconsProps) {
   const [confirmTarget, setConfirmTarget] = useState<ToolDef | null>(null);
+  const { data: agentTools = [] } = useAgentTools();
+  const toolPathMap = new Map(agentTools.map((t) => [t.id, t.path]));
 
   function handleClick(tool: ToolDef, active: boolean) {
     if (disabled) return;
@@ -97,24 +110,57 @@ export function ToolIcons({
           编程工具
         </div>
         <div className="flex flex-wrap gap-2">
-          {activeToolIds.includes("agents") && (
-            <div
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-emerald-500/50 bg-emerald-500/10"
-              title="Universal (.agents)"
-            >
-              <Globe className="w-4 h-4 text-emerald-500" />
-              <span className="text-xs text-emerald-600">.agents</span>
+          {activeToolIds.includes("agents") ? (
+            /* 已在通用目录 — 静态徽章 + 悬停时显示打开目录按钮 */
+            <div className="group flex items-center">
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg group-hover:rounded-r-none border group-hover:border-r-0 border-emerald-500/50 bg-emerald-500/10 transition-all"
+                title="Universal (.agents)"
+              >
+                <Globe className="w-4 h-4 text-emerald-500" />
+                <span className="text-xs text-emerald-600">.agents</span>
+              </div>
+              {toolPathMap.get("agents") && (
+                <button
+                  type="button"
+                  onClick={() => openToolDir(toolPathMap.get("agents")!)}
+                  title={`打开目录: ${toolPathMap.get("agents")}`}
+                  className="h-full px-1.5 py-1.5 rounded-r-lg border border-emerald-500/50 bg-emerald-500/10 opacity-0 group-hover:opacity-100 transition-opacity text-emerald-600 hover:text-emerald-700"
+                >
+                  <FolderOpen className="w-3 h-3" />
+                </button>
+              )}
             </div>
-          )}
+          ) : isLocalOnly ? (
+            /* 本地 skill 尚未提升 — 可点击的非激活按钮 */
+            <button
+              type="button"
+              onClick={() => !disabled && onToggle("agents", false)}
+              disabled={disabled || pendingToolId === "agents"}
+              title="点击同步到通用目录（~/.agents/skills），原位置替换为链接"
+              className={`
+                flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer
+                border-border/60 opacity-50 hover:opacity-80
+                ${disabled || pendingToolId === "agents" ? "opacity-30 cursor-not-allowed" : ""}
+              `}
+            >
+              {pendingToolId === "agents" ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Globe className="w-4 h-4 grayscale opacity-50" />
+              )}
+              <span className="text-xs font-medium">.agents</span>
+            </button>
+          ) : null}
 
           {TOOLS.map((tool) => {
             const active = activeToolIds.includes(tool.id);
             const isPending = pendingToolId === tool.id;
             const interactionDisabled = disabled || isPending;
+            const toolPath = toolPathMap.get(tool.id);
 
-            return (
+            const toggleBtn = (
               <button
-                key={tool.id}
                 type="button"
                 onClick={() => handleClick(tool, active)}
                 disabled={interactionDisabled}
@@ -129,12 +175,8 @@ export function ToolIcons({
                     : `点击同步到 ${tool.label}`
                 }
                 className={`
-                  flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer
-                  ${
-                    active
-                      ? "border-current shadow-sm"
-                      : "border-border/60 opacity-50 hover:opacity-80"
-                  }
+                  flex items-center gap-1.5 px-2.5 py-1.5 border transition-all cursor-pointer rounded-lg
+                  ${active ? "group-hover:rounded-r-none group-hover:border-r-0 shadow-sm border-current" : "border-border/60 opacity-50 hover:opacity-80"}
                   ${interactionDisabled ? "opacity-30" : ""}
                 `}
                 style={
@@ -154,6 +196,23 @@ export function ToolIcons({
                 )}
                 <span className="text-xs font-medium">{tool.label}</span>
               </button>
+            );
+
+            return active && toolPath ? (
+              <div key={tool.id} className="group flex items-center">
+                {toggleBtn}
+                <button
+                  type="button"
+                  onClick={() => openToolDir(toolPath)}
+                  title={`打开目录: ${toolPath}`}
+                  className="h-full px-1.5 py-1.5 rounded-r-lg border border-l-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{ borderColor: tool.color, backgroundColor: tool.bg, color: tool.color }}
+                >
+                  <FolderOpen className="w-3 h-3" />
+                </button>
+              </div>
+            ) : (
+              <div key={tool.id}>{toggleBtn}</div>
             );
           })}
         </div>
