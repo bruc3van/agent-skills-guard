@@ -3,7 +3,7 @@ pub mod plugins;
 pub mod security;
 
 use crate::models::{FeaturedRepositoriesConfig, Repository, Skill};
-use crate::services::{Database, GitHubService, PluginManager, SkillManager};
+use crate::services::{AgentTool, Database, GitHubService, PluginManager, SkillManager};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -881,10 +881,9 @@ pub async fn open_skill_directory(
 /// 获取默认的用户目录安装路径
 #[tauri::command]
 pub async fn get_default_install_path() -> Result<String, String> {
-    let user_path = dirs::home_dir()
-        .ok_or("无法获取用户主目录")?
-        .join(".claude")
-        .join("skills");
+    let user_path = AgentTool::Agents
+        .default_skills_dir()
+        .ok_or("无法获取用户主目录")?;
 
     Ok(user_path.to_string_lossy().to_string())
 }
@@ -915,6 +914,20 @@ pub async fn select_custom_install_path(app: tauri::AppHandle) -> Result<Option<
         }
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod install_path_tests {
+    #[tokio::test]
+    async fn default_install_path_uses_agents_skills_directory() {
+        let path = super::get_default_install_path().await.unwrap();
+        let normalized = path.replace('\\', "/");
+
+        assert!(
+            normalized.ends_with("/.agents/skills"),
+            "expected default skill install path to use .agents, got {path}"
+        );
     }
 }
 

@@ -12,6 +12,10 @@ export const TOOL_LABELS: Record<string, string> = {
   opencode: "OpenCode",
 };
 
+export function getDefaultInstallTargetToolIds(_tools: AgentToolInfo[]): string[] {
+  return [];
+}
+
 export function useAgentTools() {
   return useQuery<AgentToolInfo[]>({
     queryKey: AGENT_TOOLS_KEY,

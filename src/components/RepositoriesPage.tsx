@@ -39,7 +39,7 @@ import {
   AlertDialogFooter,
 } from "./ui/alert-dialog";
 import { SkillSecurityDialog, SkillSecurityDialogConfirmButton } from "./ui/SkillSecurityDialog";
-import { useAgentTools } from "@/lib/agent-tools";
+import { getDefaultInstallTargetToolIds, useAgentTools } from "@/lib/agent-tools";
 import { pluginsCachedQueryKey } from "../hooks/usePlugins";
 
 function formatBytes(bytes: number): string {
@@ -1059,12 +1059,10 @@ function SkillInstallConfirmDialog({
     if (!open) {
       setSelectedPath("");
     } else {
-      const defaults = agentTools
-        .filter((t) => t.present && t.id !== "agents")
-        .map((t) => t.id);
+      const defaults = getDefaultInstallTargetToolIds(agentTools);
       setSelectedTools(new Set(defaults));
     }
-  }, [open]);
+  }, [open, agentTools]);
 
   function toggleTool(id: string) {
     setSelectedTools((prev) => {

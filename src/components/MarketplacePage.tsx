@@ -35,7 +35,7 @@ import {
   SkillSecurityDialog,
   SkillSecurityDialogConfirmButton,
 } from "./ui/SkillSecurityDialog";
-import { useAgentTools } from "@/lib/agent-tools";
+import { getDefaultInstallTargetToolIds, useAgentTools } from "@/lib/agent-tools";
 
 interface MarketplacePageProps {
   onNavigateToRepositories?: () => void;
@@ -1123,9 +1123,7 @@ function InstallConfirmDialog({
     if (open && !prevOpenRef.current) {
       // 只在从 closed → open 时重置默认值
       setSelectedPath("");
-      const defaults = agentTools
-        .filter((t) => t.present && t.id !== "agents")
-        .map((t) => t.id);
+      const defaults = getDefaultInstallTargetToolIds(agentTools);
       setSelectedTools(new Set(defaults));
     }
     if (!open) {
