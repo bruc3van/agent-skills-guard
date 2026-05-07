@@ -103,6 +103,10 @@ fn resolve_update_target_install_dir(raw: &Path) -> PathBuf {
     std::fs::canonicalize(&resolved).unwrap_or(resolved)
 }
 
+fn resolve_update_install_paths(raw: &Path) -> (PathBuf, PathBuf) {
+    (raw.to_path_buf(), resolve_update_target_install_dir(raw))
+}
+
 impl SkillManager {
     pub fn new(db: Arc<Database>) -> Self {
         let skills_dir = Self::get_skills_directory();
@@ -1685,7 +1689,7 @@ impl SkillManager {
 
         // 始终以当前活跃安装路径（local_path / local_paths 最后一个）为更新目标。
         // 若该路径是软链接，解析为真实路径：更新真实目录后所有指向它的软链接自动生效。
-        let target_install_dir = {
+        let (display_install_dir, target_install_dir) = {
             let raw = skill
                 .local_paths
                 .as_ref()
@@ -1693,11 +1697,15 @@ impl SkillManager {
                 .map(PathBuf::from)
                 .context("技能没有有效的活跃安装路径")?;
 
-            let real = resolve_update_target_install_dir(&raw);
-            if !paths_point_to_same_location(&raw, &real) {
-                log::info!("更新目标是目录链接，解析为真实路径: {:?} -> {:?}", raw, real);
+            let (display, real) = resolve_update_install_paths(&raw);
+            if !paths_point_to_same_location(&display, &real) {
+                log::info!(
+                    "更新目标是目录链接，解析为真实路径: {:?} -> {:?}",
+                    display,
+                    real
+                );
             }
-            real
+            (display, real)
         };
 
         #[derive(Debug)]
@@ -1818,7 +1826,7 @@ impl SkillManager {
                 // 备份保留在缓存目录，便于必要时人工回滚；下一次更新会覆盖旧备份
 
                 // 更新数据库：恢复 local_path，更新 installed_commit_sha
-                skill.local_path = Some(target_install_dir.to_string_lossy().to_string());
+                skill.local_path = Some(display_install_dir.to_string_lossy().to_string());
                 Self::apply_scan_report(&mut skill, &scan_report);
 
                 // 从 staging 路径推导出 extracted 目录并提取 commit SHA
@@ -2267,7 +2275,7 @@ fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 mod tests {
     use super::{
         build_local_skill_id, build_synced_tool_state, paths_point_to_same_location,
-        resolve_update_target_install_dir,
+        resolve_update_install_paths, resolve_update_target_install_dir,
     };
     use crate::services::{link_fs, Database};
     use std::path::PathBuf;
@@ -2335,6 +2343,20 @@ mod tests {
             paths_point_to_same_location(&resolved, &real_dir),
             "updates must write through directory links so every linked tool sees the new files"
         );
+    }
+
+    #[test]
+    fn update_install_paths_preserve_display_path_for_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let real_dir = temp.path().join("real-skill");
+        let link_dir = temp.path().join("linked-skill");
+        std::fs::create_dir_all(&real_dir).unwrap();
+        link_fs::create_dir_link(&real_dir, &link_dir).unwrap();
+
+        let (display_path, write_target) = resolve_update_install_paths(&link_dir);
+
+        assert!(paths_point_to_same_location(&display_path, &link_dir));
+        assert!(paths_point_to_same_location(&write_target, &real_dir));
     }
 
     #[test]

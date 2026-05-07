@@ -39,7 +39,14 @@ const DEFAULT_PLUGIN_PATH_PATTERNS: Array<{ id: string; pattern: RegExp }> = [
 ];
 
 function normalizePath(path: string): string {
-  return path.replace(/\\/g, "/");
+  const normalized = path.replace(/\\/g, "/");
+  if (normalized.startsWith("//?/UNC/")) {
+    return `//${normalized.slice("//?/UNC/".length)}`;
+  }
+  if (/^\/\/\?\/[A-Za-z]:\//.test(normalized)) {
+    return normalized.slice(4);
+  }
+  return normalized;
 }
 
 function uniqueValues(values: string[]): string[] {

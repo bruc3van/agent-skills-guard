@@ -234,6 +234,17 @@ describe("getVisibleInstalledPaths", () => {
       "C:/Users/Bruce/VSCodeProject/project/.agents/skills/example",
     ]);
   });
+
+  it("hides Windows extended-length default tool paths", () => {
+    const skill = buildSkill({
+      id: "repo-a::skill",
+      is_local_only: false,
+      local_path: "\\\\?\\C:\\Users\\Bruce\\.agents\\skills\\example",
+      local_paths: ["C:/Users/Bruce/.agents/skills/example"],
+    });
+
+    expect(getVisibleInstalledPaths(skill)).toEqual([]);
+  });
 });
 
 describe("getDisplayedToolIds", () => {
