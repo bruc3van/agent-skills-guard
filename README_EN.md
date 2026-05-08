@@ -47,7 +47,7 @@ Manage Claude Code skills like managing mobile apps, from discovery, installatio
 - 🔄 **Smart updates**: Automatically detect skill and plugin updates, support online upgrades
 - 🗑️ **Easy uninstall**: Support multi-path installation management, clean on demand, with confirmation dialog
 - 📂 **Custom paths**: Flexibly choose skill installation locations
-- 🔗 **Tool sync**: Sync installed skills to IDE and other programming tools, with batch sync support
+- 🔗 **Tool sync**: Sync installed skills to Claude Code, Codex, Antigravity, OpenCode and other programming tools, with batch sync support
 
 ### 🛡️ Community-Leading Security Scanning
 
@@ -104,7 +104,7 @@ No GUI required, perfect for developers who prefer working in the terminal.
 | **Install skills**          | ❌ Command line, error-prone          | ✅ Visual UI, plugin-style install, click to install    |
 | **Manage skills/plugins**   | ❌ Folder digging, unclear usage      | ✅ Intuitive list, clear status                         |
 | **Update skills/plugins**   | ❌ Manual check, repetitive           | ✅ Auto detect, batch update                            |
-| **Sync to tools**           | ❌ Manually copy to tool directories  | ✅ One-click sync to IDE, batch operations              |
+| **Sync to tools**           | ❌ Manually copy to tool directories  | ✅ One-click sync to Claude Code / Codex / Antigravity / OpenCode, batch operations |
 | **Uninstall skills**        | ❌ Manual delete, worried leftovers   | ✅ One-click uninstall, confirmation dialog, auto cleanup |
 
 ---
