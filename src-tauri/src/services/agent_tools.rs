@@ -127,7 +127,7 @@ pub struct AgentToolInfo {
 impl AgentToolInfo {
     pub fn from_tool(tool: &AgentTool, skill_count: usize) -> Self {
         let path = tool.default_skills_dir();
-        let present = path.as_ref().map(|p| p.parent().map(|pp| pp.exists()).unwrap_or(false)).unwrap_or(false);
+        let present = path.as_ref().map(|p| p.exists()).unwrap_or(false);
         Self {
             id: tool.id().to_string(),
             label: tool.label().to_string(),

@@ -108,6 +108,98 @@ fn find_tool_id_for_scan_dir(
         .map(|(_, tool_id)| tool_id.clone())
 }
 
+fn push_unique_value(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
+}
+
+fn default_tool_dirs() -> Vec<(PathBuf, String)> {
+    AgentTool::all()
+        .into_iter()
+        .filter_map(|tool| {
+            tool.default_skills_dir()
+                .map(|dir| (dir, tool.id().to_string()))
+        })
+        .collect()
+}
+
+fn skill_candidate_paths(skill: &Skill) -> Vec<String> {
+    let mut paths = Vec::new();
+    if let Some(path) = &skill.source_path {
+        push_unique_value(&mut paths, path.clone());
+    }
+    if let Some(path) = &skill.local_path {
+        push_unique_value(&mut paths, path.clone());
+    }
+    if let Some(local_paths) = &skill.local_paths {
+        for path in local_paths {
+            push_unique_value(&mut paths, path.clone());
+        }
+    }
+    paths
+}
+
+fn refresh_existing_tool_links_for_skill(skill: &Skill, tool_dirs: &[(PathBuf, String)]) -> Skill {
+    if !skill.installed {
+        return skill.clone();
+    }
+
+    let candidate_paths = skill_candidate_paths(skill);
+    let Some(source_path) = candidate_paths
+        .iter()
+        .find(|path| PathBuf::from(path).exists())
+        .or_else(|| candidate_paths.first())
+    else {
+        return skill.clone();
+    };
+
+    let source = PathBuf::from(source_path);
+    let Some(skill_dir_name) = source.file_name() else {
+        return skill.clone();
+    };
+
+    let mut refreshed = skill.clone();
+    let mut local_paths = skill
+        .local_paths
+        .clone()
+        .unwrap_or_else(|| skill.local_path.clone().into_iter().collect());
+    push_unique_value(&mut local_paths, source.to_string_lossy().to_string());
+
+    let mut linked_tools = skill
+        .linked_tools
+        .iter()
+        .filter(|tool_id| tool_id.as_str() != AgentTool::Agents.id())
+        .cloned()
+        .collect::<Vec<_>>();
+
+    for (tool_dir, tool_id) in tool_dirs {
+        let tool_skill_path = tool_dir.join(skill_dir_name);
+        if !tool_skill_path.exists() {
+            continue;
+        }
+        if !paths_point_to_same_location(&source, &tool_skill_path) {
+            continue;
+        }
+
+        push_unique_value(
+            &mut local_paths,
+            tool_skill_path.to_string_lossy().to_string(),
+        );
+        if tool_id != AgentTool::Agents.id() {
+            push_unique_value(&mut linked_tools, tool_id.clone());
+        }
+    }
+
+    refreshed.local_paths = Some(local_paths);
+    refreshed.linked_tools = linked_tools;
+    refreshed
+}
+
+fn installed_tool_state_changed(previous: &Skill, refreshed: &Skill) -> bool {
+    previous.local_paths != refreshed.local_paths || previous.linked_tools != refreshed.linked_tools
+}
+
 fn restore_installation_backup(backup_path: &Path, final_install_dir: &Path) -> Result<()> {
     if final_install_dir.exists() {
         let metadata = std::fs::symlink_metadata(final_install_dir)
@@ -235,7 +327,9 @@ impl SkillManager {
                     {
                         log::error!(
                             "还原安装备份失败: {:?} -> {:?}, 错误: {}",
-                            backup_path, final_install_dir, restore_err
+                            backup_path,
+                            final_install_dir,
+                            restore_err
                         );
                         restore_error = Some(restore_err);
                     }
@@ -1024,8 +1118,19 @@ impl SkillManager {
 
     /// 获取已安装的 skills
     pub fn get_installed_skills(&self) -> Result<Vec<Skill>> {
+        let tool_dirs = default_tool_dirs();
         let skills = self.db.get_skills()?;
-        Ok(skills.into_iter().filter(|s| s.installed).collect())
+        let mut installed = Vec::new();
+
+        for skill in skills.into_iter().filter(|s| s.installed) {
+            let refreshed = refresh_existing_tool_links_for_skill(&skill, &tool_dirs);
+            if installed_tool_state_changed(&skill, &refreshed) {
+                self.db.save_skill(&refreshed)?;
+            }
+            installed.push(refreshed);
+        }
+
+        Ok(installed)
     }
 
     /// 扫描所有工具 skill 目录，导入未追踪的技能；通过 realpath 去重，避免链接和源重复导入
@@ -2324,8 +2429,9 @@ fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 mod tests {
     use super::{
         build_local_skill_id, build_synced_tool_state, find_tool_id_for_scan_dir,
-        paths_point_to_same_location, resolve_update_install_paths,
-        resolve_update_target_install_dir, restore_installation_backup,
+        paths_point_to_same_location, refresh_existing_tool_links_for_skill,
+        resolve_update_install_paths, resolve_update_target_install_dir,
+        restore_installation_backup,
     };
     use crate::services::{link_fs, Database};
     use std::collections::HashMap;
@@ -2425,6 +2531,74 @@ mod tests {
             find_tool_id_for_scan_dir(&real_tools_dir, &dir_to_tool).as_deref(),
             Some("claude-code")
         );
+    }
+
+    #[test]
+    fn installed_skill_state_detects_existing_tool_directory_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let agents_dir = temp.path().join(".agents").join("skills");
+        let claude_dir = temp.path().join(".claude").join("skills");
+        let source = agents_dir.join("frontend-design");
+        let claude_link = claude_dir.join("frontend-design");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "test").unwrap();
+        link_fs::create_dir_link(&source, &claude_link).unwrap();
+
+        let mut skill = crate::models::Skill::new(
+            "frontend-design".to_string(),
+            "local".to_string(),
+            source.to_string_lossy().to_string(),
+        );
+        skill.id = "skill-1".to_string();
+        skill.installed = true;
+        skill.is_local_only = true;
+        skill.local_path = Some(source.to_string_lossy().to_string());
+        skill.local_paths = Some(vec![source.to_string_lossy().to_string()]);
+        skill.linked_tools = Vec::new();
+
+        let tool_dirs = vec![
+            (agents_dir, "agents".to_string()),
+            (claude_dir, "claude-code".to_string()),
+        ];
+
+        let refreshed = refresh_existing_tool_links_for_skill(&skill, &tool_dirs);
+
+        assert!(refreshed.linked_tools.contains(&"claude-code".to_string()));
+        assert!(refreshed
+            .local_paths
+            .as_ref()
+            .unwrap()
+            .iter()
+            .any(|path| path
+                .replace('\\', "/")
+                .ends_with(".claude/skills/frontend-design")));
+    }
+
+    #[test]
+    fn installed_skill_state_prunes_stale_agents_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex_dir = temp.path().join(".codex").join("skills");
+        let source = codex_dir.join("frontend-design");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "test").unwrap();
+
+        let mut skill = crate::models::Skill::new(
+            "frontend-design".to_string(),
+            "local".to_string(),
+            source.to_string_lossy().to_string(),
+        );
+        skill.id = "skill-1".to_string();
+        skill.installed = true;
+        skill.is_local_only = true;
+        skill.local_path = Some(source.to_string_lossy().to_string());
+        skill.local_paths = Some(vec![source.to_string_lossy().to_string()]);
+        skill.linked_tools = vec!["agents".to_string(), "codex".to_string()];
+
+        let refreshed =
+            refresh_existing_tool_links_for_skill(&skill, &[(codex_dir, "codex".to_string())]);
+
+        assert!(!refreshed.linked_tools.contains(&"agents".to_string()));
+        assert!(refreshed.linked_tools.contains(&"codex".to_string()));
     }
 
     #[test]

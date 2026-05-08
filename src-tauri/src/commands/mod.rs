@@ -794,6 +794,7 @@ pub async fn open_skill_directory(
     state: State<'_, AppState>,
     local_path: String,
 ) -> Result<(), String> {
+    use crate::services::agent_tools::AgentTool;
     use std::process::Command;
 
     let path = std::path::Path::new(&local_path);
@@ -819,6 +820,15 @@ pub async fn open_skill_directory(
         if let Some(home) = dirs::home_dir() {
             allowed_paths.push(home.join(".claude"));
             allowed_paths.push(home.join(".agents"));
+        }
+
+        for tool in AgentTool::all() {
+            if let Some(tool_dir) = tool.default_skills_dir() {
+                allowed_paths.push(tool_dir.clone());
+                if let Some(parent) = tool_dir.parent() {
+                    allowed_paths.push(parent.to_path_buf());
+                }
+            }
         }
 
         // 允许的目录：应用缓存目录

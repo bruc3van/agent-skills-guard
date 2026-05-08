@@ -297,10 +297,33 @@ describe("getDisplayedToolIds", () => {
     const skill = buildSkill({
       id: "repo-a::skill",
       is_local_only: false,
+      local_paths: ["C:/Users/Bruce/.agents/skills/example"],
       linked_tools: ["codex"],
     });
 
     expect(getDisplayedToolIds(skill)).toEqual(["agents", "codex"]);
+  });
+
+  it("does not show agents for managed skills without an agents path", () => {
+    const skill = buildSkill({
+      id: "repo-a::skill",
+      is_local_only: false,
+      local_paths: ["C:/Users/Bruce/.codex/skills/example"],
+      linked_tools: ["codex"],
+    });
+
+    expect(getDisplayedToolIds(skill)).toEqual(["codex"]);
+  });
+
+  it("ignores stale agents metadata without an agents path", () => {
+    const skill = buildSkill({
+      id: "repo-a::skill",
+      is_local_only: false,
+      local_paths: ["C:/Users/Bruce/.codex/skills/example"],
+      linked_tools: ["agents", "codex"],
+    });
+
+    expect(getDisplayedToolIds(skill)).toEqual(["codex"]);
   });
 });
 

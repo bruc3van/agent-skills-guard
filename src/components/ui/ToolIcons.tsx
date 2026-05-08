@@ -90,7 +90,11 @@ export function ToolIcons({
 }: ToolIconsProps) {
   const [confirmTarget, setConfirmTarget] = useState<ToolDef | null>(null);
   const { data: agentTools = [] } = useAgentTools();
-  const toolPathMap = new Map(agentTools.map((t) => [t.id, t.path]));
+  const toolPathMap = new Map(
+    agentTools
+      .filter((t) => t.present && t.path)
+      .map((t) => [t.id, t.path])
+  );
   const agentsPath = toolPathMap.get("agents");
 
   function handleClick(tool: ToolDef, active: boolean) {

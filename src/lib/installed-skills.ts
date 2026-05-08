@@ -145,12 +145,11 @@ export function getDisplayedToolIds(skill: Skill): string[] {
   const pathToolIds = pathsForSkill(skill)
     .map(getDefaultToolIdForPath)
     .filter((id): id is string => Boolean(id));
+  const linkedToolIds = (skill.linked_tools ?? []).filter(
+    (id) => id !== "agents" || pathToolIds.includes("agents")
+  );
 
-  if (skill.is_local_only) {
-    return uniqueValues([...(skill.linked_tools ?? []), ...pathToolIds]);
-  }
-
-  return uniqueValues(["agents", ...(skill.linked_tools ?? []), ...pathToolIds]);
+  return uniqueValues([...pathToolIds, ...linkedToolIds]);
 }
 
 export function getOperationSkillIds(skill: GroupedSkill): string[] {
