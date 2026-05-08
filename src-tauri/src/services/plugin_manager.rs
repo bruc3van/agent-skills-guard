@@ -1950,6 +1950,17 @@ noise after json..."#;
         );
         assert_eq!(manifest.plugins[0].source.local_path_source(), None);
     }
+
+    #[test]
+    fn parse_plugin_install_output_accepts_claude_success_typo() {
+        let output = r#"Installing plugin "baoyu-skills@baoyu-skills"...
+✔ Successfuly stalled plugin: baoyu-skils@baoyu-skills (scope: user)"#;
+
+        let outcome = parse_plugin_install_output(output);
+
+        assert!(outcome.success);
+        assert!(!outcome.already);
+    }
 }
 
 fn parse_marketplace_list_text(output: &str) -> Vec<ClaudeMarketplace> {
@@ -2118,7 +2129,7 @@ fn parse_marketplace_add_output(output: &str) -> CommandOutcome {
 }
 
 fn parse_plugin_install_output(output: &str) -> CommandOutcome {
-    let text = output.to_lowercase();
+    let text = strip_terminal_escapes(output).to_lowercase();
 
     // 检查是否有明确的失败信息
     let has_error = text.contains("error")
@@ -2132,11 +2143,17 @@ fn parse_plugin_install_output(output: &str) -> CommandOutcome {
 
     // 检查是否已存在
     let already = text.contains("already installed") || text.contains("already exists");
+    let success_word = text.contains("successfully") || text.contains("successfuly");
+    let success_plugin_line = success_word
+        && (text.contains("installed plugin")
+            || text.contains("stalled plugin")
+            || text.contains("plugin:"));
 
     // 检查成功情况（排除错误和否定情况）
     let success = !has_error
         && !not_installed
         && (already
+        || success_plugin_line
         || text.contains("successfully installed")
         || text.contains("installation complete")
         || text.contains("install success")
