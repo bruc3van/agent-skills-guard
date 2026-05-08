@@ -55,6 +55,6 @@
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost https://avatars.githubusercontent.com https://raw.githubusercontent.com data:; connect-src 'self' ipc: http://ipc.localhost https://api.github.com https://github.com https://raw.githubusercontent.com https://codeload.github.com"
     },
-    "withGlobalTauri": true
+    "withGlobalTauri": false
   }
 }

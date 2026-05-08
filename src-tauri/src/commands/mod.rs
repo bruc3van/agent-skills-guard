@@ -503,6 +503,7 @@ pub async fn prepare_skill_installation(
 }
 
 /// 确认安装技能：标记为已安装，并为 target_tools 创建链接
+/// 使用 spawn_blocking 包装同步文件 I/O，避免阻塞 Tokio 异步运行时
 #[tauri::command]
 pub async fn confirm_skill_installation(
     state: State<'_, AppState>,
@@ -511,15 +512,18 @@ pub async fn confirm_skill_installation(
     allow_partial_scan: Option<bool>,
     target_tools: Option<Vec<String>>,
 ) -> Result<(), String> {
-    let manager = state.skill_manager.lock().await;
-    manager
-        .confirm_skill_installation(
-            &skill_id,
-            install_path,
-            allow_partial_scan.unwrap_or(false),
-            target_tools.unwrap_or_default(),
-        )
-        .map_err(|e| e.to_string())
+    let manager = state.skill_manager.clone();
+    let allow_partial = allow_partial_scan.unwrap_or(false);
+    let tools = target_tools.unwrap_or_default();
+
+    tokio::task::spawn_blocking(move || {
+        let manager = manager.blocking_lock();
+        manager
+            .confirm_skill_installation(&skill_id, install_path, allow_partial, tools)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
 }
 
 /// 取消安装技能：删除已下载的文件

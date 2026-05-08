@@ -115,10 +115,17 @@ pub struct Database {
 
 impl Database {
     /// 获取数据库连接锁，自动恢复 Mutex 中毒状态
+    /// 线程 panic 持锁时，SQLite 连接可能处于不一致事务状态，
+    /// 需要先回滚未提交的事务再继续使用。
     fn lock_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap_or_else(|poisoned| {
-            log::warn!("Database mutex was poisoned, recovering");
-            poisoned.into_inner()
+            log::error!("Database mutex was poisoned, attempting safe recovery");
+            let guard = poisoned.into_inner();
+            // 回滚可能残留的未提交事务，防止数据库处于不一致状态
+            if let Err(e) = guard.execute_batch("ROLLBACK") {
+                log::error!("Failed to rollback after mutex recovery: {}", e);
+            }
+            guard
         })
     }
 

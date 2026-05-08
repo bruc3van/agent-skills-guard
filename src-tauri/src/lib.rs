@@ -38,7 +38,7 @@ fn maybe_suppress_macos_os_activity_logs() {
         return;
     }
 
-    // SAFETY: 在 main 线程启动时调用，此时尚未创建其他线程
+    // SAFETY: 仅从 main() 在启动 Tauri 运行时之前调用，此时尚未创建 Tokio 工作线程
     unsafe { std::env::set_var("OS_ACTIVITY_MODE", "disable") };
 }
 
@@ -277,7 +277,7 @@ fn ensure_cli_path() {
 
     match std::env::join_paths(paths) {
         Ok(joined) => {
-            // SAFETY: 在 main 线程启动早期调用，tokio 运行时尚未启动
+            // SAFETY: 仅由 init() 从 main() 在 Tauri/Tokio 运行时启动前调用，此时尚无其他线程
             unsafe { std::env::set_var("PATH", joined) };
             let list = added
                 .iter()
@@ -292,15 +292,18 @@ fn ensure_cli_path() {
     }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+/// 应用启动前的环境初始化（必须在 Tokio 运行时启动前调用）
+pub fn init() {
     #[cfg(target_os = "macos")]
     maybe_suppress_macos_os_activity_logs();
 
     // 初始化日志
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     ensure_cli_path();
+}
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())

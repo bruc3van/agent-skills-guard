@@ -9,6 +9,31 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use zip::ZipArchive;
 
+/// 下载压缩包的安全上限：100 MiB（压缩后大小）
+const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024;
+
+/// GitHub 默认分支候选列表
+pub const DEFAULT_BRANCHES: &[&str] = &["main", "master"];
+
+/// 检查解压目标路径是否安全（无路径遍历）
+fn is_safe_path(path: &Path, base: &Path) -> bool {
+    // 规范化路径：处理 "."、连续分隔符等，但不解析符号链接
+    fn normalize(p: &Path) -> PathBuf {
+        let mut result = PathBuf::new();
+        for component in p.components() {
+            match component {
+                std::path::Component::ParentDir => {
+                    result.pop();
+                }
+                std::path::Component::CurDir => {}
+                other => result.push(other),
+            }
+        }
+        result
+    }
+    normalize(path).starts_with(normalize(base))
+}
+
 /// GitHub Commit API 响应
 #[derive(Debug, Deserialize)]
 struct GitHubCommit {
@@ -316,10 +341,9 @@ impl GitHubService {
         skill_path: &str,
     ) -> Result<(String, Option<String>)> {
         // 尝试多个分支获取 SKILL.md
-        let branches = ["main", "master"];
         let mut last_error = None;
 
-        for branch in branches.iter() {
+        for branch in DEFAULT_BRANCHES {
             let download_url = format!(
                 "https://raw.githubusercontent.com/{}/{}/{}/{}/SKILL.md",
                 owner, repo, branch, skill_path
@@ -408,11 +432,10 @@ impl GitHubService {
         fs::create_dir_all(&repo_cache_dir).context("无法创建缓存目录")?;
 
         // 2. 尝试下载压缩包（先尝试 main，如果 404 则尝试 master）
-        let branches = ["main", "master"];
         let mut last_error = None;
         let mut response = None;
 
-        for branch in branches.iter() {
+        for branch in DEFAULT_BRANCHES {
             let url = format!(
                 "{}/repos/{}/{}/zipball/{}",
                 self.api_base, owner, repo, branch
@@ -451,9 +474,27 @@ impl GitHubService {
         let response = response
             .ok_or_else(|| last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支均下载失败")))?;
 
-        // 3. 保存压缩包到本地
+        // 3. 保存压缩包到本地（先检查大小限制）
+        if let Some(content_length) = response.content_length() {
+            if content_length > MAX_ARCHIVE_BYTES {
+                return Err(anyhow::anyhow!(
+                    "压缩包大小 ({:.1} MB) 超过安全上限 ({:.1} MB)，可能为恶意仓库",
+                    content_length as f64 / (1024.0 * 1024.0),
+                    MAX_ARCHIVE_BYTES as f64 / (1024.0 * 1024.0)
+                ));
+            }
+        }
+
         let archive_path = repo_cache_dir.join("archive.zip");
         let bytes = response.bytes().await.context("读取压缩包内容失败")?;
+
+        if bytes.len() as u64 > MAX_ARCHIVE_BYTES {
+            return Err(anyhow::anyhow!(
+                "压缩包实际大小 ({:.1} MB) 超过安全上限 ({:.1} MB)",
+                bytes.len() as f64 / (1024.0 * 1024.0),
+                MAX_ARCHIVE_BYTES as f64 / (1024.0 * 1024.0)
+            ));
+        }
 
         let mut file = File::create(&archive_path).context("无法创建压缩包文件")?;
         file.write_all(&bytes).context("写入压缩包失败")?;
@@ -497,7 +538,17 @@ impl GitHubService {
             // GitHub的zipball会在根目录包含一个 {owner}-{repo}-{commit}/ 的文件夹
             // 我们需要提取这个路径
             let outpath = match file.enclosed_name() {
-                Some(path) => extract_dir.join(path),
+                Some(path) => {
+                    let candidate = extract_dir.join(path);
+                    if !is_safe_path(&candidate, extract_dir) {
+                        log::warn!(
+                            "ZIP条目尝试路径遍历，跳过: {}",
+                            file.name()
+                        );
+                        continue;
+                    }
+                    candidate
+                }
                 None => continue,
             };
 
@@ -768,7 +819,7 @@ impl GitHubService {
 
             // 比较 SHA（只比较前 7 位，因为可能存储的是短 SHA）
             let installed_short = &installed_sha[..installed_sha.len().min(7)];
-            let latest_short = &latest_sha[..7];
+            let latest_short = &latest_sha[..latest_sha.len().min(7)];
 
             if installed_short != latest_short {
                 log::info!("检测到更新可用");

@@ -82,6 +82,27 @@ fn paths_point_to_same_location(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn restore_installation_backup(backup_path: &Path, final_install_dir: &Path) -> Result<()> {
+    if final_install_dir.exists() {
+        let metadata = std::fs::symlink_metadata(final_install_dir)
+            .with_context(|| format!("无法读取残留安装目录: {:?}", final_install_dir))?;
+        if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+            std::fs::remove_dir_all(final_install_dir)
+                .with_context(|| format!("无法清理残留安装目录: {:?}", final_install_dir))?;
+        } else {
+            std::fs::remove_file(final_install_dir)
+                .with_context(|| format!("无法清理残留安装路径: {:?}", final_install_dir))?;
+        }
+    }
+
+    rename_with_retry(backup_path, final_install_dir).with_context(|| {
+        format!(
+            "无法还原安装备份: {:?} -> {:?}",
+            backup_path, final_install_dir
+        )
+    })
+}
+
 fn resolve_update_target_install_dir(raw: &Path) -> PathBuf {
     if !link_fs::is_dir_link(raw) {
         return raw.to_path_buf();
@@ -180,19 +201,38 @@ impl SkillManager {
                 Ok(())
             }
             Err(error) => {
-                if final_install_dir.exists() {
-                    let _ = std::fs::remove_dir_all(final_install_dir);
-                }
+                let mut restore_error = None;
                 if let Some(backup_path) = backup_dir {
-                    let _ = rename_with_retry(&backup_path, final_install_dir);
+                    // 先尝试将备份还原到原位，再清理临时目录
+                    if let Err(restore_err) =
+                        restore_installation_backup(&backup_path, final_install_dir)
+                    {
+                        log::error!(
+                            "还原安装备份失败: {:?} -> {:?}, 错误: {}",
+                            backup_path, final_install_dir, restore_err
+                        );
+                        restore_error = Some(restore_err);
+                    }
                 }
                 if prepared_dir.exists() {
                     let _ = std::fs::remove_dir_all(prepared_dir);
                 }
-                Err(anyhow::anyhow!(format!(
-                    "无法替换技能目录: {:?} -> {:?}, 错误: {}",
-                    prepared_dir, final_install_dir, error
-                )))
+                if let Some(restore_error) = restore_error {
+                    Err(anyhow::anyhow!(
+                        "无法替换技能目录: {:?} -> {:?}, 错误: {}；同时无法还原原安装目录: {}",
+                        prepared_dir,
+                        final_install_dir,
+                        error,
+                        restore_error
+                    ))
+                } else {
+                    Err(anyhow::anyhow!(
+                        "无法替换技能目录: {:?} -> {:?}, 错误: {}",
+                        prepared_dir,
+                        final_install_dir,
+                        error
+                    ))
+                }
             }
         }
     }
@@ -269,11 +309,10 @@ impl SkillManager {
         let (owner, repo) = crate::models::Repository::from_github_url(&skill.repository_url)?;
 
         // 尝试多个分支下载 SKILL.md 文件
-        let branches = ["main", "master"];
         let mut content = None;
         let mut last_error = None;
 
-        for branch in branches.iter() {
+        for branch in super::github::DEFAULT_BRANCHES {
             let download_url = format!(
                 "https://raw.githubusercontent.com/{}/{}/{}/{}/SKILL.md",
                 owner, repo, branch, skill.file_path
@@ -457,22 +496,6 @@ impl SkillManager {
         }
 
         self.replace_installation_directory(&prepared_dir, &skill_dir)?;
-
-        // 注释掉评分检查，允许用户在前端确认后安装低分技能
-        // 只有硬触发的技能会被后端强制阻止
-        // if scan_report.score < 50 {
-        //     // 先删除已下载的文件
-        //     if skill_dir.exists() {
-        //         std::fs::remove_dir_all(&skill_dir)?;
-        //     }
-        //
-        //     anyhow::bail!(
-        //         "技能安全评分过低 ({}分)，为保护您的安全已阻止安装。建议评分至少为 50 分以上。\n\n扫描了 {} 个文件：{}",
-        //         scan_report.score,
-        //         scan_report.scanned_files.len(),
-        //         scan_report.scanned_files.join(", ")
-        //     );
-        // }
 
         // 更新 skill 安全信息
         Self::apply_scan_report(&mut skill, &scan_report);
@@ -2276,6 +2299,7 @@ mod tests {
     use super::{
         build_local_skill_id, build_synced_tool_state, paths_point_to_same_location,
         resolve_update_install_paths, resolve_update_target_install_dir,
+        restore_installation_backup,
     };
     use crate::services::{link_fs, Database};
     use std::path::PathBuf;
@@ -2377,5 +2401,26 @@ mod tests {
             std::fs::read_to_string(dst.join(".gitignore")).unwrap(),
             "target\n"
         );
+    }
+
+    #[test]
+    fn restore_installation_backup_replaces_partial_target_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let backup = temp.path().join(".example.backup-test");
+        let final_dir = temp.path().join("example");
+
+        std::fs::create_dir_all(&backup).unwrap();
+        std::fs::write(backup.join("SKILL.md"), "original").unwrap();
+        std::fs::create_dir_all(&final_dir).unwrap();
+        std::fs::write(final_dir.join("partial.txt"), "partial").unwrap();
+
+        restore_installation_backup(&backup, &final_dir).unwrap();
+
+        assert!(!backup.exists());
+        assert_eq!(
+            std::fs::read_to_string(final_dir.join("SKILL.md")).unwrap(),
+            "original"
+        );
+        assert!(!final_dir.join("partial.txt").exists());
     }
 }

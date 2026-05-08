@@ -91,16 +91,20 @@ fn create_link_impl(source: &Path, link: &Path) -> Result<()> {
         .output()
         .context("无法执行 mklink 命令")?;
 
-    if output.status.success() {
+    // cmd.exe /C 即使内部命令失败也可能返回 0，需要验证 junction 实际创建成功
+    if output.status.success() && link.exists() {
         log::info!("创建 Junction: {:?} -> {:?}", link, source);
         return Ok(());
     }
 
     // Junction 失败时降级为目录拷贝（ReFS、跨卷等场景）
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     log::warn!(
-        "mklink /J 失败（{}），降级为目录拷贝: {:?} -> {:?}",
+        "mklink /J 失败（exit={}, stderr={}, stdout={}），降级为目录拷贝: {:?} -> {:?}",
+        output.status.code().unwrap_or(-1),
         stderr.trim(),
+        stdout.trim(),
         source,
         link
     );

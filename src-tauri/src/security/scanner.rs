@@ -268,7 +268,7 @@ impl SecurityScanner {
                         continue;
                     }
 
-                    let dedup_key = format!("{}:{}:{}", rule.id, line_number, line);
+                    let dedup_key = format!("{}:{}", rule.id, line_number);
                     if !seen.insert(dedup_key) {
                         continue;
                     }
