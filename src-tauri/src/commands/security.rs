@@ -299,6 +299,34 @@ pub async fn scan_skill_archive(
         .to_string());
     }
 
+    // 路径限制：只允许读取临时目录或用户主目录下的文件，防止路径越界读取系统文件
+    let canonical = path.canonicalize().map_err(|e| {
+        t!(
+            "common.errors.read_failed",
+            locale = locale,
+            path = &archive_path,
+            error = e.to_string()
+        )
+        .to_string()
+    })?;
+
+    let allowed = {
+        let tmp = std::env::temp_dir();
+        let home = dirs::home_dir();
+        let cache = dirs::cache_dir();
+        let data_local = dirs::data_local_dir();
+        [Some(tmp), home, cache, data_local]
+            .into_iter()
+            .flatten()
+            .any(|base| canonical.starts_with(&base))
+    };
+    if !allowed {
+        return Err(format!(
+            "Path is outside allowed directories: {}",
+            archive_path
+        ));
+    }
+
     // 读取文件内容
     let content = std::fs::read_to_string(path).map_err(|e| {
         t!(

@@ -2,14 +2,14 @@ pub mod featured_marketplaces;
 pub mod plugins;
 pub mod security;
 
-use crate::models::{FeaturedRepositoriesConfig, Repository, Skill};
+use crate::models::{FeaturedRepositoriesConfig, Repository, Skill, LOCAL_REPOSITORY_URL};
 use crate::services::{AgentTool, Database, GitHubService, PluginManager, SkillManager};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::State;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 
 /// 扫描进度事件（security 和 plugins 共用）
 #[derive(serde::Serialize, Clone)]
@@ -133,6 +133,31 @@ pub async fn delete_repository(state: State<'_, AppState>, repo_id: String) -> R
         repo.name,
         deleted_skills_count
     );
+
+    // 2b. 已安装技能解除与仓库的关联（保留本地安装，清空 repository_url 为 "local"）
+    //     避免删除仓库后这些 skill 在 UI 中消失或显示为孤立记录
+    let orphaned_skills: Vec<Skill> = state
+        .db
+        .get_skills()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|s| s.installed && s.repository_url == repository_url)
+        .collect();
+    let orphaned_count = orphaned_skills.len();
+    for mut skill in orphaned_skills {
+        skill.repository_url = LOCAL_REPOSITORY_URL.to_string();
+        skill.repository_owner = None;
+        if let Err(e) = state.db.save_skill(&skill) {
+            log::warn!("无法解除技能 '{}' 的仓库关联: {}", skill.name, e);
+        }
+    }
+    if orphaned_count > 0 {
+        log::info!(
+            "已将仓库 {} 的 {} 个已安装技能标记为本地技能",
+            repo.name,
+            orphaned_count
+        );
+    }
 
     let deleted_plugins_count = state
         .db
@@ -277,22 +302,18 @@ pub async fn scan_repository(
         .map(|skill| merge_scanned_skill(existing_by_id.get(&skill.id), skill))
         .collect();
 
-    // 保存到数据库
-    for skill in &merged_skills {
-        state.db.save_skill(skill).map_err(|e| e.to_string())?;
-    }
-
+    // 在单个事务中保存所有新/更新 skill 并删除过期记录，避免中途崩溃导致 DB 不一致
     let stale_skill_ids =
         collect_stale_uninstalled_skill_ids(&existing_repo_skills, &merged_skills);
+    state
+        .db
+        .save_skills_and_delete_stale(&merged_skills, &stale_skill_ids)
+        .map_err(|e| e.to_string())?;
     if !stale_skill_ids.is_empty() {
-        let deleted_count = state
-            .db
-            .delete_skills_by_ids(&stale_skill_ids)
-            .map_err(|e| e.to_string())?;
         log::info!(
             "清理仓库 {} 的 {} 个已失效未安装技能",
             repo.name,
-            deleted_count
+            stale_skill_ids.len()
         );
     }
 
@@ -1140,57 +1161,69 @@ pub async fn reset_app_data(
 /// 检查仓库是否已添加
 #[tauri::command]
 pub async fn is_repository_added(state: State<'_, AppState>, url: String) -> Result<bool, String> {
-    let repos = state.db.get_repositories().map_err(|e| e.to_string())?;
-
-    Ok(repos.iter().any(|r| r.url == url))
+    state
+        .db
+        .repository_url_exists(&url)
+        .map_err(|e| e.to_string())
 }
 
-/// 检查已安装技能的更新
+/// 检查已安装技能的更新（并发发送 API 请求，限流避免触发 GitHub rate limit）
 /// 返回：Vec<(skill_id, latest_commit_sha)>
 #[tauri::command]
 pub async fn check_skills_updates(
     state: State<'_, AppState>,
 ) -> Result<Vec<(String, String)>, String> {
-    let manager = state.skill_manager.lock().await;
-    let installed_skills = manager.get_installed_skills().map_err(|e| e.to_string())?;
+    let installed_skills = {
+        let manager = state.skill_manager.lock().await;
+        manager.get_installed_skills().map_err(|e| e.to_string())?
+    };
+
+    let github = Arc::clone(&state.github);
+    let semaphore = Arc::new(Semaphore::new(8));
+
+    let tasks: Vec<_> = installed_skills
+        .into_iter()
+        .filter(|s| s.repository_url != LOCAL_REPOSITORY_URL)
+        .filter_map(|skill| {
+            let (owner, repo) = match Repository::from_github_url(&skill.repository_url) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("无法解析仓库 URL {}: {}", skill.repository_url, e);
+                    return None;
+                }
+            };
+            let github = Arc::clone(&github);
+            let sem = Arc::clone(&semaphore);
+            Some(tokio::spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+                let result = github
+                    .check_skill_update(
+                        &owner,
+                        &repo,
+                        &skill.file_path,
+                        skill.installed_commit_sha.as_deref(),
+                    )
+                    .await;
+                (skill.id, skill.name, result)
+            }))
+        })
+        .collect();
 
     let mut updates = Vec::new();
-
-    for skill in installed_skills {
-        // 跳过本地技能
-        if skill.repository_url == "local" {
-            continue;
-        }
-
-        // 解析仓库 URL
-        let (owner, repo) = match Repository::from_github_url(&skill.repository_url) {
-            Ok(result) => result,
-            Err(e) => {
-                log::warn!("无法解析仓库 URL {}: {}", skill.repository_url, e);
-                continue;
+    for task in tasks {
+        match task.await {
+            Ok((skill_id, skill_name, Ok(Some(latest_sha)))) => {
+                log::info!("技能 {} 有更新可用: {}", skill_name, latest_sha);
+                updates.push((skill_id, latest_sha));
             }
-        };
-
-        // 检查更新
-        match state
-            .github
-            .check_skill_update(
-                &owner,
-                &repo,
-                &skill.file_path,
-                skill.installed_commit_sha.as_deref(),
-            )
-            .await
-        {
-            Ok(Some(latest_sha)) => {
-                log::info!("技能 {} 有更新可用: {}", skill.name, latest_sha);
-                updates.push((skill.id.clone(), latest_sha));
+            Ok((_, skill_name, Ok(None))) => {
+                log::debug!("技能 {} 无更新", skill_name);
             }
-            Ok(None) => {
-                log::debug!("技能 {} 无更新", skill.name);
+            Ok((_, skill_name, Err(e))) => {
+                log::warn!("检查技能 {} 更新时出错: {}", skill_name, e);
             }
             Err(e) => {
-                log::warn!("检查技能 {} 更新时出错: {}", skill.name, e);
+                log::warn!("检查更新任务 panic: {}", e);
             }
         }
     }

@@ -1098,7 +1098,6 @@ export function InstalledSkillsPage() {
           syncAllMutation.isPending ||
           pendingToggleTarget !== null
         }
-        t={t}
       />
     );
   };
@@ -1923,7 +1922,6 @@ interface SkillCardProps {
   isPreparingUpdate: boolean;
   isApplyingUpdate: boolean;
   isAnyOperationPending: boolean;
-  t: (key: string, options?: any) => string;
 }
 
 function CardCornerBadge({ kind, label }: { kind: "skill" | "plugin"; label: string }) {
@@ -1955,8 +1953,8 @@ function SkillCard({
   isPreparingUpdate,
   isApplyingUpdate,
   isAnyOperationPending,
-  t,
 }: SkillCardProps) {
+  const { t } = useTranslation();
   return (
     <div className="apple-card p-6 pt-10 group flex flex-col h-full relative">
       <CardCornerBadge kind="skill" label={t("skills.badge")} />

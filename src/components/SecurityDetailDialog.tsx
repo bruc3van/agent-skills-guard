@@ -10,32 +10,12 @@ import { Shield, AlertTriangle, Info } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { SkillScanResult, SecurityIssue } from "@/types/security";
+import { sortIssuesBySeverity } from "@/lib/security-utils";
 
 interface SecurityDetailDialogProps {
   result: SkillScanResult | null;
   open: boolean;
   onClose: () => void;
-}
-
-const severityOrder: Record<string, number> = {
-  Critical: 0,
-  Error: 1,
-  Warning: 2,
-  Info: 3,
-};
-
-function sortIssuesBySeverity(issues: SecurityIssue[]): SecurityIssue[] {
-  return [...issues].sort((a, b) => {
-    const orderA = severityOrder[a.severity] ?? 4;
-    const orderB = severityOrder[b.severity] ?? 4;
-    if (orderA !== orderB) return orderA - orderB;
-    const fileA = a.file_path ?? "";
-    const fileB = b.file_path ?? "";
-    if (fileA !== fileB) return fileA.localeCompare(fileB);
-    const lineA = a.line_number ?? 0;
-    const lineB = b.line_number ?? 0;
-    return lineA - lineB;
-  });
 }
 
 interface IssueGroup {

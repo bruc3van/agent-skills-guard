@@ -1,4 +1,4 @@
-use crate::models::Skill;
+use crate::models::{Skill, LOCAL_REPOSITORY_URL};
 use crate::services::{AgentTool, Database};
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -103,7 +103,7 @@ impl MigrationManager {
                     changed = true;
                 }
 
-                if skill.repository_url != "local" && skill.is_local_only {
+                if skill.repository_url != LOCAL_REPOSITORY_URL && skill.is_local_only {
                     skill.is_local_only = false;
                     changed = true;
                 }
@@ -117,7 +117,7 @@ impl MigrationManager {
 
             let source_path = choose_source_path(&group);
             let mut skill =
-                Skill::new(group.name.clone(), "local".to_string(), source_path.clone());
+                Skill::new(group.name.clone(), LOCAL_REPOSITORY_URL.to_string(), source_path.clone());
             skill.id = build_local_skill_id(&group.checksum, &group.canonical_key);
             skill.description = group.description.clone();
             skill.installed = true;

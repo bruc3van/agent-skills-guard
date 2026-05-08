@@ -25,21 +25,26 @@ pub async fn get_plugins(
         .await
         .ok();
 
-    // 通过 Claude CLI 同步本地安装状态（包含非本程序安装的 plugins/marketplaces）
-    // 同步失败不阻塞 UI：回退到 DB 缓存
-    let manager = state.plugin_manager.lock().await;
+    // 精选市场同步：持锁时间尽量短，同步完立即释放锁再做下一步
     if let Some(config) = &featured_config {
+        let manager = state.plugin_manager.lock().await;
         if let Err(e) = manager
             .sync_featured_marketplaces(config, &locale, None, true)
             .await
         {
             log::warn!("同步精选插件清单失败: {}", e);
         }
+        // manager 在此处 drop，释放锁
     }
-    if let Err(e) = manager.sync_claude_installed_state(None).await {
-        log::warn!("同步 Claude plugins 状态失败: {}", e);
+
+    // Claude CLI 状态同步：独立持锁，不与精选市场同步串联
+    {
+        let manager = state.plugin_manager.lock().await;
+        if let Err(e) = manager.sync_claude_installed_state(None).await {
+            log::warn!("同步 Claude plugins 状态失败: {}", e);
+        }
+        // manager 在此处 drop，释放锁
     }
-    drop(manager);
 
     state.db.get_plugins().map_err(|e| e.to_string())
 }

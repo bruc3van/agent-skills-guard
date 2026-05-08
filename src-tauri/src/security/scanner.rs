@@ -589,6 +589,16 @@ impl SecurityScanner {
                 }
             }
 
+            // 跳过二进制文件（与实际扫描逻辑保持一致，保证进度条准确）
+            if let Ok(mut f) = std::fs::File::open(entry.path()) {
+                let mut sample = [0u8; 512];
+                if let Ok(n) = std::io::Read::read(&mut f, &mut sample) {
+                    if sample[..n].contains(&0u8) {
+                        continue;
+                    }
+                }
+            }
+
             total += 1;
             if total >= MAX_FILES {
                 log::warn!(

@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::security::{SecurityIssue, SecurityReport};
 
+/// 本地技能的 repository_url 标记值，表示该技能不来自任何远程仓库
+pub const LOCAL_REPOSITORY_URL: &str = "local";
+
 /// Skill 信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Skill {
@@ -63,8 +66,8 @@ impl Skill {
 
     /// 从 repository_url 解析仓库所有者
     pub fn parse_repository_owner(repository_url: &str) -> String {
-        if repository_url == "local" {
-            return "local".to_string();
+        if repository_url == LOCAL_REPOSITORY_URL {
+            return LOCAL_REPOSITORY_URL.to_string();
         }
 
         // 解析 GitHub URL: https://github.com/anthropics/skills

@@ -1,4 +1,4 @@
-use crate::models::Skill;
+use crate::models::{Skill, LOCAL_REPOSITORY_URL};
 use crate::security::{ScanOptions, SecurityScanner};
 use crate::services::agent_tools::AgentTool;
 use crate::services::link_fs;
@@ -1243,7 +1243,7 @@ impl SkillManager {
 
             // 遍历技能目录
             if let Ok(entries) = std::fs::read_dir(&scan_dir) {
-                for entry in entries.flatten() {
+                'entry: for entry in entries.flatten() {
                     let path = entry.path();
 
                     // 只处理目录
@@ -1282,6 +1282,7 @@ impl SkillManager {
                         continue;
                     }
                     // 也检查 DB 中已有记录（前次扫描导入的）
+                    // 找到匹配后必须 continue 'entry，否则会继续走新 skill 创建逻辑
                     if let Some(ref tool_id) = scan_dir_tool {
                         let path_str = path.to_string_lossy().to_string();
                         for db_skill in &existing_skills {
@@ -1311,7 +1312,8 @@ impl SkillManager {
                                     updated.local_paths = Some(vec![path_str]);
                                 }
                                 let _ = self.db.save_skill(&updated);
-                                break;
+                                // 跳过新 skill 创建逻辑，该路径已在 DB 中记录
+                                continue 'entry;
                             }
                         }
                     }
@@ -1384,7 +1386,7 @@ impl SkillManager {
 
                                 // 仅对本地导入的技能（repository_url == local）更新 name/description/file_path
                                 // 避免覆盖市场技能的元数据来源（仓库扫描/市场配置）
-                                if existing_skill.repository_url == "local" {
+                                if existing_skill.repository_url == LOCAL_REPOSITORY_URL {
                                     existing_skill.name = skill_name;
                                     existing_skill.description = skill_description;
                                     existing_skill.file_path = local_path_str.clone();
@@ -1478,8 +1480,8 @@ impl SkillManager {
                                 id: skill_id,
                                 name: skill_name,
                                 description: skill_description,
-                                repository_url: "local".to_string(),
-                                repository_owner: Some("local".to_string()),
+                                repository_url: LOCAL_REPOSITORY_URL.to_string(),
+                                repository_owner: Some(LOCAL_REPOSITORY_URL.to_string()),
                                 file_path: path.to_string_lossy().to_string(),
                                 version: None,
                                 author: None,
@@ -1644,52 +1646,76 @@ impl SkillManager {
         self.github.parse_skill_frontmatter(content)
     }
 
-    /// 从网络下载并安装技能（降级方案）
+    /// 从网络下载并安装技能（降级方案，递归处理子目录）
     async fn install_from_network(
         &self,
         skill: &crate::models::Skill,
         skill_dir: &PathBuf,
     ) -> Result<()> {
         let (owner, repo) = crate::models::Repository::from_github_url(&skill.repository_url)?;
-
-        // 如果 file_path 是 "."，转换为空字符串以获取根目录内容
         let api_path = if skill.file_path == "." {
-            ""
+            "".to_string()
         } else {
-            &skill.file_path
+            skill.file_path.clone()
         };
-        let skill_files = self
-            .github
-            .get_directory_files(&owner, &repo, api_path)
+        self.download_directory_recursive(&owner, &repo, &api_path, skill_dir)
             .await
-            .context("获取技能目录文件列表失败")?;
+    }
 
-        log::info!("Found {} files in skill directory", skill_files.len());
+    /// 递归下载 GitHub 目录中的所有文件（包含子目录）
+    async fn download_directory_recursive(
+        &self,
+        owner: &str,
+        repo: &str,
+        api_path: &str,
+        local_dir: &PathBuf,
+    ) -> Result<()> {
+        std::fs::create_dir_all(local_dir)
+            .with_context(|| format!("无法创建目录: {:?}", local_dir))?;
 
-        // 下载每个文件
-        for file_info in &skill_files {
-            if file_info.content_type != "file" {
-                continue; // 跳过子目录
-            }
+        let entries = self
+            .github
+            .get_directory_files(owner, repo, api_path)
+            .await
+            .with_context(|| format!("获取目录文件列表失败: {}", api_path))?;
 
-            // 获取 download_url
-            let download_url = file_info
-                .download_url
-                .as_ref()
-                .context(format!("文件 {} 缺少下载链接", file_info.name))?;
+        log::info!(
+            "Found {} entries in '{}' (owner={}, repo={})",
+            entries.len(),
+            api_path,
+            owner,
+            repo
+        );
 
-            let file_content = self
-                .github
-                .download_file(download_url)
+        for entry in &entries {
+            if entry.content_type == "dir" {
+                let sub_local = local_dir.join(&entry.name);
+                Box::pin(self.download_directory_recursive(
+                    owner,
+                    repo,
+                    &entry.path,
+                    &sub_local,
+                ))
                 .await
-                .context(format!("下载文件失败: {}", file_info.name))?;
+                .with_context(|| format!("下载子目录失败: {}", entry.path))?;
+            } else if entry.content_type == "file" {
+                let download_url = entry
+                    .download_url
+                    .as_ref()
+                    .with_context(|| format!("文件 {} 缺少下载链接", entry.name))?;
 
-            // 写入文件到本地
-            let local_file_path = skill_dir.join(&file_info.name);
-            std::fs::write(&local_file_path, file_content)
-                .context(format!("无法写入文件: {}", file_info.name))?;
+                let file_content = self
+                    .github
+                    .download_file(download_url)
+                    .await
+                    .with_context(|| format!("下载文件失败: {}", entry.name))?;
 
-            log::info!("Saved file: {}", file_info.name);
+                let local_file_path = local_dir.join(&entry.name);
+                std::fs::write(&local_file_path, file_content)
+                    .with_context(|| format!("无法写入文件: {}", entry.name))?;
+
+                log::info!("Saved file: {}/{}", api_path, entry.name);
+            }
         }
 
         Ok(())
@@ -2196,14 +2222,11 @@ impl SkillManager {
         let staging_path_str = &staging_marker[12..];
         let staging_dir = PathBuf::from(staging_path_str);
 
-        // 删除 staging 目录（整个 staging repo 目录）
-        if let Some(parent) = staging_dir.parent() {
-            if let Some(repo_dir) = parent.parent() {
-                if repo_dir.exists() {
-                    std::fs::remove_dir_all(repo_dir)?;
-                    log::info!("已删除 staging 目录: {:?}", repo_dir);
-                }
-            }
+        // 只删除该 skill 自身的 staging 目录，不上溯到父/祖父目录，
+        // 避免误删同一仓库其他 skill 的 staging 数据。
+        if staging_dir.exists() {
+            std::fs::remove_dir_all(&staging_dir)?;
+            log::info!("已删除 staging 目录: {:?}", staging_dir);
         }
 
         // 恢复数据库中的 local_path
@@ -2615,7 +2638,7 @@ mod tests {
 
         let mut skill = crate::models::Skill::new(
             "frontend-design".to_string(),
-            "local".to_string(),
+            crate::models::LOCAL_REPOSITORY_URL.to_string(),
             source.to_string_lossy().to_string(),
         );
         skill.id = "skill-1".to_string();
@@ -2653,7 +2676,7 @@ mod tests {
 
         let mut skill = crate::models::Skill::new(
             "frontend-design".to_string(),
-            "local".to_string(),
+            crate::models::LOCAL_REPOSITORY_URL.to_string(),
             source.to_string_lossy().to_string(),
         );
         skill.id = "skill-1".to_string();
@@ -2684,7 +2707,7 @@ mod tests {
 
         let mut skill = crate::models::Skill::new(
             "frontend-design".to_string(),
-            "local".to_string(),
+            crate::models::LOCAL_REPOSITORY_URL.to_string(),
             source.to_string_lossy().to_string(),
         );
         skill.id = "skill-1".to_string();
@@ -2726,7 +2749,7 @@ mod tests {
         let checksum = crate::security::SecurityScanner::new().calculate_checksum(b"same skill");
         let mut skill = crate::models::Skill::new(
             "frontend-design".to_string(),
-            "local".to_string(),
+            crate::models::LOCAL_REPOSITORY_URL.to_string(),
             missing_agents_source.to_string_lossy().to_string(),
         );
         skill.id = "skill-1".to_string();

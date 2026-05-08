@@ -137,6 +137,9 @@ impl Database {
         }
 
         let conn = Connection::open(db_path).context("Failed to open database")?;
+        // 每次打开连接都需要启用外键约束（SQLite 默认关闭，且设置不持久化）
+        conn.execute_batch("PRAGMA foreign_keys=ON;")
+            .context("Failed to enable foreign keys")?;
 
         let db = Self {
             conn: Mutex::new(conn),
@@ -436,10 +439,26 @@ impl Database {
         Ok(repos)
     }
 
+    /// 快速检查 URL 是否已添加（使用 EXISTS，不加载全表）
+    pub fn repository_url_exists(&self, url: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM repositories WHERE url = ?1)",
+            params![url],
+            |row| row.get(0),
+        )?;
+        Ok(exists)
+    }
+
     /// 保存 skill
     pub fn save_skill(&self, skill: &Skill) -> Result<()> {
         let conn = self.lock_conn();
+        Self::save_skill_on_conn(&conn, skill)
+    }
 
+    /// 在单个连接上保存单个 skill（INSERT OR REPLACE）。
+    /// 被 save_skill 和 save_skills_and_delete_stale 共用，避免序列化 + SQL 逻辑重复。
+    fn save_skill_on_conn(conn: &Connection, skill: &Skill) -> Result<()> {
         let security_issues_json = skill
             .security_issues
             .as_ref()
@@ -452,14 +471,12 @@ impl Database {
             .map(|report| serde_json::to_string(report))
             .transpose()
             .context("Failed to serialize skill security report")?;
-
         let local_paths_json = skill
             .local_paths
             .as_ref()
             .map(|paths| serde_json::to_string(paths))
             .transpose()
             .context("Failed to serialize skill local paths")?;
-
         let linked_tools_json = serde_json::to_string(&skill.linked_tools)
             .context("Failed to serialize skill linked_tools")?;
 
@@ -494,8 +511,51 @@ impl Database {
                 skill.is_local_only as i32,
             ],
         )?;
-
         Ok(())
+    }
+
+    /// 在单个事务中保存多个 skills，并删除指定的过期 skill IDs。
+    /// 用于 scan_repository：确保扫描结果要么全部落库，要么全部回滚。
+    pub fn save_skills_and_delete_stale(
+        &self,
+        skills_to_save: &[Skill],
+        stale_ids: &[String],
+    ) -> Result<()> {
+        let conn = self.lock_conn();
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+
+        let result = (|| -> Result<()> {
+            for skill in skills_to_save {
+                Self::save_skill_on_conn(&conn, skill)?;
+            }
+
+            if !stale_ids.is_empty() {
+                let placeholders = stale_ids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| format!("?{}", i + 1))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let sql = format!(
+                    "DELETE FROM skills WHERE id IN ({}) AND installed = 0",
+                    placeholders
+                );
+                conn.execute(&sql, params_from_iter(stale_ids.iter()))?;
+            }
+
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
     }
 
     pub fn is_app_migration_completed(&self, key: &str) -> Result<bool> {

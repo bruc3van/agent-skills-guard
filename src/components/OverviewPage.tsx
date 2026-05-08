@@ -400,7 +400,7 @@ export function OverviewPage() {
       if (p.installed && p.scanned_at) times.push(new Date(p.scanned_at).getTime());
     });
     if (!times.length) return null;
-    return new Date(Math.max(...times));
+    return new Date(times.reduce((a, b) => (a > b ? a : b)));
   }, [plugins, uniqueScanResults]);
 
   const issueCount = useMemo(() => {

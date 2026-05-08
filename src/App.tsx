@@ -1,4 +1,5 @@
 import { Suspense, lazy, useState, useEffect, useCallback, useRef } from "react";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { Sidebar } from "./components/Sidebar";
 import { WindowControls } from "./components/WindowControls";
@@ -374,6 +375,7 @@ function AppContent() {
 
         {/* Content Area - 更大的内边距，更宽敞的感觉 */}
         <main className="flex-1 overflow-hidden">
+          <ErrorBoundary>
           <Suspense fallback={<PageFallback />}>
             {currentTab === "overview" && (
               <div className="h-full overflow-y-auto">
@@ -427,6 +429,7 @@ function AppContent() {
               </div>
             )}
           </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
     </div>

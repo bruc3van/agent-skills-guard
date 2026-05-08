@@ -817,11 +817,16 @@ impl GitHubService {
                 latest_sha
             );
 
-            // 比较 SHA（只比较前 7 位，因为可能存储的是短 SHA）
-            let installed_short = &installed_sha[..installed_sha.len().min(7)];
-            let latest_short = &latest_sha[..latest_sha.len().min(7)];
+            // 全量比较；若已安装的是短 SHA，则用 starts_with 兼容
+            let has_update = if installed_sha.is_empty() {
+                true
+            } else if installed_sha.len() < latest_sha.len() {
+                !latest_sha.starts_with(&installed_sha[..])
+            } else {
+                installed_sha != *latest_sha
+            };
 
-            if installed_short != latest_short {
+            if has_update {
                 log::info!("检测到更新可用");
                 return Ok(Some(latest_sha.clone()));
             } else {

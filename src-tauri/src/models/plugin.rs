@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::models::security::{SecurityIssue, SecurityReport};
+use crate::models::skill::LOCAL_REPOSITORY_URL;
 
 /// Claude Code Plugin 信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,15 +42,24 @@ pub struct Plugin {
 }
 
 impl Plugin {
+    /// 规范化仓库 URL：去除 .git 后缀和尾斜杠，确保同一仓库不会因 URL 细微差异产生不同 ID
+    pub fn normalize_repository_url(url: &str) -> String {
+        url.trim_end_matches('/')
+            .trim_end_matches(".git")
+            .to_string()
+    }
+
     pub fn new(
         name: String,
         repository_url: String,
         marketplace_name: String,
         source: String,
     ) -> Self {
-        let repository_owner = Self::parse_repository_owner(&repository_url);
-        let id = format!("{}::{}::{}", repository_url, marketplace_name, name);
+        let normalized_url = Self::normalize_repository_url(&repository_url);
+        let repository_owner = Self::parse_repository_owner(&normalized_url);
+        let id = format!("{}::{}::{}", normalized_url, marketplace_name, name);
         let claude_id = Some(format!("{}@{}", name, marketplace_name));
+        let repository_url = normalized_url;
 
         Self {
             id,
@@ -117,8 +127,8 @@ impl Plugin {
     }
 
     fn parse_repository_owner(repository_url: &str) -> String {
-        if repository_url == "local" {
-            return "local".to_string();
+        if repository_url == LOCAL_REPOSITORY_URL {
+            return LOCAL_REPOSITORY_URL.to_string();
         }
 
         if let Some(start) = repository_url.find("github.com/") {

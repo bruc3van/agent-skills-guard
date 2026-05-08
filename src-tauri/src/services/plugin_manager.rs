@@ -1,7 +1,7 @@
 use crate::i18n::validate_locale;
 use crate::models::{
     FeaturedMarketplace, FeaturedMarketplaceOwner, FeaturedMarketplacesConfig, LocalizedText,
-    Plugin, Repository, SecurityLevel, SecurityReport, Skill,
+    Plugin, Repository, SecurityLevel, SecurityReport, Skill, LOCAL_REPOSITORY_URL,
 };
 use crate::security::{ScanOptions, SecurityScanner};
 use crate::services::claude_cli::{ClaudeCli, ClaudeCommand};
@@ -409,7 +409,7 @@ impl PluginManager {
             let repository_url = marketplace_repo_url_by_name
                 .get(&marketplace_name)
                 .cloned()
-                .unwrap_or_else(|| "local".to_string());
+                .unwrap_or_else(|| LOCAL_REPOSITORY_URL.to_string());
 
             let mut plugin = plugins_by_claude_id
                 .get(&entry.id)
@@ -448,24 +448,30 @@ impl PluginManager {
         }
 
         // 反向同步：DB 标记为 installed 但 CLI 已不存在 -> 标记为未安装
-        let current_plugins = self.db.get_plugins().unwrap_or_default();
-        for plugin in current_plugins {
-            let claude_id = match plugin.claude_id.as_deref() {
-                Some(v) => v,
-                None => continue,
-            };
+        // 安全防护：只有 CLI 返回了至少一条记录时才执行反向同步，
+        // 避免 CLI 异常返回空列表时误将所有 plugin 标记为未安装。
+        if !installed_claude_ids.is_empty() {
+            let current_plugins = self.db.get_plugins().unwrap_or_default();
+            for plugin in current_plugins {
+                let claude_id = match plugin.claude_id.as_deref() {
+                    Some(v) => v,
+                    None => continue,
+                };
 
-            if plugin.installed && !installed_claude_ids.contains(claude_id) {
-                let mut updated = plugin.clone();
-                updated.installed = false;
-                updated.installed_at = None;
-                updated.installed_version = None;
-                updated.claude_scope = None;
-                updated.claude_enabled = None;
-                updated.claude_install_path = None;
-                updated.claude_last_updated = None;
-                self.db.save_plugin(&updated)?;
+                if plugin.installed && !installed_claude_ids.contains(claude_id) {
+                    let mut updated = plugin.clone();
+                    updated.installed = false;
+                    updated.installed_at = None;
+                    updated.installed_version = None;
+                    updated.claude_scope = None;
+                    updated.claude_enabled = None;
+                    updated.claude_install_path = None;
+                    updated.claude_last_updated = None;
+                    self.db.save_plugin(&updated)?;
+                }
             }
+        } else {
+            log::debug!("CLI 返回空安装列表，跳过反向同步以避免误清除安装状态");
         }
 
         Ok(())

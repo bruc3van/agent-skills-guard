@@ -37,17 +37,26 @@ impl Repository {
     }
 
     /// 从 GitHub URL 提取仓库信息
-    /// 支持格式: https://github.com/owner/repo
+    /// 支持格式:
+    ///   https://github.com/owner/repo
+    ///   https://github.com/owner/repo.git
+    ///   https://github.com/owner/repo/
     pub fn from_github_url(url: &str) -> Result<(String, String)> {
         let url = url.trim_end_matches('/');
         let parts: Vec<&str> = url.split('/').collect();
 
         if parts.len() < 2 {
-            return Err(anyhow!("Invalid GitHub URL"));
+            return Err(anyhow!("Invalid GitHub URL: {}", url));
         }
 
         let owner = parts[parts.len() - 2].to_string();
-        let repo = parts[parts.len() - 1].to_string();
+        let repo = parts[parts.len() - 1]
+            .trim_end_matches(".git")
+            .to_string();
+
+        if owner.is_empty() || repo.is_empty() {
+            return Err(anyhow!("Invalid GitHub URL (empty owner or repo): {}", url));
+        }
 
         Ok((owner, repo))
     }
