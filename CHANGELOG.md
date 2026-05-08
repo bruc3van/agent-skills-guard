@@ -5,6 +5,35 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.1] - 2026-05-08
+
+### 🎯 升级提示
+
+- 这次版本重点改善从旧版 Agent Skills Guard 升级、以及首次安装后接管既有 skills 的体验。
+- 应用启动时会无损识别用户已经放在 Claude Code、Codex、Antigravity、OpenCode 和 Universal `.agents` 目录中的 skills，只补充管理状态，不移动、不删除、不替换用户文件。
+- 如果后续希望统一管理到 `~/.agents/skills`，仍可在界面中手动同步到目标工具。
+
+### ✨ 新增功能
+
+- **既有 skills 无损接管** - 新增启动迁移流程，自动扫描各工具默认 skills 目录并写入本地数据库状态。
+  - 支持识别 Claude Code 等工具目录本身是软链接或 Junction 的情况。
+  - 自动补全 `linked_tools`、`local_paths`、`source_path` 和 `is_local_only`，让工具图标状态更准确。
+  - 使用 `app_migrations` 记录迁移完成状态，避免重复执行。
+- **迁移并发保护** - 启动迁移增加进程内锁，避免未来并发调用时重复执行同一迁移。
+
+### 🐛 问题修复
+
+- 修复 Windows 打包版同步到工具目录时可能闪出终端窗口的问题。
+- 修复同步提示成功后 Claude Code 图标没有点亮的问题。
+- 修复同步到已有非空 skill 目录时不能可靠替换为链接的问题。
+- 修复工具目录为软链接/Junction 时，路径归属和图标状态识别不准确的问题。
+
+### 🔎 近期更新概览
+
+- `1.1.0` 引入了编程工具同步能力，可将 skills 同步到 Claude Code、Codex、Antigravity、OpenCode 等工具目录。
+- `1.1.0` 新增了工具图标状态、批量同步、安装时选择目标工具、多副本卸载确认等已安装技能管理能力。
+- 近期版本持续强化 Marketplace/插件支持、安全扫描、更新检查、缓存刷新和本地路径对账，升级后建议先进入「已安装」页面确认工具同步状态。
+
 ## [1.1.0] - 2026-05-08
 
 ### ✨ 新增功能
