@@ -257,6 +257,14 @@ impl Database {
             [],
         )?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS app_migrations (
+                key TEXT PRIMARY KEY,
+                completed_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+
         // 释放锁以便调用迁移方法
         drop(conn);
 
@@ -487,6 +495,25 @@ impl Database {
             ],
         )?;
 
+        Ok(())
+    }
+
+    pub fn is_app_migration_completed(&self, key: &str) -> Result<bool> {
+        let conn = self.lock_conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM app_migrations WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn mark_app_migration_completed(&self, key: &str) -> Result<()> {
+        let conn = self.lock_conn();
+        conn.execute(
+            "INSERT OR REPLACE INTO app_migrations (key, completed_at) VALUES (?1, ?2)",
+            params![key, chrono::Utc::now().to_rfc3339()],
+        )?;
         Ok(())
     }
 
@@ -886,7 +913,10 @@ impl Database {
         let conn = self.lock_conn();
         let _ = conn.execute("ALTER TABLE skills ADD COLUMN source_path TEXT", []);
         let _ = conn.execute("ALTER TABLE skills ADD COLUMN linked_tools TEXT", []);
-        let _ = conn.execute("ALTER TABLE skills ADD COLUMN is_local_only INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute(
+            "ALTER TABLE skills ADD COLUMN is_local_only INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         Ok(())
     }
 

@@ -328,6 +328,23 @@ pub fn run() {
 
             let db = Arc::new(db);
 
+            let migration_manager = services::MigrationManager::new(Arc::clone(&db));
+            match migration_manager.run_startup_migrations() {
+                Ok(summary) => {
+                    if summary.discovered > 0 || summary.created > 0 || summary.updated > 0 {
+                        log::info!(
+                            "Startup skill adoption completed: discovered={}, created={}, updated={}",
+                            summary.discovered,
+                            summary.created,
+                            summary.updated
+                        );
+                    }
+                }
+                Err(error) => {
+                    log::warn!("Startup skill adoption failed: {}", error);
+                }
+            }
+
             // 初始化 SkillManager
             let skill_manager = SkillManager::new(Arc::clone(&db));
             let skill_manager = Arc::new(Mutex::new(skill_manager));
