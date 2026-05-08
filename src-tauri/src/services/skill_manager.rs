@@ -83,6 +83,33 @@ fn paths_point_to_same_location(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn skill_md_checksum(skill_dir: &Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+
+    let content = std::fs::read(skill_dir.join("SKILL.md")).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    Some(hex::encode(hasher.finalize()))
+}
+
+fn tool_skill_path_is_compatible_with_source(
+    source: &Path,
+    tool_skill_path: &Path,
+    source_checksum: Option<&str>,
+) -> bool {
+    if paths_point_to_same_location(source, tool_skill_path) {
+        return true;
+    }
+
+    let Some(tool_checksum) = skill_md_checksum(tool_skill_path) else {
+        return false;
+    };
+    let expected_checksum =
+        skill_md_checksum(source).or_else(|| source_checksum.map(str::to_owned));
+
+    expected_checksum.as_deref() == Some(tool_checksum.as_str())
+}
+
 fn path_is_inside_dir_resolving_links(path: &Path, dir: &Path) -> bool {
     if path.starts_with(dir) {
         return true;
@@ -160,25 +187,32 @@ fn refresh_existing_tool_links_for_skill(skill: &Skill, tool_dirs: &[(PathBuf, S
     };
 
     let mut refreshed = skill.clone();
-    let mut local_paths = skill
-        .local_paths
-        .clone()
-        .unwrap_or_else(|| skill.local_path.clone().into_iter().collect());
-    push_unique_value(&mut local_paths, source.to_string_lossy().to_string());
+    let mut local_paths = Vec::new();
+    for candidate_path in &candidate_paths {
+        let candidate = PathBuf::from(candidate_path);
+        if candidate.exists()
+            && tool_skill_path_is_compatible_with_source(
+                &source,
+                &candidate,
+                skill.checksum.as_deref(),
+            )
+        {
+            push_unique_value(&mut local_paths, candidate_path.clone());
+        }
+    }
 
-    let mut linked_tools = skill
-        .linked_tools
-        .iter()
-        .filter(|tool_id| tool_id.as_str() != AgentTool::Agents.id())
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut linked_tools = Vec::new();
 
     for (tool_dir, tool_id) in tool_dirs {
         let tool_skill_path = tool_dir.join(skill_dir_name);
         if !tool_skill_path.exists() {
             continue;
         }
-        if !paths_point_to_same_location(&source, &tool_skill_path) {
+        if !tool_skill_path_is_compatible_with_source(
+            &source,
+            &tool_skill_path,
+            skill.checksum.as_deref(),
+        ) {
             continue;
         }
 
@@ -191,13 +225,29 @@ fn refresh_existing_tool_links_for_skill(skill: &Skill, tool_dirs: &[(PathBuf, S
         }
     }
 
+    if local_paths.is_empty() {
+        return skill.clone();
+    }
+
+    let current_source_exists = skill
+        .source_path
+        .as_deref()
+        .map(|path| PathBuf::from(path).exists())
+        .unwrap_or(false);
+    if !current_source_exists {
+        refreshed.source_path = local_paths.first().cloned();
+    }
+    refreshed.local_path = local_paths.first().cloned();
     refreshed.local_paths = Some(local_paths);
     refreshed.linked_tools = linked_tools;
     refreshed
 }
 
 fn installed_tool_state_changed(previous: &Skill, refreshed: &Skill) -> bool {
-    previous.local_paths != refreshed.local_paths || previous.linked_tools != refreshed.linked_tools
+    previous.source_path != refreshed.source_path
+        || previous.local_path != refreshed.local_path
+        || previous.local_paths != refreshed.local_paths
+        || previous.linked_tools != refreshed.linked_tools
 }
 
 fn restore_installation_backup(backup_path: &Path, final_install_dir: &Path) -> Result<()> {
@@ -2349,6 +2399,25 @@ impl SkillManager {
             };
             if let Some(tool_dir) = tool.default_skills_dir() {
                 let link = tool_dir.join(&skill_dir_name);
+                if link.exists() || link_fs::is_dir_link(&link) {
+                    if tool_skill_path_is_compatible_with_source(
+                        &source,
+                        &link,
+                        skill.checksum.as_deref(),
+                    ) {
+                        if !successful_tool_ids.iter().any(|id| id == tool.id()) {
+                            successful_tool_ids.push(tool.id().to_string());
+                        }
+                    } else {
+                        log::warn!(
+                            "跳过同步到工具 '{}': 目标已存在且内容不同，不覆盖 {:?}",
+                            tool.id(),
+                            link
+                        );
+                    }
+                    continue;
+                }
+
                 match link_fs::create_dir_link(&source, &link) {
                     Ok(()) => {
                         if !successful_tool_ids.iter().any(|id| id == tool.id()) {
@@ -2431,7 +2500,7 @@ mod tests {
         build_local_skill_id, build_synced_tool_state, find_tool_id_for_scan_dir,
         paths_point_to_same_location, refresh_existing_tool_links_for_skill,
         resolve_update_install_paths, resolve_update_target_install_dir,
-        restore_installation_backup,
+        restore_installation_backup, tool_skill_path_is_compatible_with_source,
     };
     use crate::services::{link_fs, Database};
     use std::collections::HashMap;
@@ -2599,6 +2668,112 @@ mod tests {
 
         assert!(!refreshed.linked_tools.contains(&"agents".to_string()));
         assert!(refreshed.linked_tools.contains(&"codex".to_string()));
+    }
+
+    #[test]
+    fn installed_skill_state_adopts_existing_tool_directory_with_same_checksum() {
+        let temp = tempfile::tempdir().unwrap();
+        let agents_dir = temp.path().join(".agents").join("skills");
+        let codex_dir = temp.path().join(".codex").join("skills");
+        let source = agents_dir.join("frontend-design");
+        let codex_existing = codex_dir.join("frontend-design");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&codex_existing).unwrap();
+        std::fs::write(source.join("SKILL.md"), "same skill").unwrap();
+        std::fs::write(codex_existing.join("SKILL.md"), "same skill").unwrap();
+
+        let mut skill = crate::models::Skill::new(
+            "frontend-design".to_string(),
+            "local".to_string(),
+            source.to_string_lossy().to_string(),
+        );
+        skill.id = "skill-1".to_string();
+        skill.installed = true;
+        skill.is_local_only = false;
+        skill.source_path = Some(source.to_string_lossy().to_string());
+        skill.local_path = Some(source.to_string_lossy().to_string());
+        skill.local_paths = Some(vec![source.to_string_lossy().to_string()]);
+        skill.checksum =
+            Some(crate::security::SecurityScanner::new().calculate_checksum(b"same skill"));
+        skill.linked_tools = Vec::new();
+
+        let refreshed = refresh_existing_tool_links_for_skill(
+            &skill,
+            &[(codex_dir.clone(), "codex".to_string())],
+        );
+
+        assert!(refreshed.linked_tools.contains(&"codex".to_string()));
+        assert!(refreshed
+            .local_paths
+            .as_ref()
+            .unwrap()
+            .contains(&codex_existing.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn installed_skill_state_drops_missing_agents_source_when_compatible_tool_path_exists() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing_agents_source = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("frontend-design");
+        let codex_dir = temp.path().join(".codex").join("skills");
+        let codex_existing = codex_dir.join("frontend-design");
+        std::fs::create_dir_all(&codex_existing).unwrap();
+        std::fs::write(codex_existing.join("SKILL.md"), "same skill").unwrap();
+
+        let checksum = crate::security::SecurityScanner::new().calculate_checksum(b"same skill");
+        let mut skill = crate::models::Skill::new(
+            "frontend-design".to_string(),
+            "local".to_string(),
+            missing_agents_source.to_string_lossy().to_string(),
+        );
+        skill.id = "skill-1".to_string();
+        skill.installed = true;
+        skill.is_local_only = false;
+        skill.source_path = Some(missing_agents_source.to_string_lossy().to_string());
+        skill.local_path = Some(missing_agents_source.to_string_lossy().to_string());
+        skill.local_paths = Some(vec![missing_agents_source.to_string_lossy().to_string()]);
+        skill.checksum = Some(checksum);
+        skill.linked_tools = Vec::new();
+
+        let refreshed =
+            refresh_existing_tool_links_for_skill(&skill, &[(codex_dir, "codex".to_string())]);
+
+        let codex_path = codex_existing.to_string_lossy().to_string();
+        assert_eq!(refreshed.source_path.as_deref(), Some(codex_path.as_str()));
+        assert_eq!(refreshed.local_path.as_deref(), Some(codex_path.as_str()));
+        assert_eq!(refreshed.local_paths.as_deref(), Some(&[codex_path][..]));
+        assert!(refreshed.linked_tools.contains(&"codex".to_string()));
+    }
+
+    #[test]
+    fn tool_skill_path_is_not_compatible_when_same_name_has_different_checksum() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("frontend-design");
+        let target = temp
+            .path()
+            .join(".codex")
+            .join("skills")
+            .join("frontend-design");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(source.join("SKILL.md"), "source skill").unwrap();
+        std::fs::write(target.join("SKILL.md"), "different skill").unwrap();
+
+        let source_checksum =
+            crate::security::SecurityScanner::new().calculate_checksum(b"source skill");
+
+        assert!(!tool_skill_path_is_compatible_with_source(
+            &source,
+            &target,
+            Some(source_checksum.as_str())
+        ));
     }
 
     #[test]
