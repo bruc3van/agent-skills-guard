@@ -104,6 +104,8 @@ fn tool_skill_path_is_compatible_with_source(
     let Some(tool_checksum) = skill_md_checksum(tool_skill_path) else {
         return false;
     };
+    // A third-party install may be a real directory rather than a link. Treat it as the
+    // same skill only when SKILL.md matches; this is compatibility detection, not trust.
     let expected_checksum =
         skill_md_checksum(source).or_else(|| source_checksum.map(str::to_owned));
 
@@ -235,6 +237,9 @@ fn refresh_existing_tool_links_for_skill(skill: &Skill, tool_dirs: &[(PathBuf, S
         .map(|path| PathBuf::from(path).exists())
         .unwrap_or(false);
     if !current_source_exists {
+        // Older builds could persist ~/.agents as the source even after that directory was
+        // removed. Move the canonical source to a compatible existing tool path so the UI
+        // no longer lights up a missing .agents location.
         refreshed.source_path = local_paths.first().cloned();
     }
     refreshed.local_path = local_paths.first().cloned();
@@ -1168,6 +1173,9 @@ impl SkillManager {
 
     /// 获取已安装的 skills
     pub fn get_installed_skills(&self) -> Result<Vec<Skill>> {
+        // This intentionally checks the filesystem on demand instead of using a long-lived
+        // backend cache: external tools or previous app versions may create/remove links while
+        // the app is open. DB writes are still gated by installed_tool_state_changed.
         let tool_dirs = default_tool_dirs();
         let skills = self.db.get_skills()?;
         let mut installed = Vec::new();
@@ -2389,9 +2397,8 @@ impl SkillManager {
             }
         }
 
-        // 创建新链接，并只把成功创建的目标写回数据库
-        let mut successful_tool_ids: Vec<String> = Vec::new();
-
+        // Create or adopt requested target paths first; final DB state is reconciled with
+        // the same filesystem scan used by get_installed_skills to avoid path-state drift.
         for tool_id in &target_tools {
             let tool = match AgentTool::from_id(tool_id) {
                 Some(t) if t != AgentTool::Agents => t,
@@ -2405,10 +2412,10 @@ impl SkillManager {
                         &link,
                         skill.checksum.as_deref(),
                     ) {
-                        if !successful_tool_ids.iter().any(|id| id == tool.id()) {
-                            successful_tool_ids.push(tool.id().to_string());
-                        }
+                        log::info!("复用已存在的兼容工具路径 [{:?}]", link);
                     } else {
+                        // Do not overwrite an existing same-name skill owned by another tool
+                        // or older install unless it resolves to the same content.
                         log::warn!(
                             "跳过同步到工具 '{}': 目标已存在且内容不同，不覆盖 {:?}",
                             tool.id(),
@@ -2419,11 +2426,7 @@ impl SkillManager {
                 }
 
                 match link_fs::create_dir_link(&source, &link) {
-                    Ok(()) => {
-                        if !successful_tool_ids.iter().any(|id| id == tool.id()) {
-                            successful_tool_ids.push(tool.id().to_string());
-                        }
-                    }
+                    Ok(()) => {}
                     Err(e) => {
                         log::warn!("创建链接失败 [{:?}]: {}", link, e);
                     }
@@ -2431,11 +2434,8 @@ impl SkillManager {
             }
         }
 
-        let (new_linked, new_paths) =
-            build_synced_tool_state(&source, &skill_dir_name, &successful_tool_ids);
-        skill.linked_tools = new_linked;
-        skill.local_paths = Some(new_paths);
-        self.db.save_skill(&skill)?;
+        let reconciled = refresh_existing_tool_links_for_skill(&skill, &default_tool_dirs());
+        self.db.save_skill(&reconciled)?;
 
         log::info!("Synced skill '{}' to tools: {:?}", skill.name, target_tools);
         Ok(())
