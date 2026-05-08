@@ -31,8 +31,48 @@ struct MarketplacePluginEntry {
     name: String,
     description: Option<String>,
     version: Option<String>,
-    source: String,
+    source: MarketplacePluginSource,
     author: Option<AuthorField>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum MarketplacePluginSource {
+    Path(String),
+    Object {
+        source: String,
+        path: Option<String>,
+        url: Option<String>,
+    },
+}
+
+impl MarketplacePluginSource {
+    fn to_display(&self) -> String {
+        match self {
+            MarketplacePluginSource::Path(value) => value.clone(),
+            MarketplacePluginSource::Object {
+                source: kind,
+                path,
+                url,
+            } => path
+                .clone()
+                .or_else(|| url.clone())
+                .unwrap_or_else(|| kind.clone()),
+        }
+    }
+
+    fn local_path_source(&self) -> Option<String> {
+        match self {
+            MarketplacePluginSource::Path(value) => Some(value.clone()),
+            MarketplacePluginSource::Object { source, path, .. } => {
+                if source == "local" {
+                    path.clone()
+                } else {
+                    None
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -229,16 +269,12 @@ impl PluginManager {
 
         let mut plugins = Vec::new();
         for entry in manifest.plugins {
-            let source = normalize_source(&entry.source);
-            let source_path = match resolve_source_path(&repo_root, &source) {
-                Ok(path) => path,
-                Err(e) => {
-                    log::warn!("插件路径无效，跳过: {} ({})", entry.name, e);
-                    continue;
-                }
-            };
-
-            let plugin_manifest = read_plugin_manifest(&source_path).ok();
+            let source = entry.source.to_display();
+            let plugin_manifest = entry
+                .source
+                .local_path_source()
+                .and_then(|local_source| resolve_source_path(&repo_root, &local_source).ok())
+                .and_then(|source_path| read_plugin_manifest(&source_path).ok());
             let name = plugin_manifest
                 .as_ref()
                 .map(|m| m.name.clone())
@@ -1888,6 +1924,32 @@ noise after json..."#;
         assert_eq!(payload.available[0].plugin_id, "sample@market");
         assert_eq!(payload.available[0].version.as_deref(), Some("1.1.0"));
     }
+
+    #[test]
+    fn marketplace_manifest_accepts_object_source_entries() {
+        let json = r#"{
+          "name": "superpowers-marketplace",
+          "plugins": [
+            {
+              "name": "superpowers",
+              "source": {
+                "source": "url",
+                "url": "https://github.com/obra/superpowers.git"
+              },
+              "description": "Core skills library",
+              "version": "5.1.0"
+            }
+          ]
+        }"#;
+
+        let manifest: MarketplaceManifest = serde_json::from_str(json).unwrap();
+
+        assert_eq!(
+            manifest.plugins[0].source.to_display(),
+            "https://github.com/obra/superpowers.git"
+        );
+        assert_eq!(manifest.plugins[0].source.local_path_source(), None);
+    }
 }
 
 fn parse_marketplace_list_text(output: &str) -> Vec<ClaudeMarketplace> {
@@ -2234,20 +2296,30 @@ fn resolve_marketplace_plugins(
 
     let mut resolved = Vec::new();
     for entry in manifest.plugins {
-        let source = normalize_source(&entry.source);
-        let source_path = resolve_source_path(repo_root, &source)?;
-        if !source_path.exists() {
-            anyhow::bail!("插件目录不存在: {}", source_path.to_string_lossy());
-        }
-
-        let plugin_manifest = match read_plugin_manifest(&source_path) {
-            Ok(manifest) => Some(manifest),
-            Err(e) => {
-                if strict {
-                    return Err(e);
+        let source = entry.source.to_display();
+        let source_path = match entry.source.local_path_source() {
+            Some(local_source) => {
+                let source_path = resolve_source_path(repo_root, &local_source)?;
+                if !source_path.exists() {
+                    anyhow::bail!("插件目录不存在: {}", source_path.to_string_lossy());
                 }
-                None
+                source_path
             }
+            None if strict => anyhow::bail!("插件 source 不是本地路径: {}", entry.name),
+            None => repo_root.to_path_buf(),
+        };
+
+        let plugin_manifest = match entry.source.local_path_source() {
+            Some(_) => match read_plugin_manifest(&source_path) {
+                Ok(manifest) => Some(manifest),
+                Err(e) => {
+                    if strict {
+                        return Err(e);
+                    }
+                    None
+                }
+            },
+            None => None,
         };
 
         let name = plugin_manifest
