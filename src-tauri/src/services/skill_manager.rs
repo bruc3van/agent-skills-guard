@@ -5,6 +5,7 @@ use crate::services::link_fs;
 use crate::services::{Database, GitHubService};
 use anyhow::{Context, Result};
 use chrono::Utc;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -80,6 +81,31 @@ fn paths_point_to_same_location(left: &Path, right: &Path) -> bool {
         }
         _ => false,
     }
+}
+
+fn path_is_inside_dir_resolving_links(path: &Path, dir: &Path) -> bool {
+    if path.starts_with(dir) {
+        return true;
+    }
+
+    match (std::fs::canonicalize(path), std::fs::canonicalize(dir)) {
+        (Ok(path), Ok(dir)) => path.starts_with(dir),
+        _ => false,
+    }
+}
+
+fn find_tool_id_for_scan_dir(
+    scan_dir: &Path,
+    dir_to_tool: &HashMap<PathBuf, String>,
+) -> Option<String> {
+    if let Some(tool_id) = dir_to_tool.get(scan_dir) {
+        return Some(tool_id.clone());
+    }
+
+    dir_to_tool
+        .iter()
+        .find(|(dir, _)| paths_point_to_same_location(scan_dir, dir))
+        .map(|(_, tool_id)| tool_id.clone())
 }
 
 fn restore_installation_backup(backup_path: &Path, final_install_dir: &Path) -> Result<()> {
@@ -1004,7 +1030,7 @@ impl SkillManager {
 
     /// 扫描所有工具 skill 目录，导入未追踪的技能；通过 realpath 去重，避免链接和源重复导入
     pub fn scan_local_skills(&self) -> Result<Vec<Skill>> {
-        use std::collections::{HashMap, HashSet};
+        use std::collections::HashSet;
 
         // 所有扫描到的技能
         let mut scanned_skills = Vec::new();
@@ -1044,7 +1070,7 @@ impl SkillManager {
 
         // 3. 扫描所有目录
         for scan_dir in scan_dirs {
-            let scan_dir_tool = dir_to_tool.get(&scan_dir).cloned();
+            let scan_dir_tool = find_tool_id_for_scan_dir(&scan_dir, &dir_to_tool);
             if !scan_dir.exists() {
                 log::debug!("Skipping non-existent directory: {:?}", scan_dir);
                 continue;
@@ -1424,7 +1450,7 @@ impl SkillManager {
                         if let Some(tool_dir) = tool.default_skills_dir() {
                             // Check if any stale path belongs to this tool
                             return !stale_paths.iter().any(|sp| {
-                                PathBuf::from(sp).parent().map_or(false, |p| p == tool_dir)
+                                path_is_inside_dir_resolving_links(&PathBuf::from(sp), &tool_dir)
                             });
                         }
                     }
@@ -2170,7 +2196,7 @@ impl SkillManager {
                     continue;
                 }
                 if let Some(tool_dir) = tool.default_skills_dir() {
-                    if original.starts_with(&tool_dir) {
+                    if path_is_inside_dir_resolving_links(&original, &tool_dir) {
                         linked.push(tool.id().to_string());
                         break;
                     }
@@ -2297,11 +2323,12 @@ fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_local_skill_id, build_synced_tool_state, paths_point_to_same_location,
-        resolve_update_install_paths, resolve_update_target_install_dir,
-        restore_installation_backup,
+        build_local_skill_id, build_synced_tool_state, find_tool_id_for_scan_dir,
+        paths_point_to_same_location, resolve_update_install_paths,
+        resolve_update_target_install_dir, restore_installation_backup,
     };
     use crate::services::{link_fs, Database};
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -2381,6 +2408,23 @@ mod tests {
 
         assert!(paths_point_to_same_location(&display_path, &link_dir));
         assert!(paths_point_to_same_location(&write_target, &real_dir));
+    }
+
+    #[test]
+    fn scan_dir_tool_detection_follows_linked_tool_directory_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        let real_tools_dir = temp.path().join("real-claude-skills");
+        let linked_tools_dir = temp.path().join("home").join(".claude").join("skills");
+        std::fs::create_dir_all(&real_tools_dir).unwrap();
+        link_fs::create_dir_link(&real_tools_dir, &linked_tools_dir).unwrap();
+
+        let mut dir_to_tool = HashMap::new();
+        dir_to_tool.insert(linked_tools_dir, "claude-code".to_string());
+
+        assert_eq!(
+            find_tool_id_for_scan_dir(&real_tools_dir, &dir_to_tool).as_deref(),
+            Some("claude-code")
+        );
     }
 
     #[test]

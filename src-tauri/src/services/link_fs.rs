@@ -4,24 +4,41 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 
+fn paths_point_to_same_location(left: &Path, right: &Path) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
 /// 创建目录链接：link -> source
 /// 若 link 已存在（链接或目录），先删除再创建
 pub fn create_dir_link(source: &Path, link: &Path) -> Result<()> {
     // 确保源目录存在
     if !source.exists() {
-        std::fs::create_dir_all(source)
-            .context(format!("无法创建源目录: {:?}", source))?;
+        std::fs::create_dir_all(source).context(format!("无法创建源目录: {:?}", source))?;
     }
 
     // 确保父目录存在
     if let Some(parent) = link.parent() {
-        std::fs::create_dir_all(parent)
-            .context(format!("无法创建链接父目录: {:?}", parent))?;
+        std::fs::create_dir_all(parent).context(format!("无法创建链接父目录: {:?}", parent))?;
     }
 
     // 若目标已存在，先删除
     if link.exists() || is_dir_link(link) {
-        remove_dir_link(link).context(format!("无法删除已有链接/目录: {:?}", link))?;
+        if paths_point_to_same_location(source, link) {
+            return Ok(());
+        }
+
+        let metadata = std::fs::symlink_metadata(link)
+            .context(format!("无法读取已有链接/目录: {:?}", link))?;
+        if is_dir_link(link) {
+            remove_dir_link(link).context(format!("无法删除已有链接: {:?}", link))?;
+        } else if metadata.is_dir() {
+            std::fs::remove_dir_all(link).context(format!("无法删除已有目录: {:?}", link))?;
+        } else {
+            std::fs::remove_file(link).context(format!("无法删除已有文件: {:?}", link))?;
+        }
     }
 
     create_link_impl(source, link)
@@ -31,7 +48,11 @@ pub fn create_dir_link(source: &Path, link: &Path) -> Result<()> {
 pub fn is_dir_link(path: &Path) -> bool {
     #[cfg(windows)]
     {
-        is_junction(path) || path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false)
+        is_junction(path)
+            || path
+                .symlink_metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
     }
     #[cfg(not(windows))]
     {
@@ -59,15 +80,13 @@ pub fn remove_dir_link(link: &Path) -> Result<()> {
     {
         // Junction 和普通目录都用 remove_dir；如果是 symlink 也用 remove_dir
         if link.exists() || is_dir_link(link) {
-            std::fs::remove_dir(link)
-                .context(format!("无法删除目录链接: {:?}", link))?;
+            std::fs::remove_dir(link).context(format!("无法删除目录链接: {:?}", link))?;
         }
     }
     #[cfg(not(windows))]
     {
         if link.symlink_metadata().is_ok() {
-            std::fs::remove_file(link)
-                .context(format!("无法删除符号链接: {:?}", link))?;
+            std::fs::remove_file(link).context(format!("无法删除符号链接: {:?}", link))?;
         }
     }
     Ok(())
@@ -79,17 +98,18 @@ pub fn remove_dir_link(link: &Path) -> Result<()> {
 fn create_link_impl(source: &Path, link: &Path) -> Result<()> {
     use std::process::Command;
 
-    let source_str = source
-        .to_str()
-        .context("源路径包含无效字符")?;
-    let link_str = link
-        .to_str()
-        .context("链接路径包含无效字符")?;
+    let source_str = source.to_str().context("源路径包含无效字符")?;
+    let link_str = link.to_str().context("链接路径包含无效字符")?;
 
-    let output = Command::new("cmd")
-        .args(["/C", "mklink", "/J", link_str, source_str])
-        .output()
-        .context("无法执行 mklink 命令")?;
+    let mut command = Command::new("cmd");
+    command.args(["/C", "mklink", "/J", link_str, source_str]);
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = command.output().context("无法执行 mklink 命令")?;
 
     // cmd.exe /C 即使内部命令失败也可能返回 0，需要验证 junction 实际创建成功
     if output.status.success() && link.exists() {
@@ -201,6 +221,23 @@ mod tests {
         create_dir_link(&source2, &link).unwrap(); // 覆盖
 
         assert!(link.join("v2.txt").exists(), "应该指向 source2");
+    }
+
+    #[test]
+    fn test_overwrite_existing_non_empty_directory() {
+        let tmp = tempdir().unwrap();
+        let source = tmp.path().join("source");
+        let link = tmp.path().join("link");
+
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "source").unwrap();
+        std::fs::create_dir_all(&link).unwrap();
+        std::fs::write(link.join("old.txt"), "old").unwrap();
+
+        create_dir_link(&source, &link).unwrap();
+
+        assert!(link.join("SKILL.md").exists(), "应该替换为新的源目录链接");
+        assert!(!link.join("old.txt").exists(), "旧目录内容应该被替换");
     }
 
     #[test]

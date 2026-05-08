@@ -280,6 +280,19 @@ describe("getDisplayedToolIds", () => {
     expect(getDisplayedToolIds(skill)).toEqual(["claude-code", "codex"]);
   });
 
+  it("uses linked tool metadata when a local skill path is outside default tool folders", () => {
+    const skill = buildSkill({
+      id: "local::skill",
+      repository_url: "local",
+      repository_owner: "local",
+      is_local_only: true,
+      local_paths: ["D:/ClaudeSkills/example"],
+      linked_tools: ["claude-code"],
+    });
+
+    expect(getDisplayedToolIds(skill)).toEqual(["claude-code"]);
+  });
+
   it("shows agents plus linked tools for managed skills", () => {
     const skill = buildSkill({
       id: "repo-a::skill",

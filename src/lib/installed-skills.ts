@@ -147,7 +147,7 @@ export function getDisplayedToolIds(skill: Skill): string[] {
     .filter((id): id is string => Boolean(id));
 
   if (skill.is_local_only) {
-    return uniqueValues(pathToolIds);
+    return uniqueValues([...(skill.linked_tools ?? []), ...pathToolIds]);
   }
 
   return uniqueValues(["agents", ...(skill.linked_tools ?? []), ...pathToolIds]);
