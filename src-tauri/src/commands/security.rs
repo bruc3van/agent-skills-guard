@@ -18,7 +18,10 @@ pub async fn scan_all_installed_skills(
     scan_parallelism: Option<usize>,
 ) -> Result<Vec<SkillScanResult>, String> {
     let locale = validate_locale(&locale);
-    let skills = state.db.get_skills().map_err(|e| e.to_string())?;
+    let skills = {
+        let manager = state.skill_manager.lock().await;
+        manager.get_installed_skills().map_err(|e| e.to_string())?
+    };
     let installed_skills: Vec<Skill> = skills
         .into_iter()
         .filter(|s| s.installed && s.local_path.is_some())

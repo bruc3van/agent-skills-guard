@@ -1191,6 +1191,22 @@ impl SkillManager {
         Ok(installed)
     }
 
+    fn refresh_installed_tool_links(&self) -> Result<usize> {
+        let tool_dirs = default_tool_dirs();
+        let skills = self.db.get_skills()?;
+        let mut refreshed_count = 0usize;
+
+        for skill in skills.into_iter().filter(|s| s.installed) {
+            let refreshed = refresh_existing_tool_links_for_skill(&skill, &tool_dirs);
+            if installed_tool_state_changed(&skill, &refreshed) {
+                self.db.save_skill(&refreshed)?;
+                refreshed_count += 1;
+            }
+        }
+
+        Ok(refreshed_count)
+    }
+
     /// 扫描所有工具 skill 目录，导入未追踪的技能；通过 realpath 去重，避免链接和源重复导入
     pub fn scan_local_skills(&self) -> Result<Vec<Skill>> {
         use std::collections::HashSet;
@@ -1519,12 +1535,14 @@ impl SkillManager {
         // Reconciliation pass: detect skills that exist in DB as installed
         // but whose directories no longer exist on disk
         let stale_count = self.reconcile_stale_skills(&existing_skills)?;
+        let refreshed_count = self.refresh_installed_tool_links()?;
 
         log::info!(
-            "Scanned {} local skills, imported {} new skills, reconciled {} stale skills",
+            "Scanned {} local skills, imported {} new skills, reconciled {} stale skills, refreshed {} tool-link states",
             scanned_skills.len(),
             imported_skills.len(),
-            stale_count
+            stale_count,
+            refreshed_count
         );
         Ok(scanned_skills)
     }
@@ -2422,6 +2440,7 @@ impl SkillManager {
 
         // Create or adopt requested target paths first; final DB state is reconciled with
         // the same filesystem scan used by get_installed_skills to avoid path-state drift.
+        let mut sync_errors: Vec<String> = Vec::new();
         for tool_id in &target_tools {
             let tool = match AgentTool::from_id(tool_id) {
                 Some(t) if t != AgentTool::Agents => t,
@@ -2437,13 +2456,12 @@ impl SkillManager {
                     ) {
                         log::info!("复用已存在的兼容工具路径 [{:?}]", link);
                     } else {
-                        // Do not overwrite an existing same-name skill owned by another tool
-                        // or older install unless it resolves to the same content.
-                        log::warn!(
-                            "跳过同步到工具 '{}': 目标已存在且内容不同，不覆盖 {:?}",
-                            tool.id(),
-                            link
+                        let msg = format!(
+                            "工具 '{}' 下已存在同名但内容不同的技能，不覆盖",
+                            tool.id()
                         );
+                        log::warn!("{}", msg);
+                        sync_errors.push(msg);
                     }
                     continue;
                 }
@@ -2451,7 +2469,9 @@ impl SkillManager {
                 match link_fs::create_dir_link(&source, &link) {
                     Ok(()) => {}
                     Err(e) => {
-                        log::warn!("创建链接失败 [{:?}]: {}", link, e);
+                        let msg = format!("创建链接到工具 '{}' 失败: {}", tool.id(), e);
+                        log::warn!("{}", msg);
+                        sync_errors.push(msg);
                     }
                 }
             }
@@ -2461,7 +2481,11 @@ impl SkillManager {
         self.db.save_skill(&reconciled)?;
 
         log::info!("Synced skill '{}' to tools: {:?}", skill.name, target_tools);
-        Ok(())
+        if sync_errors.is_empty() {
+            Ok(())
+        } else {
+            anyhow::bail!("部分工具同步失败: {}", sync_errors.join("; "))
+        }
     }
 
     /// 为所有已安装 skill 批量同步到指定工具（含本地技能）

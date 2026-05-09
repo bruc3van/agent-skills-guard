@@ -51,7 +51,12 @@ import { SkillSecurityDialog, SkillSecurityDialogConfirmButton } from "./ui/Skil
 import { SkillUninstallConfirmDialog } from "./SkillUninstallConfirmDialog";
 import { ToolSyncDialog } from "./ui/ToolSyncDialog";
 import { ToolIcons } from "./ui/ToolIcons";
-import { useSyncSkillToTools, useSyncAllSkillsToTools, useAgentTools } from "@/lib/agent-tools";
+import {
+  AGENT_TOOLS_KEY,
+  useSyncSkillToTools,
+  useSyncAllSkillsToTools,
+  useAgentTools,
+} from "@/lib/agent-tools";
 
 const AVAILABLE_UPDATES_KEY = "available_updates";
 const AVAILABLE_PLUGIN_UPDATES_KEY = "available_plugin_updates";
@@ -367,6 +372,7 @@ export function InstalledSkillsPage() {
       const localSkills = await api.scanLocalSkills();
       await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
       await queryClient.refetchQueries({ queryKey: ["skills"] });
+      await queryClient.refetchQueries({ queryKey: AGENT_TOOLS_KEY });
       await queryClient.refetchQueries({ queryKey: ["scanResults"] });
       if (!options?.silent) {
         appToast.success(t("skills.installedPage.scanCompleted", { count: localSkills.length }));
@@ -1051,12 +1057,15 @@ export function InstalledSkillsPage() {
           const current = skill.is_local_only
             ? getDisplayedToolIds(skill).filter((id) => id !== "agents")
             : (skill.linked_tools ?? []);
+          const allSkillIds = getOperationSkillIds(skill);
 
           // 点击 .agents 按钮（仅本地 skill）→ 提升到通用目录，保留原工具链接
           if (toolId === "agents") {
             setPendingToggleTarget({ skillId: skill.id, toolId: "agents" });
             try {
-              await syncSkillMutation.mutateAsync({ skillId: skill.id, tools: current });
+              for (const sid of allSkillIds) {
+                await syncSkillMutation.mutateAsync({ skillId: sid, tools: current });
+              }
               appToast.success("已提升到通用目录");
             } catch (e: any) {
               appToast.error(`操作失败: ${e.message || e}`);
@@ -1071,7 +1080,9 @@ export function InstalledSkillsPage() {
             : [...new Set([...current, toolId])];
           setPendingToggleTarget({ skillId: skill.id, toolId });
           try {
-            await syncSkillMutation.mutateAsync({ skillId: skill.id, tools: newTools });
+            for (const sid of allSkillIds) {
+              await syncSkillMutation.mutateAsync({ skillId: sid, tools: newTools });
+            }
             appToast.success(active ? "已移除同步" : "同步成功");
           } catch (e: any) {
             appToast.error(`操作失败: ${e.message || e}`);

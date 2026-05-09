@@ -280,6 +280,31 @@ describe("getDisplayedToolIds", () => {
     expect(getDisplayedToolIds(skill)).toEqual(["claude-code", "codex"]);
   });
 
+  it("infers every supported tool from default skill paths", () => {
+    const skill = buildSkill({
+      id: "local::skill",
+      repository_url: "local",
+      repository_owner: "local",
+      is_local_only: true,
+      local_paths: [
+        "C:/Users/Bruce/.agents/skills/example",
+        "C:/Users/Bruce/.claude/skills/example",
+        "C:/Users/Bruce/.codex/skills/example",
+        "C:/Users/Bruce/.gemini/antigravity/skills/example",
+        "C:/Users/Bruce/.config/opencode/skills/example",
+      ],
+      linked_tools: [],
+    });
+
+    expect(getDisplayedToolIds(skill)).toEqual([
+      "agents",
+      "claude-code",
+      "codex",
+      "antigravity",
+      "opencode",
+    ]);
+  });
+
   it("uses linked tool metadata when a local skill path is outside default tool folders", () => {
     const skill = buildSkill({
       id: "local::skill",

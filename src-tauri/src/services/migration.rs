@@ -39,13 +39,6 @@ impl MigrationManager {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        if self
-            .db
-            .is_app_migration_completed(ADOPT_EXISTING_SKILLS_MIGRATION)?
-        {
-            return Ok(SkillAdoptionSummary::default());
-        }
-
         let tool_dirs = AgentTool::all()
             .into_iter()
             .filter_map(|tool| {
@@ -55,9 +48,21 @@ impl MigrationManager {
                 })
             })
             .collect::<Vec<_>>();
-        let summary = self.adopt_existing_skills_from_dirs(&tool_dirs)?;
-        self.db
-            .mark_app_migration_completed(ADOPT_EXISTING_SKILLS_MIGRATION)?;
+        self.run_startup_migrations_from_dirs(&tool_dirs)
+    }
+
+    pub fn run_startup_migrations_from_dirs(
+        &self,
+        tool_dirs: &[ToolSkillDir],
+    ) -> Result<SkillAdoptionSummary> {
+        let summary = self.adopt_existing_skills_from_dirs(tool_dirs)?;
+        if !self
+            .db
+            .is_app_migration_completed(ADOPT_EXISTING_SKILLS_MIGRATION)?
+        {
+            self.db
+                .mark_app_migration_completed(ADOPT_EXISTING_SKILLS_MIGRATION)?;
+        }
         Ok(summary)
     }
 
@@ -126,7 +131,7 @@ impl MigrationManager {
             skill.local_paths = Some(group.display_paths.clone());
             skill.checksum = Some(group.checksum.clone());
             skill.source_path = Some(source_path);
-            skill.linked_tools = group.tool_ids.clone();
+            skill.linked_tools = merge_tools(&[], &group.tool_ids);
             skill.is_local_only = true;
 
             self.db.save_skill(&skill)?;
@@ -399,6 +404,112 @@ mod tests {
             skill_dir.exists(),
             "adoption must not move the real skill directory"
         );
+    }
+
+    #[test]
+    fn adoption_marks_child_junction_skill_as_linked_tool_for_every_tool() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let agents_skills = temp.path().join("home").join(".agents").join("skills");
+        let agents_skill_dir = agents_skills.join("example");
+        std::fs::create_dir_all(&agents_skill_dir).unwrap();
+        std::fs::write(
+            agents_skill_dir.join("SKILL.md"),
+            "---\nname: example\ndescription: Shared skill\n---\n",
+        )
+        .unwrap();
+
+        let tool_dirs = [
+            (
+                "claude-code",
+                temp.path().join("home").join(".claude").join("skills"),
+            ),
+            (
+                "codex",
+                temp.path().join("home").join(".codex").join("skills"),
+            ),
+            (
+                "antigravity",
+                temp.path()
+                    .join("home")
+                    .join(".gemini")
+                    .join("antigravity")
+                    .join("skills"),
+            ),
+            (
+                "opencode",
+                temp.path()
+                    .join("home")
+                    .join(".config")
+                    .join("opencode")
+                    .join("skills"),
+            ),
+        ];
+        for (_, tool_dir) in &tool_dirs {
+            std::fs::create_dir_all(tool_dir).unwrap();
+            link_fs::create_dir_link(&agents_skill_dir, &tool_dir.join("example")).unwrap();
+        }
+
+        let mut adoption_dirs = vec![ToolSkillDir {
+            tool_id: "agents".to_string(),
+            path: agents_skills.clone(),
+        }];
+        adoption_dirs.extend(tool_dirs.iter().map(|(tool_id, path)| ToolSkillDir {
+            tool_id: (*tool_id).to_string(),
+            path: path.clone(),
+        }));
+
+        let manager = MigrationManager::new(Arc::clone(&db));
+        let summary = manager
+            .adopt_existing_skills_from_dirs(&adoption_dirs)
+            .unwrap();
+
+        let skills = db.get_skills().unwrap();
+        assert_eq!(summary.discovered, 1);
+        assert_eq!(summary.created, 1);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(
+            skills[0].linked_tools,
+            vec![
+                "antigravity".to_string(),
+                "claude-code".to_string(),
+                "codex".to_string(),
+                "opencode".to_string()
+            ]
+        );
+        assert_eq!(
+            skills[0].source_path.as_deref(),
+            Some(agents_skill_dir.to_string_lossy().as_ref())
+        );
+        let local_paths = skills[0].local_paths.as_ref().unwrap();
+        assert!(local_paths.contains(&agents_skill_dir.to_string_lossy().to_string()));
+        for (_, tool_dir) in &tool_dirs {
+            assert!(local_paths.contains(&tool_dir.join("example").to_string_lossy().to_string()));
+        }
+    }
+
+    #[test]
+    fn completed_startup_migration_still_adopts_new_local_skills() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let agents_skills = temp.path().join("home").join(".agents").join("skills");
+        let skill_dir = agents_skills.join("example");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: example\n---\n").unwrap();
+        db.mark_app_migration_completed(super::ADOPT_EXISTING_SKILLS_MIGRATION)
+            .unwrap();
+
+        let manager = MigrationManager::new(Arc::clone(&db));
+        let summary = manager
+            .run_startup_migrations_from_dirs(&[ToolSkillDir {
+                tool_id: "agents".to_string(),
+                path: agents_skills,
+            }])
+            .unwrap();
+
+        assert_eq!(summary.discovered, 1);
+        assert_eq!(summary.created, 1);
+        assert_eq!(db.get_skills().unwrap().len(), 1);
     }
 
     #[test]
