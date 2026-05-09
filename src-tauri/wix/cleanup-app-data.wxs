@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <CustomAction
+      Id="CleanupAppDataOnUninstall"
+      Directory="TARGETDIR"
+      Execute="deferred"
+      Impersonate="yes"
+      Return="ignore"
+      ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command &quot;$paths = @((Join-Path $env:APPDATA 'com.agent-skills-guard.app'), (Join-Path $env:LOCALAPPDATA 'com.agent-skills-guard.app'), (Join-Path $env:LOCALAPPDATA 'agent-skills-guard')); foreach ($path in $paths) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue } }&quot;" />
+
+    <InstallExecuteSequence>
+      <Custom Action="CleanupAppDataOnUninstall" Before="RemoveFiles">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>
