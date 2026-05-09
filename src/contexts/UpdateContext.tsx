@@ -14,6 +14,8 @@ type UpdateProgress = {
   percent: number;
 };
 
+type CheckUpdateResult = { hasUpdate: false } | { hasUpdate: true; info: UpdateInfo };
+
 interface UpdateContextValue {
   hasUpdate: boolean;
   updateInfo: UpdateInfo | null;
@@ -24,7 +26,7 @@ interface UpdateContextValue {
   updateProgress: UpdateProgress | null;
   isDismissed: boolean;
   dismissUpdate: () => void;
-  checkUpdate: () => Promise<boolean>;
+  checkUpdate: () => Promise<CheckUpdateResult>;
   installUpdate: () => Promise<boolean>;
   resetDismiss: () => void;
 }
@@ -56,15 +58,15 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     setUpdatePhase(phase);
   }, []);
 
-  const checkUpdate = useCallback(async (): Promise<boolean> => {
-    if (isCheckingRef.current) return false;
+  const checkUpdate = useCallback(async (): Promise<CheckUpdateResult> => {
+    if (isCheckingRef.current) return { hasUpdate: false };
     if (
       updatePhaseRef.current === "downloading" ||
       updatePhaseRef.current === "installing" ||
       updatePhaseRef.current === "restartRequired" ||
       updatePhaseRef.current === "restarting"
     ) {
-      return false;
+      return { hasUpdate: false };
     }
 
     isCheckingRef.current = true;
@@ -82,7 +84,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
         const dismissedVersion = localStorage.getItem(DISMISSED_KEY_PREFIX);
         setIsDismissed(dismissedVersion === result.info.availableVersion);
 
-        return true;
+        return { hasUpdate: true, info: result.info };
       } else {
         setHasUpdate(false);
         setUpdateInfo(null);
@@ -90,13 +92,13 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
         setIsDismissed(false);
         setUpdatePhaseSafe("idle");
         setUpdateProgress(null);
-        return false;
+        return { hasUpdate: false };
       }
     } catch (err) {
       console.error("[UpdateContext] Check update failed:", err);
       setError(err instanceof Error ? err.message : String(err));
       setHasUpdate(false);
-      return false;
+      return { hasUpdate: false };
     } finally {
       setIsChecking(false);
       isCheckingRef.current = false;

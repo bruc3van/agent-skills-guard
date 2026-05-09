@@ -447,31 +447,20 @@ impl PluginManager {
             self.db.save_plugin(&plugin)?;
         }
 
-        // 反向同步：DB 标记为 installed 但 CLI 已不存在 -> 标记为未安装
-        // 安全防护：只有 CLI 返回了至少一条记录时才执行反向同步，
-        // 避免 CLI 异常返回空列表时误将所有 plugin 标记为未安装。
-        if !installed_claude_ids.is_empty() {
-            let current_plugins = self.db.get_plugins().unwrap_or_default();
-            for plugin in current_plugins {
-                let claude_id = match plugin.claude_id.as_deref() {
-                    Some(v) => v,
-                    None => continue,
-                };
+        // 反向同步：DB 标记为 installed 但 CLI 已不存在 -> 标记为未安装。
+        // 只要 `claude plugin list --json` 成功解析，空列表也是权威状态。
+        let current_plugins = self.db.get_plugins().unwrap_or_default();
+        for plugin in current_plugins {
+            let claude_id = match plugin.claude_id.as_deref() {
+                Some(v) => v,
+                None => continue,
+            };
 
-                if plugin.installed && !installed_claude_ids.contains(claude_id) {
-                    let mut updated = plugin.clone();
-                    updated.installed = false;
-                    updated.installed_at = None;
-                    updated.installed_version = None;
-                    updated.claude_scope = None;
-                    updated.claude_enabled = None;
-                    updated.claude_install_path = None;
-                    updated.claude_last_updated = None;
-                    self.db.save_plugin(&updated)?;
-                }
+            if plugin.installed && !installed_claude_ids.contains(claude_id) {
+                let mut updated = plugin.clone();
+                clear_plugin_installation_state(&mut updated);
+                self.db.save_plugin(&updated)?;
             }
-        } else {
-            log::debug!("CLI 返回空安装列表，跳过反向同步以避免误清除安装状态");
         }
 
         Ok(())
@@ -1421,11 +1410,7 @@ impl PluginManager {
         let claude_cli = ClaudeCli::new(cli_command);
 
         let commands = vec![ClaudeCommand {
-            args: vec![
-                "plugin".to_string(),
-                "uninstall".to_string(),
-                plugin.plugin_spec(),
-            ],
+            args: build_plugin_uninstall_args(&plugin),
             timeout: Duration::from_secs(60),
         }];
 
@@ -1438,20 +1423,27 @@ impl PluginManager {
 
         let outcome = parse_plugin_uninstall_output(&output);
 
-        let mut updated = plugin.clone();
         if outcome.success {
-            updated.installed = false;
-            updated.installed_at = None;
-            updated.install_status = Some("uninstalled".to_string());
+            let all_plugins = self.db.get_plugins()?;
+            for mut candidate in all_plugins
+                .into_iter()
+                .filter(|candidate| plugin_matches_claude_identity(candidate, &plugin))
+            {
+                clear_plugin_installation_state(&mut candidate);
+                candidate.install_status = Some("uninstalled".to_string());
+                candidate.install_log = Some(cli_result.raw_log.clone());
+                self.db.save_plugin(&candidate)?;
+            }
         } else {
+            let mut updated = plugin.clone();
             updated.install_status = Some("uninstall_failed".to_string());
+            updated.install_log = Some(cli_result.raw_log.clone());
+            self.db.save_plugin(&updated)?;
         }
-        updated.install_log = Some(cli_result.raw_log.clone());
-        self.db.save_plugin(&updated)?;
 
         Ok(PluginUninstallResult {
-            plugin_id: updated.id,
-            plugin_name: updated.name,
+            plugin_id: plugin.id,
+            plugin_name: plugin.name,
             success: outcome.success,
             raw_log: cli_result.raw_log,
         })
@@ -1577,6 +1569,64 @@ fn parse_claude_plugin_id(id: &str) -> Option<(String, String)> {
         return None;
     }
     Some((name.to_string(), marketplace.to_string()))
+}
+
+fn plugin_claude_id(plugin: &Plugin) -> String {
+    plugin
+        .claude_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| plugin.plugin_spec())
+}
+
+fn build_plugin_uninstall_args(plugin: &Plugin) -> Vec<String> {
+    let mut args = vec![
+        "plugin".to_string(),
+        "uninstall".to_string(),
+        plugin_claude_id(plugin),
+    ];
+
+    if let Some(scope) = plugin
+        .claude_scope
+        .as_deref()
+        .map(str::trim)
+        .filter(|scope| !scope.is_empty())
+    {
+        args.push("--scope".to_string());
+        args.push(scope.to_string());
+    }
+
+    args
+}
+
+fn plugin_matches_claude_identity(candidate: &Plugin, target: &Plugin) -> bool {
+    if candidate.id == target.id {
+        return true;
+    }
+
+    let candidate_claude_id = candidate.claude_id.as_deref().map(str::trim);
+    let target_claude_id = target.claude_id.as_deref().map(str::trim);
+
+    match (candidate_claude_id, target_claude_id) {
+        (Some(candidate_id), Some(target_id))
+            if !candidate_id.is_empty() && !target_id.is_empty() =>
+        {
+            candidate_id == target_id
+        }
+        _ => candidate.plugin_spec() == target.plugin_spec(),
+    }
+}
+
+fn clear_plugin_installation_state(plugin: &mut Plugin) {
+    plugin.installed = false;
+    plugin.installed_at = None;
+    plugin.installed_version = None;
+    plugin.claude_scope = None;
+    plugin.claude_enabled = None;
+    plugin.claude_install_path = None;
+    plugin.claude_last_updated = None;
 }
 
 fn parse_slash_command_args(command: &str) -> Option<Vec<String>> {
@@ -1813,6 +1863,67 @@ fn strip_terminal_escapes(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_plugin_uninstall_args_includes_installed_scope() {
+        let mut plugin = Plugin::new(
+            "example-plugin".to_string(),
+            "https://github.com/example/marketplace".to_string(),
+            "example-marketplace".to_string(),
+            "plugins/example-plugin".to_string(),
+        );
+        plugin.claude_scope = Some("project".to_string());
+
+        assert_eq!(
+            build_plugin_uninstall_args(&plugin),
+            vec![
+                "plugin".to_string(),
+                "uninstall".to_string(),
+                "example-plugin@example-marketplace".to_string(),
+                "--scope".to_string(),
+                "project".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn uninstalled_plugin_state_matches_duplicate_records_by_claude_id() {
+        let mut target = Plugin::new(
+            "example-plugin".to_string(),
+            "https://github.com/example/marketplace".to_string(),
+            "example-marketplace".to_string(),
+            "plugins/example-plugin".to_string(),
+        );
+        target.claude_id = Some("example-plugin@example-marketplace".to_string());
+
+        let mut duplicate = Plugin::new(
+            "example-plugin".to_string(),
+            "https://github.com/other/marketplace".to_string(),
+            "example-marketplace".to_string(),
+            "external".to_string(),
+        );
+        duplicate.claude_id = Some("example-plugin@example-marketplace".to_string());
+        duplicate.installed = true;
+        duplicate.installed_version = Some("1.0.0".to_string());
+        duplicate.claude_scope = Some("user".to_string());
+        duplicate.claude_enabled = Some(true);
+        duplicate.claude_install_path = Some(
+            "C:/Users/Bruce/.claude/plugins/cache/example-marketplace/example-plugin/1.0.0"
+                .to_string(),
+        );
+
+        assert!(plugin_matches_claude_identity(&duplicate, &target));
+
+        clear_plugin_installation_state(&mut duplicate);
+
+        assert!(!duplicate.installed);
+        assert!(duplicate.installed_at.is_none());
+        assert!(duplicate.installed_version.is_none());
+        assert!(duplicate.claude_scope.is_none());
+        assert!(duplicate.claude_enabled.is_none());
+        assert!(duplicate.claude_install_path.is_none());
+        assert!(duplicate.claude_last_updated.is_none());
+    }
 
     #[test]
     fn parse_claude_plugin_list_with_available_from_powershell_output() {

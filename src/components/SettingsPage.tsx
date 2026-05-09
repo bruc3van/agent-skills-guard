@@ -214,12 +214,10 @@ export function SettingsPage() {
 
   const handleCheckUpdate = async () => {
     try {
-      const hasNewUpdate = await updateContext.checkUpdate();
-      if (hasNewUpdate) {
+      const result = await updateContext.checkUpdate();
+      if (result.hasUpdate) {
         updateContext.resetDismiss();
-        appToast.success(
-          t("update.newVersionAvailable") + ": " + updateContext.updateInfo?.availableVersion
-        );
+        appToast.success(t("update.newVersionAvailable") + ": " + result.info.availableVersion);
       } else {
         appToast.success(t("update.upToDate"));
       }
