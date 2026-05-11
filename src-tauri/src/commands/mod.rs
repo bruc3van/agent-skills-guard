@@ -1,4 +1,5 @@
 pub mod featured_marketplaces;
+pub mod local_cli;
 pub mod plugins;
 pub mod security;
 

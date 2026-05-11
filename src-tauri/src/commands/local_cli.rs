@@ -1,0 +1,193 @@
+use crate::commands::AppState;
+use crate::models::{LocalCliTool, PackageManager};
+use crate::services::claude_cli::{ClaudeCli, ClaudeCommand};
+use crate::services::{discover_local_cli_tools, LocalCliUpdater};
+use std::sync::Arc;
+use std::time::Duration;
+use tauri::State;
+
+pub fn build_pty_update_args(tool: &LocalCliTool) -> Option<(String, Vec<String>)> {
+    let (bin, args) = match tool.manager {
+        PackageManager::Npm => (
+            "npm",
+            vec!["install".to_string(), "-g".to_string(), tool.id.clone()],
+        ),
+        PackageManager::Pip => (
+            "pip",
+            vec![
+                "install".to_string(),
+                "--upgrade".to_string(),
+                tool.id.clone(),
+            ],
+        ),
+        PackageManager::Brew => (
+            "brew",
+            vec!["upgrade".to_string(), tool.id.clone()],
+        ),
+        PackageManager::Scoop => (
+            "scoop",
+            vec!["update".to_string(), tool.id.clone()],
+        ),
+        PackageManager::Choco => (
+            "choco",
+            vec!["upgrade".to_string(), tool.id.clone(), "-y".to_string()],
+        ),
+        PackageManager::Unknown => return None,
+    };
+    Some((bin.to_string(), args))
+}
+
+#[tauri::command]
+pub async fn list_local_cli_tools(
+    state: State<'_, AppState>,
+) -> Result<Vec<LocalCliTool>, String> {
+    let mut tools = tokio::task::spawn_blocking(discover_local_cli_tools)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let cached = state
+        .db
+        .get_all_local_cli_tools()
+        .map_err(|e| e.to_string())?;
+    let cache_map: std::collections::HashMap<String, _> = cached
+        .into_iter()
+        .map(|(id, path, mgr, cur, lat, upd, chk, status, log)| {
+            (id, (path, mgr, cur, lat, upd, chk, status, log))
+        })
+        .collect();
+
+    for tool in tools.iter_mut() {
+        if let Some((_, _, _, latest, update_avail, checked, status, log)) =
+            cache_map.get(&tool.id)
+        {
+            tool.latest_version = latest.clone();
+            tool.update_available = *update_avail;
+            tool.last_checked = checked.clone();
+            tool.update_status = status.clone();
+            tool.update_log = log.clone();
+        }
+        let _ = state.db.upsert_local_cli_tool(
+            &tool.id,
+            &tool.detected_path,
+            tool.manager.as_str(),
+            tool.current_version.as_deref(),
+            tool.latest_version.as_deref(),
+            tool.update_available,
+            tool.last_checked.as_deref(),
+        );
+    }
+
+    Ok(tools)
+}
+
+#[tauri::command]
+pub async fn check_local_cli_updates(
+    state: State<'_, AppState>,
+) -> Result<Vec<LocalCliTool>, String> {
+    let mut tools = list_local_cli_tools(state.clone()).await?;
+    let updater = LocalCliUpdater::new(Arc::clone(&state.db));
+    updater
+        .check_updates(&mut tools)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(tools)
+}
+
+#[tauri::command]
+pub async fn update_local_cli_tool(
+    state: State<'_, AppState>,
+    tool_id: String,
+) -> Result<String, String> {
+    let row = state
+        .db
+        .get_local_cli_tool(&tool_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("工具 {} 未找到", tool_id))?;
+
+    let (_, detected_path, manager_str, current_version, _, _, _, _, _) = row;
+    let manager = PackageManager::from_str(&manager_str);
+    let mut tool = LocalCliTool::new(&tool_id, &detected_path, manager);
+    tool.current_version = current_version;
+
+    let (bin, args) = build_pty_update_args(&tool)
+        .ok_or_else(|| format!("工具 {} 的包管理器不支持自动更新", tool_id))?;
+
+    state
+        .db
+        .set_local_cli_tool_update_status(&tool_id, "updating", None)
+        .map_err(|e| e.to_string())?;
+
+    let cli = ClaudeCli::new(bin);
+    let command = ClaudeCommand {
+        args,
+        timeout: Duration::from_secs(120),
+    };
+
+    let detected_path_clone = detected_path.clone();
+    let manager_str_clone = manager_str.clone();
+    let tool_id_clone = tool_id.clone();
+
+    match tokio::task::spawn_blocking(move || cli.run(&[command])).await {
+        Ok(Ok(result)) => {
+            let log = result.raw_log.clone();
+            state
+                .db
+                .set_local_cli_tool_update_status(&tool_id, "success", Some(&log))
+                .map_err(|e| e.to_string())?;
+            let new_version = crate::services::local_cli_scanner::detect_version(
+                std::path::Path::new(&detected_path_clone),
+            );
+            let _ = state.db.upsert_local_cli_tool(
+                &tool_id_clone,
+                &detected_path_clone,
+                &manager_str_clone,
+                new_version.as_deref(),
+                None,
+                false,
+                None,
+            );
+            Ok(log)
+        }
+        Ok(Err(e)) => {
+            let msg = e.to_string();
+            state
+                .db
+                .set_local_cli_tool_update_status(&tool_id, "failed", Some(&msg))
+                .map_err(|e| e.to_string())?;
+            Err(msg)
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{LocalCliTool, PackageManager};
+
+    #[test]
+    fn build_pty_args_for_npm() {
+        let tool = LocalCliTool::new("mmdc", "/usr/bin/mmdc", PackageManager::Npm);
+        let (bin, argv) = build_pty_update_args(&tool).unwrap();
+        assert_eq!(bin, "npm");
+        assert_eq!(argv, vec!["install", "-g", "mmdc"]);
+    }
+
+    #[test]
+    fn build_pty_args_for_pip() {
+        let tool = LocalCliTool::new(
+            "bruce-doc-converter",
+            "/home/u/.local/bin/bdc",
+            PackageManager::Pip,
+        );
+        let (bin, argv) = build_pty_update_args(&tool).unwrap();
+        assert_eq!(bin, "pip");
+        assert_eq!(argv, vec!["install", "--upgrade", "bruce-doc-converter"]);
+    }
+
+    #[test]
+    fn build_pty_args_returns_none_for_unknown() {
+        let tool = LocalCliTool::new("git", "/usr/bin/git", PackageManager::Unknown);
+        assert!(build_pty_update_args(&tool).is_none());
+    }
+}
