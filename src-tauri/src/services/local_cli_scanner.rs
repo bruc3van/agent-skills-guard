@@ -74,6 +74,7 @@ fn common_cli_search_dirs(home: Option<PathBuf>) -> Vec<PathBuf> {
     ];
     if let Some(home) = home {
         dirs.push(home.join(".local").join("bin"));
+        dirs.push(home.join("AppData").join("Local").join("pnpm"));
         dirs.push(home.join("AppData").join("Local").join("pnpm").join("bin"));
         dirs.push(home.join("AppData").join("Roaming").join("pnpm"));
         dirs.push(home.join("Library").join("pnpm").join("bin"));
@@ -632,6 +633,7 @@ mod tests {
         assert!(dirs.contains(&PathBuf::from("/opt/homebrew/bin")));
         assert!(dirs.contains(&PathBuf::from("/usr/local/bin")));
         assert!(dirs.contains(&home.join(".local").join("bin")));
+        assert!(dirs.contains(&home.join("AppData").join("Local").join("pnpm")));
     }
 
     #[cfg(windows)]

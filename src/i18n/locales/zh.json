@@ -8,7 +8,7 @@
     "marketplace": "市场",
     "installed": "已安装",
     "repositories": "仓库",
-    "localCli": "本地 CLI",
+    "localCli": "CLI管理",
     "settings": "设置"
   },
   "market": {
@@ -685,7 +685,7 @@
     }
   },
   "localCli": {
-    "title": "本地 CLI 工具",
+    "title": "CLI 管理",
     "subtitle": "已识别 {{total}} 个托管 CLI · {{updates}} 个可更新",
     "loading": "正在扫描已知 CLI 目录...",
     "rescan": "重新扫描",
@@ -725,7 +725,9 @@
       "uninstalling": "卸载中...",
       "openFolder": "打开安装目录",
       "updateLog": "更新日志",
-      "noVersion": "未知版本"
+      "noVersion": "未知版本",
+      "lastChecked": "上次检查",
+      "notChecked": "未检查"
     },
     "busy": {
       "updating": "正在更新 {{name}}...",

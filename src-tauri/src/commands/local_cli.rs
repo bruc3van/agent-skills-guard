@@ -201,6 +201,191 @@ fn default_python_command(detected_path: &Path) -> String {
     }
 }
 
+fn sanitize_terminal_log(raw: &str) -> String {
+    let stripped = strip_ansi_sequences(raw);
+    let rendered = render_terminal_line_controls(&stripped);
+
+    rendered
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .filter(|line| !is_progress_noise_line(line.trim()))
+        .filter(|line| !is_ascii_art_line(line.trim()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn strip_ansi_sequences(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let chars = raw.chars().collect::<Vec<_>>();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\u{1b}' {
+            i += 1;
+            if i >= chars.len() {
+                break;
+            }
+
+            match chars[i] {
+                '[' => {
+                    i += 1;
+                    while i < chars.len() {
+                        let ch = chars[i];
+                        i += 1;
+                        if ('\u{40}'..='\u{7e}').contains(&ch) {
+                            break;
+                        }
+                    }
+                }
+                ']' | 'P' | '^' | '_' | 'X' => {
+                    i += 1;
+                    while i < chars.len() {
+                        if chars[i] == '\u{7}' {
+                            i += 1;
+                            break;
+                        }
+                        if chars[i] == '\u{1b}' && i + 1 < chars.len() && chars[i + 1] == '\\' {
+                            i += 2;
+                            break;
+                        }
+                        i += 1;
+                    }
+                }
+                '(' | ')' | '*' | '+' | '-' | '.' | '/' => {
+                    i += usize::min(2, chars.len().saturating_sub(i));
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+
+        if c == '\u{9b}' {
+            i += 1;
+            while i < chars.len() {
+                let ch = chars[i];
+                i += 1;
+                if ('\u{40}'..='\u{7e}').contains(&ch) {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        out.push(c);
+        i += 1;
+    }
+
+    out
+}
+
+fn render_terminal_line_controls(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut current_line = String::new();
+    let chars = raw.chars().collect::<Vec<_>>();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\r' => {
+                if i + 1 < chars.len() && chars[i + 1] == '\n' {
+                    out.push_str(&current_line);
+                    out.push('\n');
+                    current_line.clear();
+                    i += 2;
+                    continue;
+                }
+                current_line.clear();
+            }
+            '\n' => {
+                out.push_str(&current_line);
+                out.push('\n');
+                current_line.clear();
+            }
+            '\u{8}' => {
+                current_line.pop();
+            }
+            '\t' => current_line.push('\t'),
+            c if c.is_control() => {}
+            c => current_line.push(c),
+        }
+        i += 1;
+    }
+
+    out.push_str(&current_line);
+    out
+}
+
+fn is_progress_noise_line(line: &str) -> bool {
+    let mut chars = line.chars();
+    let Some(first) = chars.next() else {
+        return true;
+    };
+
+    chars.next().is_none()
+        && matches!(
+            first as u32,
+            0x280b
+                | 0x2819
+                | 0x2839
+                | 0x2838
+                | 0x283c
+                | 0x2834
+                | 0x2826
+                | 0x2827
+                | 0x2807
+                | 0x280f
+                | 0x2d
+                | 0x5c
+                | 0x7c
+                | 0x2f
+        )
+}
+
+fn is_ascii_art_line(line: &str) -> bool {
+    let mut total = 0;
+    let mut visual = 0;
+    let mut alphanumeric = 0;
+
+    for ch in line.chars().filter(|ch| !ch.is_whitespace()) {
+        total += 1;
+        if ch.is_alphanumeric() {
+            alphanumeric += 1;
+        }
+        if is_ascii_art_char(ch) {
+            visual += 1;
+        }
+    }
+
+    total >= 8 && visual * 100 / total >= 45 && alphanumeric * 100 / total <= 55
+}
+
+fn is_ascii_art_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x2500..=0x257f
+            | 0x2580..=0x259f
+            | 0x25a0..=0x25ff
+            | 0x2800..=0x28ff
+            | 0x2b00..=0x2bff
+            | 0x2f
+            | 0x5c
+            | 0x7c
+            | 0x5f
+            | 0x3d
+            | 0x23
+            | 0x40
+            | 0x2a
+            | 0x7e
+            | 0x5e
+            | 0x2b
+    )
+}
+
 #[tauri::command]
 pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<LocalCliTool>, String> {
     let mut tools = tokio::task::spawn_blocking(discover_local_cli_tools)
@@ -299,7 +484,7 @@ pub async fn update_local_cli_tool(
 
     match tokio::task::spawn_blocking(move || cli.run(&[command])).await {
         Ok(Ok(result)) => {
-            let log = result.raw_log.clone();
+            let log = sanitize_terminal_log(&result.raw_log);
             if result.exit_success {
                 state
                     .db
@@ -373,7 +558,7 @@ pub async fn uninstall_local_cli_tool(
 
     match tokio::task::spawn_blocking(move || cli.run(&[command])).await {
         Ok(Ok(result)) => {
-            let log = result.raw_log.clone();
+            let log = sanitize_terminal_log(&result.raw_log);
             if result.exit_success {
                 state
                     .db
@@ -664,5 +849,39 @@ mod tests {
         let mut tool = LocalCliTool::new("git", "/usr/bin/git", PackageManager::Unknown);
         tool.package_name = Some("git".to_string());
         assert!(build_pty_update_args(&tool).is_none());
+    }
+
+    #[test]
+    fn sanitizes_npm_pty_log() {
+        let raw = "\u{1b}[?9001h\u{1b}[?1004h\u{1b}[?25l\u{1b}[2J\u{1b}[m\u{1b}[H\u{1b}]0;npm\u{7}\u{1b}[?25h\u{1b}[1mnpm\u{1b}[22m \u{1b}[33mwarn \u{1b}[94mUnknown env config \"_jsr-registry\". This will stop working in the next major version of npm.\r\n\u{1b}]0;npm install @openai/codex\u{7}\u{1b}[m⠙\u{1b}[K\r⠹\u{1b}[K\r\u{1b}[Kadded 1 package in 2s\r\n";
+
+        let log = sanitize_terminal_log(raw);
+
+        assert!(!log.contains('\u{1b}'));
+        assert!(!log.contains("]0;"));
+        assert!(!log.contains('⠙'));
+        assert!(log.contains(
+            "npm warn Unknown env config \"_jsr-registry\". This will stop working in the next major version of npm."
+        ));
+        assert!(log.contains("added 1 package in 2s"));
+    }
+
+    #[test]
+    fn sanitizes_carriage_return_progress_without_dropping_crlf_lines() {
+        let raw = "first line\r\nInstalling 1%\rInstalling 100%\r\nDone\r\n";
+
+        assert_eq!(
+            sanitize_terminal_log(raw),
+            "first line\nInstalling 100%\nDone"
+        );
+    }
+
+    #[test]
+    fn removes_block_character_banner_lines() {
+        let raw = "opencode\r\n█▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█\r\nopencode installed\r\n";
+
+        let log = sanitize_terminal_log(raw);
+
+        assert_eq!(log, "opencode\nopencode installed");
     }
 }

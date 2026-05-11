@@ -22,19 +22,7 @@ import type { LocalCliTool } from "../types";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
 import { SkillUninstallConfirmDialog } from "./SkillUninstallConfirmDialog";
-
-const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[^\[\]()]|\[[\?0-9;]*[a-zA-Z]/g;
-const SPECIAL_CHARS_RE = /[─│┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬█▓▒░■□▪▫●○◆◇★☆╭╮╯╰\/\\|_=#@*~^+]/g;
-
-function cleanAnsi(s: string): string {
-  const stripped = s.replace(ANSI_RE, "").trim();
-  // If the result looks like art (too many special chars), return empty
-  const specialCount = (stripped.match(SPECIAL_CHARS_RE) || []).length;
-  if (stripped.length > 0 && specialCount / stripped.length > 0.4) {
-    return "";
-  }
-  return stripped;
-}
+import { sanitizeTerminalText } from "../lib/terminal-log";
 
 type ManagerTab = "all" | string;
 
@@ -118,7 +106,7 @@ export function LocalCliPage() {
 
   const getToolDescription = (tool: LocalCliTool): string | undefined => {
     const raw = tool.description || descriptionMap[tool.id];
-    return raw ? cleanAnsi(raw) : undefined;
+    return raw ? sanitizeTerminalText(raw) : undefined;
   };
 
   const updateCount = tools.filter((tool) => tool.update_available).length;
@@ -385,7 +373,7 @@ export function LocalCliPage() {
               <p className="text-sm text-muted-foreground">{t("localCli.loading")}</p>
             </div>
           ) : filtered.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 auto-rows-fr">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
               {filtered.map((tool) => (
                 <CliToolCard
                   key={tool.id}
@@ -498,6 +486,19 @@ function ManagerTabButton({
   );
 }
 
+function formatLastChecked(value: string | undefined, fallback: string): string {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function CliToolCard({
   tool,
   description,
@@ -521,13 +522,21 @@ function CliToolCard({
 }) {
   const { t } = useTranslation();
   const hasUpdate = tool.update_available;
+  const updateLog = tool.update_log ? sanitizeTerminalText(tool.update_log) : "";
+  const packageName = tool.package_name && tool.package_name !== tool.id ? tool.package_name : null;
+  const lastChecked = formatLastChecked(tool.last_checked, t("localCli.card.notChecked"));
 
   return (
-    <div className="apple-card p-6 group flex flex-col h-full relative">
-      <div className="flex items-start justify-between mb-4">
+    <div className="apple-card p-4 group flex flex-col relative">
+      <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2.5 mb-1 flex-wrap">
-            <h3 className="font-semibold text-foreground font-mono">{tool.id}</h3>
+            <h3 className="font-semibold text-foreground font-mono text-sm truncate">
+              {tool.id}
+            </h3>
+            <span className="text-[10px] uppercase tracking-normal bg-secondary text-muted-foreground px-1.5 py-0.5 rounded-md font-medium">
+              {managerLabel(tool.manager)}
+            </span>
             {hasUpdate && (
               <span className="text-[10px] bg-amber-500/15 text-amber-600 border border-amber-500/40 px-2 py-0.5 rounded-full font-medium">
                 {t("localCli.update")}
@@ -539,12 +548,12 @@ function CliToolCard({
               </span>
             )}
           </div>
-          {tool.package_name && tool.package_name !== tool.id && (
-            <div className="text-xs text-muted-foreground font-mono">{tool.package_name}</div>
+          {packageName && (
+            <div className="text-xs text-muted-foreground font-mono truncate">{packageName}</div>
           )}
         </div>
 
-        <div className="flex gap-2 ml-4">
+        <div className="flex gap-2 shrink-0">
           {hasUpdate && (
             <button
               onClick={() => onUpdate(tool.id)}
@@ -590,33 +599,37 @@ function CliToolCard({
       {description ? (
         <p
           title={description}
-          className="text-sm text-muted-foreground leading-5 mb-4 overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]"
+          className="text-sm text-muted-foreground leading-5 mb-3 overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]"
         >
           {description}
         </p>
       ) : isFetchingDesc ? (
-        <div className="flex items-center gap-2 mb-4 text-xs text-muted-foreground/60">
+        <div className="flex items-center gap-2 mb-3 text-xs text-muted-foreground/60">
           <Loader2 className="w-3 h-3 animate-spin" />
           <span>...</span>
         </div>
       ) : null}
 
-      <div className="flex items-center gap-4 mb-4 text-sm">
-        <div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mb-3 text-xs">
+        <div className="min-w-0">
           <span className="text-muted-foreground">{t("localCli.card.version")}</span>{" "}
           <span className="font-mono font-medium text-foreground">
             {tool.current_version ?? t("localCli.card.noVersion")}
           </span>
         </div>
         {hasUpdate && tool.latest_version && (
-          <div>
+          <div className="min-w-0">
             <span className="text-muted-foreground">{t("localCli.card.latest")}</span>{" "}
             <span className="font-mono font-medium text-amber-600">v{tool.latest_version}</span>
           </div>
         )}
+        <div className="min-w-0 col-span-2">
+          <span className="text-muted-foreground">{t("localCli.card.lastChecked")}</span>{" "}
+          <span className="font-mono text-foreground/80">{lastChecked}</span>
+        </div>
       </div>
 
-      <div className="mt-auto pt-4 border-t border-border/60">
+      <div className="pt-3 border-t border-border/60">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -636,13 +649,13 @@ function CliToolCard({
         </div>
       </div>
 
-      {tool.update_log && (
-        <div className="pt-4 border-t border-border/60">
+      {updateLog && (
+        <div className="mt-3 pt-3 border-t border-border/60">
           <div className="text-xs font-medium text-blue-500 mb-2">
             {t("localCli.card.updateLog")}
           </div>
           <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono bg-secondary/50 rounded-xl p-3 max-h-32 overflow-y-auto">
-            {tool.update_log}
+            {updateLog}
           </pre>
         </div>
       )}

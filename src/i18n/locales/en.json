@@ -8,7 +8,7 @@
     "marketplace": "MARKET",
     "installed": "INSTALLED",
     "repositories": "REPOSITORIES",
-    "localCli": "LOCAL_CLI",
+    "localCli": "CLI",
     "settings": "SETTINGS"
   },
   "market": {
@@ -685,7 +685,7 @@
     }
   },
   "localCli": {
-    "title": "LOCAL_CLI_TOOLS",
+    "title": "CLI_MANAGEMENT",
     "subtitle": "{{total}} managed CLI tools · {{updates}} updates available",
     "loading": "SCANNING_KNOWN_CLI_DIRS...",
     "rescan": "RESCAN",
@@ -725,7 +725,9 @@
       "uninstalling": "Uninstalling...",
       "openFolder": "Open install folder",
       "updateLog": "Update log",
-      "noVersion": "Unknown"
+      "noVersion": "Unknown",
+      "lastChecked": "Checked",
+      "notChecked": "Never"
     },
     "busy": {
       "updating": "Updating {{name}}...",

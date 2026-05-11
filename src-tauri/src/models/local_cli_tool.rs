@@ -44,6 +44,7 @@ pub fn detect_manager_from_path(path: &Path) -> PackageManager {
     let s = s.replace('\\', "/");
 
     if s.contains("/appdata/local/pnpm/bin/")
+        || s.contains("/appdata/local/pnpm/")
         || s.contains("/appdata/roaming/pnpm/")
         || s.contains("/library/pnpm/bin/")
         || s.contains("/.local/share/pnpm/bin/")
@@ -163,6 +164,12 @@ mod tests {
     fn detect_manager_from_pnpm_paths() {
         let windows_path = std::path::Path::new(r"C:\Users\user\AppData\Local\pnpm\bin\mmdc.cmd");
         assert_eq!(detect_manager_from_path(windows_path), PackageManager::Pnpm);
+
+        let windows_home_path = std::path::Path::new(r"C:\Users\user\AppData\Local\pnpm\mmdc.cmd");
+        assert_eq!(
+            detect_manager_from_path(windows_home_path),
+            PackageManager::Pnpm
+        );
 
         let macos_path = std::path::Path::new("/Users/user/Library/pnpm/bin/mmdc");
         assert_eq!(detect_manager_from_path(macos_path), PackageManager::Pnpm);
