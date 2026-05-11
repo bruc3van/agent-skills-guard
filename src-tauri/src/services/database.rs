@@ -280,6 +280,7 @@ impl Database {
         self.migrate_add_plugin_claude_fields()?;
         self.migrate_add_plugin_install_commands()?;
         self.migrate_add_agent_tool_fields()?;
+        self.migrate_add_local_cli_tools()?;
 
         Ok(())
     }
@@ -980,6 +981,156 @@ impl Database {
         Ok(())
     }
 
+    fn migrate_add_local_cli_tools(&self) -> Result<()> {
+        let conn = self.lock_conn();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS local_cli_tools (
+                id TEXT PRIMARY KEY,
+                detected_path TEXT NOT NULL,
+                manager TEXT NOT NULL DEFAULT 'unknown',
+                current_version TEXT,
+                latest_version TEXT,
+                update_available INTEGER NOT NULL DEFAULT 0,
+                last_checked TEXT,
+                update_status TEXT,
+                update_log TEXT
+            )",
+            [],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_local_cli_tool(
+        &self,
+        id: &str,
+        detected_path: &str,
+        manager: &str,
+        current_version: Option<&str>,
+        latest_version: Option<&str>,
+        update_available: bool,
+        last_checked: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.lock_conn();
+        conn.execute(
+            "INSERT INTO local_cli_tools
+                 (id, detected_path, manager, current_version, latest_version, update_available, last_checked)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+               detected_path     = excluded.detected_path,
+               manager           = excluded.manager,
+               current_version   = excluded.current_version,
+               latest_version    = excluded.latest_version,
+               update_available  = excluded.update_available,
+               last_checked      = excluded.last_checked",
+            params![
+                id,
+                detected_path,
+                manager,
+                current_version,
+                latest_version,
+                update_available as i32,
+                last_checked
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_local_cli_tool_update_status(
+        &self,
+        id: &str,
+        status: &str,
+        log: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.lock_conn();
+        conn.execute(
+            "UPDATE local_cli_tools SET update_status = ?1, update_log = ?2 WHERE id = ?3",
+            params![status, log, id],
+        )?;
+        Ok(())
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn get_local_cli_tool(
+        &self,
+        id: &str,
+    ) -> Result<
+        Option<(
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            bool,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )>,
+    > {
+        let conn = self.lock_conn();
+        let row = conn
+            .query_row(
+                "SELECT id, detected_path, manager, current_version, latest_version,
+                        update_available, last_checked, update_status, update_log
+                 FROM local_cli_tools WHERE id = ?1",
+                params![id],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get::<_, i32>(5)? != 0,
+                        r.get(6)?,
+                        r.get(7)?,
+                        r.get(8)?,
+                    ))
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn get_all_local_cli_tools(
+        &self,
+    ) -> Result<
+        Vec<(
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            bool,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )>,
+    > {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, detected_path, manager, current_version, latest_version,
+                    update_available, last_checked, update_status, update_log
+             FROM local_cli_tools ORDER BY manager, id",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get::<_, i32>(5)? != 0,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// 获取单个仓库信息
     pub fn get_repository(&self, repo_id: &str) -> Result<Option<Repository>> {
         let conn = self.lock_conn();
@@ -1093,5 +1244,32 @@ mod tests {
         assert!(matches!(report.level, SecurityLevel::Low));
         assert!(!report.blocked);
         assert!(!report.partial_scan);
+    }
+
+    #[test]
+    fn local_cli_tools_table_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = super::Database::new(dir.path().join("test.db")).unwrap();
+
+        db.upsert_local_cli_tool(
+            "bruce-doc-converter",
+            "/home/user/.local/bin/bruce-doc-converter",
+            "pip",
+            Some("0.3.1"),
+            Some("0.4.0"),
+            true,
+            Some("2025-01-01T00:00:00Z"),
+        )
+        .unwrap();
+
+        let tool = db.get_local_cli_tool("bruce-doc-converter").unwrap();
+        assert!(tool.is_some());
+        let t = tool.unwrap();
+        assert_eq!(t.0, "bruce-doc-converter");
+        assert_eq!(t.2, "pip");
+        assert_eq!(t.3.as_deref(), Some("0.3.1"));
+
+        let all = db.get_all_local_cli_tools().unwrap();
+        assert_eq!(all.len(), 1);
     }
 }
