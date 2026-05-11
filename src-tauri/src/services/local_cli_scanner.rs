@@ -106,9 +106,11 @@ pub fn discover_local_cli_tools() -> Vec<LocalCliTool> {
             let id = tool_id_from_path(path);
             let manager = detect_manager_from_path(path);
             let package_name = resolve_package_name(path, &manager);
+            let description = resolve_description(path, &manager);
             let mut tool = LocalCliTool::new(&id, &path.to_string_lossy(), manager);
             tool.current_version = detect_version(path);
             tool.package_name = package_name;
+            tool.description = description;
             tool
         })
         .collect()
@@ -123,6 +125,39 @@ fn resolve_package_name(path: &Path, manager: &PackageManager) -> Option<String>
         }
         PackageManager::Unknown => None,
     }
+}
+
+fn resolve_description(path: &Path, manager: &PackageManager) -> Option<String> {
+    match manager {
+        PackageManager::Npm => resolve_npm_description(path),
+        PackageManager::Pip => resolve_pip_description(path),
+        _ => None,
+    }
+}
+
+pub fn resolve_description_for_path(path: &Path) -> Option<String> {
+    let manager = detect_manager_from_path(path);
+    resolve_description(path, &manager)
+}
+
+fn resolve_npm_description(path: &Path) -> Option<String> {
+    let npm_global = npm_global_root(path)?;
+    let package_name = resolve_npm_package_name(path)?;
+    let pkg_json_path = npm_package_json_path(&npm_global, &package_name);
+    read_package_json_field(&pkg_json_path, "description")
+}
+
+fn resolve_pip_description(path: &Path) -> Option<String> {
+    let id = tool_id_from_path(path);
+    for dist_info in pip_metadata_dirs_for_script(path) {
+        if !pip_dist_matches_script(&dist_info, &id) {
+            continue;
+        }
+        if let Some(summary) = read_metadata_field(&dist_info.join("METADATA"), "Summary") {
+            return Some(summary);
+        }
+    }
+    None
 }
 
 fn resolve_npm_package_name(path: &Path) -> Option<String> {
@@ -205,87 +240,159 @@ fn extract_npm_package_from_shim(content: &str) -> Option<String> {
 }
 
 fn resolve_pip_package_name(path: &Path) -> Option<String> {
-    let s = path.to_string_lossy().to_lowercase().replace('\\', "/");
     let id = tool_id_from_path(path);
+    for dist_info in pip_metadata_dirs_for_script(path) {
+        if !pip_dist_matches_script(&dist_info, &id) {
+            continue;
+        }
 
-    let parent = if let Some(pos) = s.rfind('/') {
-        &s[..pos]
-    } else {
-        return Some(id);
-    };
-    if let Ok(entries) = std::fs::read_dir(parent) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".dist-info") || name.ends_with(".egg-info") {
-                let metadata_path = entry.path().join("METADATA");
-                if let Ok(meta) = std::fs::read_to_string(&metadata_path) {
-                    for line in meta.lines() {
-                        if let Some(name_val) = line.strip_prefix("Name: ") {
-                            let pkg_name = name_val.trim().to_string();
-                            if !pkg_name.is_empty() {
-                                return Some(pkg_name);
-                            }
-                        }
-                    }
-                }
-                let record_path = entry.path().join("RECORD");
-                if let Ok(record) = std::fs::read_to_string(&record_path) {
-                    for line in record.lines() {
-                        let line_lower = line.to_lowercase();
-                        if line_lower.contains(&format!("{}.py", id))
-                            || line_lower.contains(&format!("{}/__main__.py", id))
-                        {
-                            let dist_name = name
-                                .trim_end_matches(".dist-info")
-                                .trim_end_matches(".egg-info");
-                            if let Some(dash) = dist_name.rfind('-') {
-                                return Some(dist_name[..dash].to_string());
-                            }
-                        }
-                    }
-                }
-            }
+        if let Some(name) = read_metadata_field(&dist_info.join("METADATA"), "Name") {
+            return Some(name);
+        }
+
+        if let Some(name) = pip_dist_name_from_dir(&dist_info) {
+            return Some(name);
         }
     }
 
     Some(id)
 }
 
-fn detect_pip_version(path: &Path) -> Option<String> {
-    let id = tool_id_from_path(path);
-    let parent = path.parent()?;
-    for entry in std::fs::read_dir(parent).ok()?.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !name.ends_with(".dist-info") && !name.ends_with(".egg-info") {
-            continue;
+fn pip_metadata_roots_for_script(path: &Path) -> Vec<PathBuf> {
+    let Some(parent) = path.parent() else {
+        return vec![];
+    };
+
+    let mut roots = vec![parent.to_path_buf()];
+
+    let parent_name = parent
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    if parent_name.eq_ignore_ascii_case("scripts") {
+        if let Some(python_root) = parent.parent() {
+            roots.push(python_root.join("Lib").join("site-packages"));
+            roots.push(python_root.join("lib").join("site-packages"));
         }
+    }
 
-        let metadata_path = entry.path().join("METADATA");
-        let record_path = entry.path().join("RECORD");
-        let metadata = std::fs::read_to_string(&metadata_path).ok();
-        let record = std::fs::read_to_string(&record_path).ok();
-        let record_matches = record.as_deref().is_some_and(|record| {
-            record.lines().any(|line| {
-                let line_lower = line.to_lowercase();
-                line_lower.contains(&format!("{}.exe", id))
-                    || line_lower.contains(&format!("{}.py", id))
-                    || line_lower.contains(&format!("{}/__main__.py", id))
-            })
-        });
-
-        if !record_matches {
-            continue;
-        }
-
-        if let Some(metadata) = metadata {
-            for line in metadata.lines() {
-                if let Some(version) = line.strip_prefix("Version: ") {
-                    let version = version.trim();
-                    if !version.is_empty() {
-                        return Some(version.to_string());
+    if parent_name.eq_ignore_ascii_case("bin") {
+        if let Some(env_root) = parent.parent() {
+            let lib_root = env_root.join("lib");
+            if let Ok(entries) = std::fs::read_dir(&lib_root) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_lowercase();
+                    if name.starts_with("python") {
+                        roots.push(entry.path().join("site-packages"));
                     }
                 }
             }
+        }
+    }
+
+    roots
+}
+
+fn pip_metadata_dirs_for_script(path: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for root in pip_metadata_roots_for_script(path) {
+        if !root.is_dir() {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if (name.ends_with(".dist-info") || name.ends_with(".egg-info"))
+                && seen.insert(path.clone())
+            {
+                dirs.push(path);
+            }
+        }
+    }
+
+    dirs
+}
+
+fn pip_dist_matches_script(dist_info: &Path, id: &str) -> bool {
+    if let Ok(record) = std::fs::read_to_string(dist_info.join("RECORD")) {
+        if record
+            .lines()
+            .any(|line| pip_record_line_references_script(line, id))
+        {
+            return true;
+        }
+    }
+
+    if let Ok(entry_points) = std::fs::read_to_string(dist_info.join("entry_points.txt")) {
+        if entry_points
+            .lines()
+            .any(|line| entry_point_line_references_script(line, id))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn pip_record_line_references_script(line: &str, id: &str) -> bool {
+    let record_path = line
+        .split(',')
+        .next()
+        .unwrap_or_default()
+        .replace('\\', "/")
+        .to_lowercase();
+    let file_name = record_path.rsplit('/').next().unwrap_or_default();
+    let id = id.to_lowercase();
+
+    file_name == id
+        || file_name == format!("{}.exe", id)
+        || file_name == format!("{}.cmd", id)
+        || file_name == format!("{}.py", id)
+        || record_path.ends_with(&format!("{}/__main__.py", id))
+}
+
+fn entry_point_line_references_script(line: &str, id: &str) -> bool {
+    let line = line.trim().to_lowercase();
+    let id = id.to_lowercase();
+    line.strip_prefix(&id)
+        .is_some_and(|rest| rest.trim_start().starts_with('='))
+}
+
+fn read_metadata_field(metadata_path: &Path, field: &str) -> Option<String> {
+    let meta = std::fs::read_to_string(metadata_path).ok()?;
+    let prefix = format!("{}: ", field);
+    meta.lines().find_map(|line| {
+        line.strip_prefix(&prefix).and_then(|value| {
+            let value = value.trim();
+            (!value.is_empty()).then(|| value.to_string())
+        })
+    })
+}
+
+fn pip_dist_name_from_dir(dist_info: &Path) -> Option<String> {
+    let file_name = dist_info.file_name()?.to_string_lossy();
+    let dist_name = file_name
+        .trim_end_matches(".dist-info")
+        .trim_end_matches(".egg-info");
+    dist_name
+        .rfind('-')
+        .map(|dash| dist_name[..dash].to_string())
+}
+
+fn detect_pip_version(path: &Path) -> Option<String> {
+    let id = tool_id_from_path(path);
+    for dist_info in pip_metadata_dirs_for_script(path) {
+        if !pip_dist_matches_script(&dist_info, &id) {
+            continue;
+        }
+        if let Some(version) = read_metadata_field(&dist_info.join("METADATA"), "Version") {
+            return Some(version);
         }
     }
 
@@ -389,6 +496,27 @@ mod tests {
         assert!(!marker.exists());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn resolve_description_does_not_execute_windows_cmd_shim() {
+        let dir = tempfile::tempdir().unwrap();
+        let npm_root = dir.path().join("AppData").join("Roaming").join("npm");
+        fs::create_dir_all(&npm_root).unwrap();
+        let marker = dir.path().join("executed.txt");
+        let shim = npm_root.join("suspicious.cmd");
+        fs::write(
+            &shim,
+            format!(
+                "@echo off\r\necho executed > \"{}\"\r\necho dangerous description\r\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(resolve_description_for_path(&shim), None);
+        assert!(!marker.exists());
+    }
+
     #[test]
     fn detect_version_reads_npm_package_metadata() {
         let dir = tempfile::tempdir().unwrap();
@@ -423,6 +551,62 @@ mod tests {
         assert_eq!(
             detect_version(&scripts.join("my-tool.exe")),
             Some("4.5.6".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_version_reads_pip_metadata_from_python_site_packages() {
+        let dir = tempfile::tempdir().unwrap();
+        let python_root = dir.path().join("Python314");
+        let scripts = python_root.join("Scripts");
+        let site_packages = python_root.join("Lib").join("site-packages");
+        let dist_info = site_packages.join("bruce_doc_converter-0.1.2.dist-info");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::create_dir_all(&dist_info).unwrap();
+        fs::write(scripts.join("bdc.exe"), b"").unwrap();
+        fs::write(
+            dist_info.join("METADATA"),
+            "Name: bruce-doc-converter\nVersion: 0.1.2\n",
+        )
+        .unwrap();
+        fs::write(dist_info.join("RECORD"), "../../Scripts/bdc.exe,,\n").unwrap();
+        fs::write(
+            dist_info.join("entry_points.txt"),
+            "[console_scripts]\nbdc = bruce_doc_converter.cli:main\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            detect_version(&scripts.join("bdc.exe")),
+            Some("0.1.2".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_pip_package_name_reads_console_script_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let python_root = dir.path().join("Python314");
+        let scripts = python_root.join("Scripts");
+        let site_packages = python_root.join("Lib").join("site-packages");
+        let dist_info = site_packages.join("bruce_doc_converter-0.1.2.dist-info");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::create_dir_all(&dist_info).unwrap();
+        fs::write(scripts.join("bdc.exe"), b"").unwrap();
+        fs::write(
+            dist_info.join("METADATA"),
+            "Name: bruce-doc-converter\nVersion: 0.1.2\n",
+        )
+        .unwrap();
+        fs::write(dist_info.join("RECORD"), "../../Scripts/bdc.exe,,\n").unwrap();
+        fs::write(
+            dist_info.join("entry_points.txt"),
+            "[console_scripts]\nbdc = bruce_doc_converter.cli:main\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve_pip_package_name(&scripts.join("bdc.exe")),
+            Some("bruce-doc-converter".to_string())
         );
     }
 }

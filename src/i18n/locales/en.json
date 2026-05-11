@@ -694,6 +694,38 @@
     "search": "SEARCH_TOOLS...",
     "updated": "UPDATED",
     "updateFailed": "UPDATE_FAILED",
-    "update": "UPDATE"
+    "update": "UPDATE",
+    "tabs": {
+      "all": "All ({{count}})",
+      "npm": "npm ({{count}})",
+      "pip": "pip ({{count}})",
+      "brew": "brew ({{count}})",
+      "scoop": "scoop ({{count}})",
+      "choco": "choco ({{count}})",
+      "unknown": "Other ({{count}})"
+    },
+    "updatesFocus": {
+      "title": "{{count}} updates available",
+      "showOnly": "Show updates only",
+      "showAll": "Show all"
+    },
+    "empty": {
+      "noResults": "No tools found for \"{{query}}\"",
+      "noUpdates": "No updates available",
+      "all": "No local CLI tools detected",
+      "clearFilters": "Clear filters"
+    },
+    "card": {
+      "version": "Version",
+      "latest": "Latest",
+      "path": "Path",
+      "updating": "Updating...",
+      "updateLog": "Update log",
+      "noVersion": "Unknown"
+    },
+    "busy": {
+      "updating": "Updating {{name}}...",
+      "fetchingDesc": "Fetching description for {{name}} ({{done}}/{{total}})..."
+    }
   }
 }

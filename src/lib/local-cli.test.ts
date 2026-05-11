@@ -20,8 +20,9 @@ describe("groupByManager", () => {
 });
 
 describe("managerLabel", () => {
-  it("npm 显示 npm（全局）", () => {
-    expect(managerLabel("npm")).toContain("npm");
+  it("npm 和 pip 只显示管理器名称", () => {
+    expect(managerLabel("npm")).toBe("npm");
+    expect(managerLabel("pip")).toBe("pip");
   });
   it("unknown 显示未知", () => {
     expect(managerLabel("unknown")).toBeTruthy();

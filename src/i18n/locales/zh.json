@@ -694,6 +694,38 @@
     "search": "搜索工具...",
     "updated": "已更新",
     "updateFailed": "更新失败",
-    "update": "更新"
+    "update": "更新",
+    "tabs": {
+      "all": "全部 ({{count}})",
+      "npm": "npm ({{count}})",
+      "pip": "pip ({{count}})",
+      "brew": "brew ({{count}})",
+      "scoop": "scoop ({{count}})",
+      "choco": "choco ({{count}})",
+      "unknown": "其他 ({{count}})"
+    },
+    "updatesFocus": {
+      "title": "{{count}} 个工具可更新",
+      "showOnly": "仅显示可更新",
+      "showAll": "显示全部"
+    },
+    "empty": {
+      "noResults": "没有找到「{{query}}」相关的工具",
+      "noUpdates": "没有可更新的工具",
+      "all": "暂未检测到本地 CLI 工具",
+      "clearFilters": "清除筛选"
+    },
+    "card": {
+      "version": "版本",
+      "latest": "最新",
+      "path": "路径",
+      "updating": "更新中...",
+      "updateLog": "更新日志",
+      "noVersion": "未知版本"
+    },
+    "busy": {
+      "updating": "正在更新 {{name}}...",
+      "fetchingDesc": "正在获取 {{name}} 说明 ({{done}}/{{total}})..."
+    }
   }
 }

@@ -1002,6 +1002,15 @@ impl Database {
             "ALTER TABLE local_cli_tools ADD COLUMN package_name TEXT",
             [],
         );
+        let _ = conn.execute(
+            "ALTER TABLE local_cli_tools ADD COLUMN description TEXT",
+            [],
+        );
+        // Clear descriptions that contain ANSI escape codes from earlier versions
+        let _ = conn.execute(
+            "UPDATE local_cli_tools SET description = NULL WHERE description LIKE '%\x1b%' OR description LIKE '%[?%'",
+            [],
+        );
         Ok(())
     }
 
@@ -1015,12 +1024,13 @@ impl Database {
         update_available: bool,
         last_checked: Option<&str>,
         package_name: Option<&str>,
+        description: Option<&str>,
     ) -> Result<()> {
         let conn = self.lock_conn();
         conn.execute(
             "INSERT INTO local_cli_tools
-                 (id, detected_path, manager, current_version, latest_version, update_available, last_checked, package_name)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 (id, detected_path, manager, current_version, latest_version, update_available, last_checked, package_name, description)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                detected_path     = excluded.detected_path,
                manager           = excluded.manager,
@@ -1028,7 +1038,8 @@ impl Database {
                latest_version    = excluded.latest_version,
                update_available  = excluded.update_available,
                last_checked      = excluded.last_checked,
-               package_name      = excluded.package_name",
+               package_name      = excluded.package_name,
+               description       = COALESCE(excluded.description, local_cli_tools.description)",
             params![
                 id,
                 detected_path,
@@ -1037,7 +1048,8 @@ impl Database {
                 latest_version,
                 update_available as i32,
                 last_checked,
-                package_name
+                package_name,
+                description
             ],
         )?;
         Ok(())
@@ -1053,6 +1065,15 @@ impl Database {
         conn.execute(
             "UPDATE local_cli_tools SET update_status = ?1, update_log = ?2 WHERE id = ?3",
             params![status, log, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_local_cli_tool_description(&self, id: &str, description: &str) -> Result<()> {
+        let conn = self.lock_conn();
+        conn.execute(
+            "UPDATE local_cli_tools SET description = ?1 WHERE id = ?2",
+            params![description, id],
         )?;
         Ok(())
     }
@@ -1073,13 +1094,14 @@ impl Database {
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<String>,
         )>,
     > {
         let conn = self.lock_conn();
         let row = conn
             .query_row(
                 "SELECT id, detected_path, manager, current_version, latest_version,
-                        update_available, last_checked, update_status, update_log, package_name
+                        update_available, last_checked, update_status, update_log, package_name, description
                  FROM local_cli_tools WHERE id = ?1",
                 params![id],
                 |r| {
@@ -1094,6 +1116,7 @@ impl Database {
                         r.get(7)?,
                         r.get(8)?,
                         r.get(9)?,
+                        r.get(10)?,
                     ))
                 },
             )
@@ -1116,12 +1139,13 @@ impl Database {
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<String>,
         )>,
     > {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, detected_path, manager, current_version, latest_version,
-                    update_available, last_checked, update_status, update_log, package_name
+                    update_available, last_checked, update_status, update_log, package_name, description
              FROM local_cli_tools ORDER BY manager, id",
         )?;
         let rows = stmt
@@ -1137,6 +1161,7 @@ impl Database {
                     r.get(7)?,
                     r.get(8)?,
                     r.get(9)?,
+                    r.get(10)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1272,6 +1297,7 @@ mod tests {
             true,
             Some("2025-01-01T00:00:00Z"),
             Some("bruce-doc-converter"),
+            Some("A document converter tool"),
         )
         .unwrap();
 
@@ -1282,6 +1308,7 @@ mod tests {
         assert_eq!(t.2, "pip");
         assert_eq!(t.3.as_deref(), Some("0.3.1"));
         assert_eq!(t.9.as_deref(), Some("bruce-doc-converter"));
+        assert_eq!(t.10.as_deref(), Some("A document converter tool"));
 
         let all = db.get_all_local_cli_tools().unwrap();
         assert_eq!(all.len(), 1);

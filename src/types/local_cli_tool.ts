@@ -9,4 +9,5 @@ export interface LocalCliTool {
   update_status?: string;
   update_log?: string;
   package_name?: string;
+  description?: string;
 }

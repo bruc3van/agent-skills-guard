@@ -458,6 +458,7 @@ pub fn run() {
             commands::local_cli::list_local_cli_tools,
             commands::local_cli::check_local_cli_updates,
             commands::local_cli::update_local_cli_tool,
+            commands::local_cli::fetch_local_cli_descriptions,
             commands::plugins::get_plugins,
             commands::plugins::get_plugins_cached,
             commands::plugins::sync_featured_marketplace_plugins,

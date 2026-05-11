@@ -1,7 +1,8 @@
 use crate::commands::AppState;
 use crate::models::{LocalCliTool, PackageManager};
 use crate::services::claude_cli::{ClaudeCli, ClaudeCommand};
-use crate::services::{discover_local_cli_tools, LocalCliUpdater};
+use crate::services::{discover_local_cli_tools, resolve_description_for_path, LocalCliUpdater};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::State;
@@ -21,14 +22,8 @@ pub fn build_pty_update_args(tool: &LocalCliTool) -> Option<(String, Vec<String>
                 pkg.to_string(),
             ],
         ),
-        PackageManager::Brew => (
-            "brew",
-            vec!["upgrade".to_string(), pkg.to_string()],
-        ),
-        PackageManager::Scoop => (
-            "scoop",
-            vec!["update".to_string(), pkg.to_string()],
-        ),
+        PackageManager::Brew => ("brew", vec!["upgrade".to_string(), pkg.to_string()]),
+        PackageManager::Scoop => ("scoop", vec!["update".to_string(), pkg.to_string()]),
         PackageManager::Choco => (
             "choco",
             vec!["upgrade".to_string(), pkg.to_string(), "-y".to_string()],
@@ -39,9 +34,7 @@ pub fn build_pty_update_args(tool: &LocalCliTool) -> Option<(String, Vec<String>
 }
 
 #[tauri::command]
-pub async fn list_local_cli_tools(
-    state: State<'_, AppState>,
-) -> Result<Vec<LocalCliTool>, String> {
+pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<LocalCliTool>, String> {
     let mut tools = tokio::task::spawn_blocking(discover_local_cli_tools)
         .await
         .map_err(|e| e.to_string())?;
@@ -52,13 +45,15 @@ pub async fn list_local_cli_tools(
         .map_err(|e| e.to_string())?;
     let cache_map: std::collections::HashMap<String, _> = cached
         .into_iter()
-        .map(|(id, path, mgr, cur, lat, upd, chk, status, log, pkg)| {
-            (id, (path, mgr, cur, lat, upd, chk, status, log, pkg))
-        })
+        .map(
+            |(id, path, mgr, cur, lat, upd, chk, status, log, pkg, desc)| {
+                (id, (path, mgr, cur, lat, upd, chk, status, log, pkg, desc))
+            },
+        )
         .collect();
 
     for tool in tools.iter_mut() {
-        if let Some((_, _, _, latest, update_avail, checked, status, log, _pkg)) =
+        if let Some((_, _, _, latest, update_avail, checked, status, log, _pkg, desc)) =
             cache_map.get(&tool.id)
         {
             tool.latest_version = latest.clone();
@@ -66,6 +61,9 @@ pub async fn list_local_cli_tools(
             tool.last_checked = checked.clone();
             tool.update_status = status.clone();
             tool.update_log = log.clone();
+            if tool.description.is_none() {
+                tool.description = desc.clone();
+            }
         }
         let _ = state.db.upsert_local_cli_tool(
             &tool.id,
@@ -76,6 +74,7 @@ pub async fn list_local_cli_tools(
             tool.update_available,
             tool.last_checked.as_deref(),
             tool.package_name.as_deref(),
+            tool.description.as_deref(),
         );
     }
 
@@ -106,7 +105,7 @@ pub async fn update_local_cli_tool(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("工具 {} 未找到", tool_id))?;
 
-    let (_, detected_path, manager_str, current_version, _, _, _, _, _, pkg_name) = row;
+    let (_, detected_path, manager_str, current_version, _, _, _, _, _, pkg_name, _desc) = row;
     let manager = PackageManager::from_str(&manager_str);
     let mut tool = LocalCliTool::new(&tool_id, &detected_path, manager);
     tool.current_version = current_version;
@@ -150,6 +149,7 @@ pub async fn update_local_cli_tool(
                     false,
                     None,
                     None,
+                    None,
                 );
                 Ok(log)
             } else {
@@ -172,6 +172,42 @@ pub async fn update_local_cli_tool(
     }
 }
 
+#[tauri::command]
+pub async fn fetch_local_cli_descriptions(
+    state: State<'_, AppState>,
+    tool_ids: Vec<String>,
+) -> Result<Vec<(String, String)>, String> {
+    let mut results = Vec::new();
+
+    for tool_id in &tool_ids {
+        if let Ok(Some(row)) = state.db.get_local_cli_tool(tool_id) {
+            if row.10.is_some() {
+                continue;
+            }
+        }
+
+        let row = match state.db.get_local_cli_tool(tool_id) {
+            Ok(Some(r)) => r,
+            _ => continue,
+        };
+        let detected_path = row.1.clone();
+        let id = tool_id.clone();
+
+        let desc = tokio::task::spawn_blocking(move || {
+            resolve_description_for_path(&PathBuf::from(detected_path))
+        })
+        .await
+        .ok()
+        .flatten();
+
+        let Some(desc) = desc else { continue };
+        let _ = state.db.set_local_cli_tool_description(&id, &desc);
+        results.push((id, desc));
+    }
+
+    Ok(results)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,11 +224,7 @@ mod tests {
 
     #[test]
     fn build_pty_args_for_pip() {
-        let mut tool = LocalCliTool::new(
-            "bdc",
-            "/home/u/.local/bin/bdc",
-            PackageManager::Pip,
-        );
+        let mut tool = LocalCliTool::new("bdc", "/home/u/.local/bin/bdc", PackageManager::Pip);
         tool.package_name = Some("bruce-doc-converter".to_string());
         let (bin, argv) = build_pty_update_args(&tool).unwrap();
         assert_eq!(bin, "pip");

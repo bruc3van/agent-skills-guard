@@ -37,8 +37,7 @@ async fn http_get_json(url: &str) -> Result<serde_json::Value> {
 }
 
 pub async fn fetch_npm_latest(name: &str) -> Result<String> {
-    let body =
-        http_get_json(&format!("https://registry.npmjs.org/{}/latest", name)).await?;
+    let body = http_get_json(&format!("https://registry.npmjs.org/{}/latest", name)).await?;
     body["version"]
         .as_str()
         .map(String::from)
@@ -46,8 +45,7 @@ pub async fn fetch_npm_latest(name: &str) -> Result<String> {
 }
 
 pub async fn fetch_pypi_latest(name: &str) -> Result<String> {
-    let body =
-        http_get_json(&format!("https://pypi.org/pypi/{}/json", name)).await?;
+    let body = http_get_json(&format!("https://pypi.org/pypi/{}/json", name)).await?;
     body["info"]["version"]
         .as_str()
         .map(String::from)
@@ -66,6 +64,10 @@ impl LocalCliUpdater {
     pub async fn check_updates(&self, tools: &mut Vec<LocalCliTool>) -> Result<()> {
         for tool in tools.iter_mut() {
             if is_cache_fresh(tool.last_checked.as_deref()) {
+                tool.update_available = is_outdated(
+                    tool.current_version.as_deref(),
+                    tool.latest_version.as_deref(),
+                );
                 continue;
             }
 
@@ -95,6 +97,7 @@ impl LocalCliUpdater {
                         tool.update_available,
                         tool.last_checked.as_deref(),
                         tool.package_name.as_deref(),
+                        tool.description.as_deref(),
                     );
                 }
                 Err(e) => log::warn!("检查 {} 更新失败: {}", tool.id, e),
@@ -125,5 +128,24 @@ mod tests {
         assert!(is_outdated(Some("0.3.1"), Some("0.4.0")));
         assert!(!is_outdated(Some("0.4.0"), Some("0.4.0")));
         assert!(!is_outdated(None, Some("0.4.0")));
+    }
+
+    #[tokio::test]
+    async fn fresh_cache_recomputes_update_flag_from_detected_current_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(dir.path().join("test.db")).unwrap());
+        let updater = LocalCliUpdater::new(Arc::clone(&db));
+        let mut tool =
+            LocalCliTool::new("bdc", r"C:\Python314\Scripts\bdc.exe", PackageManager::Pip);
+        tool.current_version = Some("0.1.2".to_string());
+        tool.latest_version = Some("0.1.3".to_string());
+        tool.update_available = false;
+        tool.last_checked = Some(Utc::now().to_rfc3339());
+
+        let mut tools = vec![tool];
+
+        updater.check_updates(&mut tools).await.unwrap();
+
+        assert!(tools[0].update_available);
     }
 }

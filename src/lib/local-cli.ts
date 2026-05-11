@@ -13,8 +13,8 @@ export function groupByManager(tools: LocalCliTool[]): Record<string, LocalCliTo
 
 export function managerLabel(manager: string): string {
   const labels: Record<string, string> = {
-    npm: "npm（全局）",
-    pip: "pip（Python）",
+    npm: "npm",
+    pip: "pip",
     brew: "Homebrew",
     scoop: "Scoop",
     choco: "Chocolatey",

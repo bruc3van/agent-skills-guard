@@ -312,4 +312,8 @@ export const api = {
   async updateLocalCliTool(toolId: string): Promise<string> {
     return invoke("update_local_cli_tool", { toolId });
   },
+
+  async fetchLocalCliDescriptions(toolIds: string[]): Promise<Array<[string, string]>> {
+    return invoke("fetch_local_cli_descriptions", { toolIds });
+  },
 };

@@ -85,6 +85,7 @@ pub struct LocalCliTool {
     pub update_status: Option<String>,
     pub update_log: Option<String>,
     pub package_name: Option<String>,
+    pub description: Option<String>,
 }
 
 impl LocalCliTool {
@@ -100,6 +101,7 @@ impl LocalCliTool {
             update_status: None,
             update_log: None,
             package_name: None,
+            description: None,
         }
     }
 
@@ -139,9 +141,8 @@ mod tests {
 
     #[test]
     fn detect_manager_from_npm_path_windows() {
-        let path = std::path::Path::new(
-            r"C:\Users\user\AppData\Roaming\npm\bruce-doc-converter.cmd",
-        );
+        let path =
+            std::path::Path::new(r"C:\Users\user\AppData\Roaming\npm\bruce-doc-converter.cmd");
         assert_eq!(detect_manager_from_path(path), PackageManager::Npm);
     }
 
