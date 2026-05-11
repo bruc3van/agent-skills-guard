@@ -669,13 +669,8 @@ pub async fn fetch_local_cli_descriptions(
     let mut results = Vec::new();
 
     for tool_path in &tool_paths {
-        if let Ok(Some(row)) = state.db.get_local_cli_tool(tool_path) {
-            if row.10.is_some() {
-                continue;
-            }
-        }
-
         let row = match state.db.get_local_cli_tool(tool_path) {
+            Ok(Some(r)) if r.10.is_some() => continue,
             Ok(Some(r)) => r,
             _ => continue,
         };

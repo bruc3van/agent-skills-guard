@@ -1029,6 +1029,9 @@ impl Database {
         if !needs_migration {
             return Ok(());
         }
+        let old_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM local_cli_tools", [], |r| r.get(0))
+            .unwrap_or(0);
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS local_cli_tools_new (
                  detected_path TEXT PRIMARY KEY,
@@ -1049,12 +1052,20 @@ impl Database {
                         package_name, description
                  FROM local_cli_tools
                  WHERE detected_path IS NOT NULL AND detected_path != '';
-             DROP TABLE local_cli_tools;",
+             DROP TABLE local_cli_tools;
+             ALTER TABLE local_cli_tools_new RENAME TO local_cli_tools;",
         )?;
-        conn.execute(
-            "ALTER TABLE local_cli_tools_new RENAME TO local_cli_tools",
-            [],
-        )?;
+        let new_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM local_cli_tools", [], |r| r.get(0))
+            .unwrap_or(0);
+        if new_count < old_count {
+            eprintln!(
+                "[migration] local_cli_tools: kept {} of {} rows ({} dropped due to empty/null path or duplicate)",
+                new_count,
+                old_count,
+                old_count - new_count
+            );
+        }
         Ok(())
     }
 

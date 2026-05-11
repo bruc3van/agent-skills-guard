@@ -121,7 +121,14 @@ fn executable_dedupe_key(path: &Path) -> String {
     if detect_manager_from_path(path) == PackageManager::Pip && is_pip_launcher_id(&id) {
         let parent = path
             .parent()
-            .map(|p| p.to_string_lossy().replace('\\', "/").to_lowercase())
+            .map(|p| {
+                let s = p.to_string_lossy().replace('\\', "/");
+                if cfg!(any(target_os = "windows", target_os = "macos")) {
+                    s.to_lowercase()
+                } else {
+                    s
+                }
+            })
             .unwrap_or_default();
         return format!("pip:{}", parent);
     }
