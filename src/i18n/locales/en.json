@@ -686,8 +686,8 @@
   },
   "localCli": {
     "title": "LOCAL_CLI_TOOLS",
-    "subtitle": "{{total}} tools in PATH · {{updates}} updates available",
-    "loading": "SCANNING_PATH...",
+    "subtitle": "{{total}} managed CLI tools · {{updates}} updates available",
+    "loading": "SCANNING_KNOWN_CLI_DIRS...",
     "rescan": "RESCAN",
     "checkUpdates": "CHECK_UPDATES",
     "checking": "CHECKING...",

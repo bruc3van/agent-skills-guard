@@ -1,8 +1,6 @@
 use crate::models::{detect_manager_from_path, LocalCliTool, PackageManager};
 use regex::Regex;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::Duration;
 
 pub fn tool_id_from_path(path: &Path) -> String {
     let stem = path
@@ -23,7 +21,7 @@ pub fn is_executable(path: &Path) -> bool {
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
-        matches!(ext.as_str(), "exe" | "cmd" | "bat" | "ps1")
+        matches!(ext.as_str(), "exe" | "cmd")
     }
 
     #[cfg(not(windows))]
@@ -33,6 +31,10 @@ pub fn is_executable(path: &Path) -> bool {
             .map(|m| m.permissions().mode() & 0o111 != 0)
             .unwrap_or(false)
     }
+}
+
+pub fn is_supported_cli_path(path: &Path) -> bool {
+    detect_manager_from_path(path) != PackageManager::Unknown
 }
 
 pub fn scan_dir_for_executables(dir: &Path) -> Vec<PathBuf> {
@@ -53,11 +55,18 @@ pub fn scan_path_for_executables() -> Vec<PathBuf> {
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
 
+    scan_path_dirs_for_supported_executables(path_dirs)
+}
+
+pub fn scan_path_dirs_for_supported_executables(path_dirs: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut result = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
 
     for dir in path_dirs {
         for bin in scan_dir_for_executables(&dir) {
+            if !is_supported_cli_path(&bin) {
+                continue;
+            }
             let id = tool_id_from_path(&bin);
             if seen_ids.insert(id) {
                 result.push(bin);
@@ -77,56 +86,14 @@ pub fn parse_version(output: &str) -> Option<String> {
 }
 
 pub fn detect_version(path: &Path) -> Option<String> {
-    let path_buf = path.to_path_buf();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(run_version_command(&path_buf));
-    });
-    rx.recv_timeout(Duration::from_secs(3))
-        .ok()
-        .flatten()
-}
-
-fn run_version_command(path: &Path) -> Option<String> {
-    #[cfg(windows)]
-    let output = {
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        if ext == "cmd" || ext == "bat" {
-            let comspec =
-                std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
-            Command::new(comspec)
-                .args(["/d", "/c", &path.to_string_lossy(), "--version"])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-                .ok()?
-        } else {
-            Command::new(path)
-                .arg("--version")
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-                .ok()?
-        }
-    };
-    #[cfg(not(windows))]
-    let output = Command::new(path)
-        .arg("--version")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .ok()?;
-
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    parse_version(&text)
+    match detect_manager_from_path(path) {
+        PackageManager::Npm => detect_npm_version(path),
+        PackageManager::Pip => detect_pip_version(path),
+        PackageManager::Brew
+        | PackageManager::Scoop
+        | PackageManager::Choco
+        | PackageManager::Unknown => None,
+    }
 }
 
 pub fn discover_local_cli_tools() -> Vec<LocalCliTool> {
@@ -159,15 +126,14 @@ fn resolve_package_name(path: &Path, manager: &PackageManager) -> Option<String>
 }
 
 fn resolve_npm_package_name(path: &Path) -> Option<String> {
-    let s = path.to_string_lossy().to_lowercase().replace('\\', "/");
-    let npm_global = if let Some(pos) = s.find("/npm/") {
-        &s[..pos + 5]
+    let npm_global = if let Some(root) = npm_global_root(path) {
+        root
     } else {
         return Some(tool_id_from_path(path));
     };
 
     let id = tool_id_from_path(path);
-    let pkg_json_path = PathBuf::from(format!("{}/node_modules/{}/package.json", npm_global, id));
+    let pkg_json_path = npm_package_json_path(&npm_global, &id);
     if pkg_json_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&pkg_json_path) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -188,6 +154,36 @@ fn resolve_npm_package_name(path: &Path) -> Option<String> {
     }
 
     Some(id)
+}
+
+fn npm_global_root(path: &Path) -> Option<PathBuf> {
+    let s = path.to_string_lossy().replace('\\', "/");
+    let lower = s.to_lowercase();
+    lower
+        .find("/npm/")
+        .map(|pos| PathBuf::from(s[..pos + 5].to_string()))
+}
+
+fn npm_package_json_path(npm_global: &Path, package_name: &str) -> PathBuf {
+    package_name
+        .split('/')
+        .fold(npm_global.join("node_modules"), |acc, part| acc.join(part))
+        .join("package.json")
+}
+
+fn read_package_json_field(path: &Path, field: &str) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    json[field].as_str().map(|value| value.to_string())
+}
+
+fn detect_npm_version(path: &Path) -> Option<String> {
+    let npm_global = npm_global_root(path)?;
+    let package_name = resolve_npm_package_name(path)?;
+    read_package_json_field(
+        &npm_package_json_path(&npm_global, &package_name),
+        "version",
+    )
 }
 
 #[cfg(windows)]
@@ -255,6 +251,47 @@ fn resolve_pip_package_name(path: &Path) -> Option<String> {
     Some(id)
 }
 
+fn detect_pip_version(path: &Path) -> Option<String> {
+    let id = tool_id_from_path(path);
+    let parent = path.parent()?;
+    for entry in std::fs::read_dir(parent).ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".dist-info") && !name.ends_with(".egg-info") {
+            continue;
+        }
+
+        let metadata_path = entry.path().join("METADATA");
+        let record_path = entry.path().join("RECORD");
+        let metadata = std::fs::read_to_string(&metadata_path).ok();
+        let record = std::fs::read_to_string(&record_path).ok();
+        let record_matches = record.as_deref().is_some_and(|record| {
+            record.lines().any(|line| {
+                let line_lower = line.to_lowercase();
+                line_lower.contains(&format!("{}.exe", id))
+                    || line_lower.contains(&format!("{}.py", id))
+                    || line_lower.contains(&format!("{}/__main__.py", id))
+            })
+        });
+
+        if !record_matches {
+            continue;
+        }
+
+        if let Some(metadata) = metadata {
+            for line in metadata.lines() {
+                if let Some(version) = line.strip_prefix("Version: ") {
+                    let version = version.trim();
+                    if !version.is_empty() {
+                        return Some(version.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,9 +335,94 @@ mod tests {
             tool_id_from_path(std::path::Path::new("pandoc.exe")),
             "pandoc"
         );
+        assert_eq!(tool_id_from_path(std::path::Path::new("mmdc")), "mmdc");
+    }
+
+    #[test]
+    fn supported_cli_path_rejects_windows_system_binaries() {
+        let path = std::path::Path::new(r"C:\Windows\System32\WerFault.exe");
+        assert!(!is_supported_cli_path(path));
+    }
+
+    #[test]
+    fn scan_path_only_returns_supported_cli_locations() {
+        let dir = tempfile::tempdir().unwrap();
+        let unsupported = dir.path().join("WerFault.exe");
+        fs::write(&unsupported, b"").unwrap();
+
+        let supported_dir = tempfile::tempdir().unwrap();
+        let supported_root = supported_dir
+            .path()
+            .join("AppData")
+            .join("Roaming")
+            .join("npm");
+        fs::create_dir_all(&supported_root).unwrap();
+        let supported = supported_root.join("bruce-doc-converter.cmd");
+        fs::write(&supported, b"@echo off\r\necho 1.0.0\r\n").unwrap();
+
+        let found = scan_path_dirs_for_supported_executables(vec![
+            dir.path().to_path_buf(),
+            supported_root.clone(),
+        ]);
+
+        assert_eq!(found, vec![supported]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn detect_version_does_not_execute_windows_cmd_shim() {
+        let dir = tempfile::tempdir().unwrap();
+        let npm_root = dir.path().join("AppData").join("Roaming").join("npm");
+        fs::create_dir_all(&npm_root).unwrap();
+        let marker = dir.path().join("executed.txt");
+        let shim = npm_root.join("suspicious.cmd");
+        fs::write(
+            &shim,
+            format!(
+                "@echo off\r\necho executed > \"{}\"\r\necho 9.9.9\r\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(detect_version(&shim), None);
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn detect_version_reads_npm_package_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let npm_root = dir.path().join("AppData").join("Roaming").join("npm");
+        let package_root = npm_root.join("node_modules").join("my-tool");
+        fs::create_dir_all(&package_root).unwrap();
+        fs::write(
+            package_root.join("package.json"),
+            r#"{"name":"my-tool","version":"1.2.3"}"#,
+        )
+        .unwrap();
+        let shim = npm_root.join("my-tool.cmd");
+        fs::write(&shim, b"@echo off\r\necho should-not-run\r\n").unwrap();
+
+        assert_eq!(detect_version(&shim), Some("1.2.3".to_string()));
+    }
+
+    #[test]
+    fn detect_version_reads_pip_package_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir.path().join("Python311").join("Scripts");
+        let dist_info = scripts.join("my_tool-4.5.6.dist-info");
+        fs::create_dir_all(&dist_info).unwrap();
+        fs::write(scripts.join("my-tool.exe"), b"").unwrap();
+        fs::write(
+            dist_info.join("METADATA"),
+            "Name: my-tool\nVersion: 4.5.6\n",
+        )
+        .unwrap();
+        fs::write(dist_info.join("RECORD"), "my-tool.exe,,\n").unwrap();
+
         assert_eq!(
-            tool_id_from_path(std::path::Path::new("mmdc")),
-            "mmdc"
+            detect_version(&scripts.join("my-tool.exe")),
+            Some("4.5.6".to_string())
         );
     }
 }

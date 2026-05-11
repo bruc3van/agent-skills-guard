@@ -35,7 +35,12 @@ describe("LocalCliToolRow", () => {
   it("有更新时显示更新按钮", () => {
     render(
       <LocalCliToolRow
-        tool={{ ...base, update_available: true, latest_version: "0.4.0" }}
+        tool={{
+          ...base,
+          update_available: true,
+          latest_version: "0.4.0",
+          package_name: "bruce-doc-converter",
+        }}
         onUpdate={vi.fn()}
         isUpdating={false}
       />
@@ -46,7 +51,7 @@ describe("LocalCliToolRow", () => {
   it("更新中时按钮禁用", () => {
     render(
       <LocalCliToolRow
-        tool={{ ...base, update_available: true }}
+        tool={{ ...base, update_available: true, package_name: "bruce-doc-converter" }}
         onUpdate={vi.fn()}
         isUpdating={true}
       />
