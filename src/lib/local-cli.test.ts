@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { groupByManager, managerLabel } from "./local-cli";
+import { localCliQueryKey } from "../hooks/useLocalCli";
 import type { LocalCliTool } from "../types";
 
 const make = (id: string, manager: string): LocalCliTool => ({
@@ -24,5 +25,11 @@ describe("managerLabel", () => {
   });
   it("unknown 显示未知", () => {
     expect(managerLabel("unknown")).toBeTruthy();
+  });
+});
+
+describe("localCliQueryKey", () => {
+  it("返回稳定键", () => {
+    expect(localCliQueryKey()).toEqual(["local-cli-tools"]);
   });
 });
