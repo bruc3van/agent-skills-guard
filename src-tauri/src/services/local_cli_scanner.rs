@@ -85,22 +85,71 @@ fn common_cli_search_dirs(home: Option<PathBuf>) -> Vec<PathBuf> {
 }
 
 pub fn scan_path_dirs_for_supported_executables(path_dirs: Vec<PathBuf>) -> Vec<PathBuf> {
-    let mut result = Vec::new();
-    let mut seen_ids = std::collections::HashSet::new();
+    let mut candidates = Vec::new();
 
     for dir in path_dirs {
         for bin in scan_dir_for_executables(&dir) {
             if !is_supported_cli_path(&bin) {
                 continue;
             }
-            let id = tool_id_from_path(&bin);
-            if seen_ids.insert(id) {
-                result.push(bin);
-            }
+            candidates.push(bin);
+        }
+    }
+
+    dedupe_supported_executables(candidates)
+}
+
+fn dedupe_supported_executables(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    let mut seen_keys = std::collections::HashSet::new();
+
+    let mut paths = paths;
+    paths.sort_by_key(|path| executable_preference_rank(path));
+
+    for path in paths {
+        let key = executable_dedupe_key(&path);
+        if seen_keys.insert(key) {
+            result.push(path);
         }
     }
 
     result
+}
+
+fn executable_dedupe_key(path: &Path) -> String {
+    let id = tool_id_from_path(path);
+    if detect_manager_from_path(path) == PackageManager::Pip && is_pip_launcher_id(&id) {
+        let parent = path
+            .parent()
+            .map(|p| p.to_string_lossy().replace('\\', "/").to_lowercase())
+            .unwrap_or_default();
+        return format!("pip:{}", parent);
+    }
+
+    id
+}
+
+fn executable_preference_rank(path: &Path) -> u8 {
+    let id = tool_id_from_path(path);
+    if detect_manager_from_path(path) != PackageManager::Pip || !is_pip_launcher_id(&id) {
+        return 10;
+    }
+
+    if id == "pip" {
+        0
+    } else if id == "pip3" {
+        1
+    } else {
+        2
+    }
+}
+
+fn is_pip_launcher_id(id: &str) -> bool {
+    id == "pip"
+        || id == "pip3"
+        || id
+            .strip_prefix("pip3.")
+            .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
 }
 
 pub fn parse_version(output: &str) -> Option<String> {
@@ -624,6 +673,36 @@ mod tests {
         ]);
 
         assert_eq!(found, vec![supported]);
+    }
+
+    #[test]
+    fn scan_path_dedupes_pip_aliases_per_python_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let py314_scripts = dir.path().join("Python314").join("Scripts");
+        let py313_scripts = dir.path().join("Python313").join("Scripts");
+        fs::create_dir_all(&py314_scripts).unwrap();
+        fs::create_dir_all(&py313_scripts).unwrap();
+
+        for name in ["pip.exe", "pip3.exe", "pip3.14.exe"] {
+            fs::write(py314_scripts.join(name), b"").unwrap();
+        }
+        for name in ["pip3.exe", "pip3.13.exe"] {
+            fs::write(py313_scripts.join(name), b"").unwrap();
+        }
+
+        let found = scan_path_dirs_for_supported_executables(vec![
+            py314_scripts.clone(),
+            py313_scripts.clone(),
+        ]);
+        let file_names = found
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(found.len(), 2);
+        assert!(found.contains(&py314_scripts.join("pip.exe")));
+        assert!(found.contains(&py313_scripts.join("pip3.exe")));
+        assert!(!file_names.iter().any(|name| name == "pip3.13.exe"));
     }
 
     #[test]

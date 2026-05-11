@@ -281,6 +281,7 @@ impl Database {
         self.migrate_add_plugin_install_commands()?;
         self.migrate_add_agent_tool_fields()?;
         self.migrate_add_local_cli_tools()?;
+        self.migrate_local_cli_tools_to_path_key()?;
 
         Ok(())
     }
@@ -1014,6 +1015,49 @@ impl Database {
         Ok(())
     }
 
+    fn migrate_local_cli_tools_to_path_key(&self) -> Result<()> {
+        let conn = self.lock_conn();
+        // Check if migration already applied: id column is no longer the primary key
+        let needs_migration: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('local_cli_tools') WHERE name='id' AND pk=1",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
+        if !needs_migration {
+            return Ok(());
+        }
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS local_cli_tools_new (
+                 detected_path TEXT PRIMARY KEY,
+                 id TEXT NOT NULL,
+                 manager TEXT NOT NULL DEFAULT 'unknown',
+                 current_version TEXT,
+                 latest_version TEXT,
+                 update_available INTEGER NOT NULL DEFAULT 0,
+                 last_checked TEXT,
+                 update_status TEXT,
+                 update_log TEXT,
+                 package_name TEXT,
+                 description TEXT
+             );
+             INSERT OR IGNORE INTO local_cli_tools_new
+                 SELECT detected_path, id, manager, current_version, latest_version,
+                        update_available, last_checked, update_status, update_log,
+                        package_name, description
+                 FROM local_cli_tools
+                 WHERE detected_path IS NOT NULL AND detected_path != '';
+             DROP TABLE local_cli_tools;",
+        )?;
+        conn.execute(
+            "ALTER TABLE local_cli_tools_new RENAME TO local_cli_tools",
+            [],
+        )?;
+        Ok(())
+    }
+
     pub fn upsert_local_cli_tool(
         &self,
         id: &str,
@@ -1029,10 +1073,10 @@ impl Database {
         let conn = self.lock_conn();
         conn.execute(
             "INSERT INTO local_cli_tools
-                 (id, detected_path, manager, current_version, latest_version, update_available, last_checked, package_name, description)
+                 (detected_path, id, manager, current_version, latest_version, update_available, last_checked, package_name, description)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-             ON CONFLICT(id) DO UPDATE SET
-               detected_path     = excluded.detected_path,
+             ON CONFLICT(detected_path) DO UPDATE SET
+               id                = excluded.id,
                manager           = excluded.manager,
                current_version   = excluded.current_version,
                latest_version    = excluded.latest_version,
@@ -1041,8 +1085,8 @@ impl Database {
                package_name      = excluded.package_name,
                description       = COALESCE(excluded.description, local_cli_tools.description)",
             params![
-                id,
                 detected_path,
+                id,
                 manager,
                 current_version,
                 latest_version,
@@ -1057,37 +1101,40 @@ impl Database {
 
     pub fn set_local_cli_tool_update_status(
         &self,
-        id: &str,
+        path: &str,
         status: &str,
         log: Option<&str>,
     ) -> Result<()> {
         let conn = self.lock_conn();
         conn.execute(
-            "UPDATE local_cli_tools SET update_status = ?1, update_log = ?2 WHERE id = ?3",
-            params![status, log, id],
+            "UPDATE local_cli_tools SET update_status = ?1, update_log = ?2 WHERE detected_path = ?3",
+            params![status, log, path],
         )?;
         Ok(())
     }
 
-    pub fn set_local_cli_tool_description(&self, id: &str, description: &str) -> Result<()> {
+    pub fn set_local_cli_tool_description(&self, path: &str, description: &str) -> Result<()> {
         let conn = self.lock_conn();
         conn.execute(
-            "UPDATE local_cli_tools SET description = ?1 WHERE id = ?2",
-            params![description, id],
+            "UPDATE local_cli_tools SET description = ?1 WHERE detected_path = ?2",
+            params![description, path],
         )?;
         Ok(())
     }
 
-    pub fn delete_local_cli_tool(&self, id: &str) -> Result<()> {
+    pub fn delete_local_cli_tool(&self, path: &str) -> Result<()> {
         let conn = self.lock_conn();
-        conn.execute("DELETE FROM local_cli_tools WHERE id = ?1", params![id])?;
+        conn.execute(
+            "DELETE FROM local_cli_tools WHERE detected_path = ?1",
+            params![path],
+        )?;
         Ok(())
     }
 
     #[allow(clippy::type_complexity)]
     pub fn get_local_cli_tool(
         &self,
-        id: &str,
+        path: &str,
     ) -> Result<
         Option<(
             String,
@@ -1108,8 +1155,8 @@ impl Database {
             .query_row(
                 "SELECT id, detected_path, manager, current_version, latest_version,
                         update_available, last_checked, update_status, update_log, package_name, description
-                 FROM local_cli_tools WHERE id = ?1",
-                params![id],
+                 FROM local_cli_tools WHERE detected_path = ?1",
+                params![path],
                 |r| {
                     Ok((
                         r.get(0)?,
@@ -1307,7 +1354,7 @@ mod tests {
         )
         .unwrap();
 
-        let tool = db.get_local_cli_tool("bruce-doc-converter").unwrap();
+        let tool = db.get_local_cli_tool("/home/user/.local/bin/bruce-doc-converter").unwrap();
         assert!(tool.is_some());
         let t = tool.unwrap();
         assert_eq!(t.0, "bruce-doc-converter");

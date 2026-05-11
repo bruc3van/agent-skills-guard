@@ -6,6 +6,19 @@ import type { LocalCliTool } from "../types";
 export const LOCAL_CLI_QUERY_KEY = ["local-cli-tools"] as const;
 export const localCliQueryKey = () => LOCAL_CLI_QUERY_KEY;
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object") {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      // fall through
+    }
+  }
+  return "未知错误";
+}
+
 export function useLocalCliTools(opts: { enabled?: boolean } = {}) {
   return useQuery<LocalCliTool[]>({
     queryKey: LOCAL_CLI_QUERY_KEY,
@@ -27,28 +40,28 @@ export function useCheckLocalCliUpdates() {
 
 export function useUpdateLocalCliTool() {
   const qc = useQueryClient();
-  return useMutation<string, Error, string>({
-    mutationFn: (toolId) => api.updateLocalCliTool(toolId),
-    onSuccess: (_log, toolId) => {
+  return useMutation<string, unknown, LocalCliTool>({
+    mutationFn: (tool) => api.updateLocalCliTool(tool.detected_path),
+    onSuccess: (_log, tool) => {
       qc.invalidateQueries({ queryKey: LOCAL_CLI_QUERY_KEY });
-      appToast.success(`${toolId} 更新完成`);
+      appToast.success(`${tool.id} 更新完成`);
     },
-    onError: (err, toolId) => {
-      appToast.error(`${toolId} 更新失败: ${err.message}`);
+    onError: (err, tool) => {
+      appToast.error(`${tool.id} 更新失败: ${errorMessage(err)}`);
     },
   });
 }
 
 export function useUninstallLocalCliTool() {
   const qc = useQueryClient();
-  return useMutation<string, Error, string>({
-    mutationFn: (toolId) => api.uninstallLocalCliTool(toolId),
-    onSuccess: (_log, toolId) => {
+  return useMutation<string, unknown, LocalCliTool>({
+    mutationFn: (tool) => api.uninstallLocalCliTool(tool.detected_path),
+    onSuccess: (_log, tool) => {
       qc.invalidateQueries({ queryKey: LOCAL_CLI_QUERY_KEY });
-      appToast.success(`${toolId} 卸载完成`);
+      appToast.success(`${tool.id} 卸载完成`);
     },
-    onError: (err, toolId) => {
-      appToast.error(`${toolId} 卸载失败: ${err.message}`);
+    onError: (err, tool) => {
+      appToast.error(`${tool.id} 卸载失败: ${errorMessage(err)}`);
     },
   });
 }

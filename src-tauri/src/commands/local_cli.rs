@@ -215,6 +215,14 @@ fn sanitize_terminal_log(raw: &str) -> String {
         .join("\n")
 }
 
+fn non_empty_log_or_default(log: String, fallback: impl Into<String>) -> String {
+    if log.trim().is_empty() {
+        fallback.into()
+    } else {
+        log
+    }
+}
+
 fn strip_ansi_sequences(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let chars = raw.chars().collect::<Vec<_>>();
@@ -400,14 +408,14 @@ pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<Loca
         .into_iter()
         .map(
             |(id, path, mgr, cur, lat, upd, chk, status, log, pkg, desc)| {
-                (id, (path, mgr, cur, lat, upd, chk, status, log, pkg, desc))
+                (path, (id, mgr, cur, lat, upd, chk, status, log, pkg, desc))
             },
         )
         .collect();
 
     for tool in tools.iter_mut() {
         if let Some((_, _, _, latest, update_avail, checked, status, log, _pkg, desc)) =
-            cache_map.get(&tool.id)
+            cache_map.get(&tool.detected_path)
         {
             tool.latest_version = latest.clone();
             tool.update_available = *update_avail;
@@ -450,26 +458,27 @@ pub async fn check_local_cli_updates(
 #[tauri::command]
 pub async fn update_local_cli_tool(
     state: State<'_, AppState>,
-    tool_id: String,
+    tool_path: String,
 ) -> Result<String, String> {
     let row = state
         .db
-        .get_local_cli_tool(&tool_id)
+        .get_local_cli_tool(&tool_path)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("工具 {} 未找到", tool_id))?;
+        .ok_or_else(|| format!("工具 {} 未找到", tool_path))?;
 
-    let (_, detected_path, manager_str, current_version, _, _, _, _, _, pkg_name, _desc) = row;
+    let (display_id, detected_path, manager_str, current_version, _, _, _, _, _, pkg_name, _desc) =
+        row;
     let manager = PackageManager::from_str(&manager_str);
-    let mut tool = LocalCliTool::new(&tool_id, &detected_path, manager);
+    let mut tool = LocalCliTool::new(&display_id, &detected_path, manager);
     tool.current_version = current_version;
     tool.package_name = pkg_name;
 
     let (bin, args) = build_pty_update_args(&tool)
-        .ok_or_else(|| format!("工具 {} 的包管理器不支持自动更新", tool_id))?;
+        .ok_or_else(|| format!("工具 {} 的包管理器不支持自动更新", display_id))?;
 
     state
         .db
-        .set_local_cli_tool_update_status(&tool_id, "updating", None)
+        .set_local_cli_tool_update_status(&tool_path, "updating", None)
         .map_err(|e| e.to_string())?;
 
     let cli = ClaudeCli::new(bin);
@@ -480,21 +489,25 @@ pub async fn update_local_cli_tool(
 
     let detected_path_clone = detected_path.clone();
     let manager_str_clone = manager_str.clone();
-    let tool_id_clone = tool_id.clone();
+    let display_id_clone = display_id.clone();
 
     match tokio::task::spawn_blocking(move || cli.run(&[command])).await {
         Ok(Ok(result)) => {
-            let log = sanitize_terminal_log(&result.raw_log);
+            let raw_log = sanitize_terminal_log(&result.raw_log);
             if result.exit_success {
+                let log = non_empty_log_or_default(
+                    raw_log,
+                    format!("{} 更新命令执行完成，但没有返回可显示日志", display_id),
+                );
                 state
                     .db
-                    .set_local_cli_tool_update_status(&tool_id, "success", Some(&log))
+                    .set_local_cli_tool_update_status(&tool_path, "success", Some(&log))
                     .map_err(|e| e.to_string())?;
                 let new_version = crate::services::local_cli_scanner::detect_version(
                     std::path::Path::new(&detected_path_clone),
                 );
                 let _ = state.db.upsert_local_cli_tool(
-                    &tool_id_clone,
+                    &display_id_clone,
                     &detected_path_clone,
                     &manager_str_clone,
                     new_version.as_deref(),
@@ -506,9 +519,13 @@ pub async fn update_local_cli_tool(
                 );
                 Ok(log)
             } else {
+                let log = non_empty_log_or_default(
+                    raw_log,
+                    format!("{} 更新命令执行失败，但没有返回可显示日志", display_id),
+                );
                 state
                     .db
-                    .set_local_cli_tool_update_status(&tool_id, "failed", Some(&log))
+                    .set_local_cli_tool_update_status(&tool_path, "failed", Some(&log))
                     .map_err(|e| e.to_string())?;
                 Err(log)
             }
@@ -517,7 +534,7 @@ pub async fn update_local_cli_tool(
             let msg = e.to_string();
             state
                 .db
-                .set_local_cli_tool_update_status(&tool_id, "failed", Some(&msg))
+                .set_local_cli_tool_update_status(&tool_path, "failed", Some(&msg))
                 .map_err(|e| e.to_string())?;
             Err(msg)
         }
@@ -528,26 +545,27 @@ pub async fn update_local_cli_tool(
 #[tauri::command]
 pub async fn uninstall_local_cli_tool(
     state: State<'_, AppState>,
-    tool_id: String,
+    tool_path: String,
 ) -> Result<String, String> {
     let row = state
         .db
-        .get_local_cli_tool(&tool_id)
+        .get_local_cli_tool(&tool_path)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("工具 {} 未找到", tool_id))?;
+        .ok_or_else(|| format!("工具 {} 未找到", tool_path))?;
 
-    let (_, detected_path, manager_str, current_version, _, _, _, _, _, pkg_name, _desc) = row;
+    let (display_id, detected_path, manager_str, current_version, _, _, _, _, _, pkg_name, _desc) =
+        row;
     let manager = PackageManager::from_str(&manager_str);
-    let mut tool = LocalCliTool::new(&tool_id, &detected_path, manager);
+    let mut tool = LocalCliTool::new(&display_id, &detected_path, manager);
     tool.current_version = current_version;
     tool.package_name = pkg_name;
 
     let (bin, args) = build_pty_uninstall_args(&tool)
-        .ok_or_else(|| format!("工具 {} 的包管理器不支持自动卸载", tool_id))?;
+        .ok_or_else(|| format!("工具 {} 的包管理器不支持自动卸载", display_id))?;
 
     state
         .db
-        .set_local_cli_tool_update_status(&tool_id, "uninstalling", None)
+        .set_local_cli_tool_update_status(&tool_path, "uninstalling", None)
         .map_err(|e| e.to_string())?;
 
     let cli = ClaudeCli::new(bin);
@@ -558,17 +576,25 @@ pub async fn uninstall_local_cli_tool(
 
     match tokio::task::spawn_blocking(move || cli.run(&[command])).await {
         Ok(Ok(result)) => {
-            let log = sanitize_terminal_log(&result.raw_log);
+            let raw_log = sanitize_terminal_log(&result.raw_log);
             if result.exit_success {
+                let log = non_empty_log_or_default(
+                    raw_log,
+                    format!("{} 卸载命令执行完成，但没有返回可显示日志", display_id),
+                );
                 state
                     .db
-                    .delete_local_cli_tool(&tool_id)
+                    .delete_local_cli_tool(&tool_path)
                     .map_err(|e| e.to_string())?;
                 Ok(log)
             } else {
+                let log = non_empty_log_or_default(
+                    raw_log,
+                    format!("{} 卸载命令执行失败，但没有返回可显示日志", display_id),
+                );
                 state
                     .db
-                    .set_local_cli_tool_update_status(&tool_id, "failed", Some(&log))
+                    .set_local_cli_tool_update_status(&tool_path, "failed", Some(&log))
                     .map_err(|e| e.to_string())?;
                 Err(log)
             }
@@ -577,7 +603,7 @@ pub async fn uninstall_local_cli_tool(
             let msg = e.to_string();
             state
                 .db
-                .set_local_cli_tool_update_status(&tool_id, "failed", Some(&msg))
+                .set_local_cli_tool_update_status(&tool_path, "failed", Some(&msg))
                 .map_err(|e| e.to_string())?;
             Err(msg)
         }
@@ -588,18 +614,18 @@ pub async fn uninstall_local_cli_tool(
 #[tauri::command]
 pub async fn open_local_cli_folder(
     state: State<'_, AppState>,
-    tool_id: String,
+    tool_path: String,
 ) -> Result<(), String> {
     let row = state
         .db
-        .get_local_cli_tool(&tool_id)
+        .get_local_cli_tool(&tool_path)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("工具 {} 未找到", tool_id))?;
+        .ok_or_else(|| format!("工具 {} 未找到", tool_path))?;
 
     let detected_path = PathBuf::from(row.1);
     let folder = detected_path
         .parent()
-        .ok_or_else(|| format!("无法获取工具 {} 的安装目录", tool_id))?;
+        .ok_or_else(|| format!("无法获取工具 {} 的安装目录", tool_path))?;
     if !folder.exists() || !folder.is_dir() {
         return Err(format!("安装目录不存在: {}", folder.display()));
     }
@@ -638,34 +664,38 @@ pub async fn open_local_cli_folder(
 #[tauri::command]
 pub async fn fetch_local_cli_descriptions(
     state: State<'_, AppState>,
-    tool_ids: Vec<String>,
+    tool_paths: Vec<String>,
 ) -> Result<Vec<(String, String)>, String> {
     let mut results = Vec::new();
 
-    for tool_id in &tool_ids {
-        if let Ok(Some(row)) = state.db.get_local_cli_tool(tool_id) {
+    for tool_path in &tool_paths {
+        if let Ok(Some(row)) = state.db.get_local_cli_tool(tool_path) {
             if row.10.is_some() {
                 continue;
             }
         }
 
-        let row = match state.db.get_local_cli_tool(tool_id) {
+        let row = match state.db.get_local_cli_tool(tool_path) {
             Ok(Some(r)) => r,
             _ => continue,
         };
         let detected_path = row.1.clone();
-        let id = tool_id.clone();
+        let path = tool_path.clone();
 
-        let desc = tokio::task::spawn_blocking(move || {
-            resolve_description_for_path(&PathBuf::from(detected_path))
-        })
+        let desc = tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::task::spawn_blocking(move || {
+                resolve_description_for_path(&PathBuf::from(detected_path))
+            }),
+        )
         .await
         .ok()
+        .and_then(|r| r.ok())
         .flatten();
 
         let Some(desc) = desc else { continue };
-        let _ = state.db.set_local_cli_tool_description(&id, &desc);
-        results.push((id, desc));
+        let _ = state.db.set_local_cli_tool_description(&path, &desc);
+        results.push((path, desc));
     }
 
     Ok(results)

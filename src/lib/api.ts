@@ -315,19 +315,19 @@ export const api = {
     return invoke("check_local_cli_updates");
   },
 
-  async updateLocalCliTool(toolId: string): Promise<string> {
-    return invoke("update_local_cli_tool", { toolId });
+  async updateLocalCliTool(toolPath: string): Promise<string> {
+    return invoke("update_local_cli_tool", { toolPath });
   },
 
-  async uninstallLocalCliTool(toolId: string): Promise<string> {
-    return invoke("uninstall_local_cli_tool", { toolId });
+  async uninstallLocalCliTool(toolPath: string): Promise<string> {
+    return invoke("uninstall_local_cli_tool", { toolPath });
   },
 
-  async openLocalCliFolder(toolId: string): Promise<void> {
-    return invoke("open_local_cli_folder", { toolId });
+  async openLocalCliFolder(toolPath: string): Promise<void> {
+    return invoke("open_local_cli_folder", { toolPath });
   },
 
-  async fetchLocalCliDescriptions(toolIds: string[]): Promise<Array<[string, string]>> {
-    return invoke("fetch_local_cli_descriptions", { toolIds });
+  async fetchLocalCliDescriptions(toolPaths: string[]): Promise<Array<[string, string]>> {
+    return invoke("fetch_local_cli_descriptions", { toolPaths });
   },
 };

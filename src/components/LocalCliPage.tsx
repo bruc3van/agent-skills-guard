@@ -35,12 +35,12 @@ export function LocalCliPage() {
   const {
     mutate: updateTool,
     isPending: isUpdating,
-    variables: updatingId,
+    variables: updatingTool,
   } = useUpdateLocalCliTool();
   const {
     mutateAsync: uninstallTool,
     isPending: isUninstalling,
-    variables: uninstallingId,
+    variables: uninstallingTool,
   } = useUninstallLocalCliTool();
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<ManagerTab>("all");
@@ -87,7 +87,7 @@ export function LocalCliPage() {
       const tool = missing[index];
       setFetchProgress({ current: tool.id, done: index, total });
       try {
-        const results = await api.fetchLocalCliDescriptions([tool.id]);
+        const results = await api.fetchLocalCliDescriptions([tool.detected_path]);
         if (results.length > 0) {
           const [, desc] = results[0];
           setDescriptionMap((prev) => ({ ...prev, [tool.id]: desc }));
@@ -160,13 +160,11 @@ export function LocalCliPage() {
 
   const busyMessage = useMemo(() => {
     if (isChecking) return t("localCli.checking");
-    if (isUpdating && updatingId) {
-      const tool = tools.find((t) => t.id === updatingId);
-      return t("localCli.busy.updating", { name: tool?.id ?? updatingId });
+    if (isUpdating && updatingTool) {
+      return t("localCli.busy.updating", { name: updatingTool.id });
     }
-    if (isUninstalling && uninstallingId) {
-      const tool = tools.find((t) => t.id === uninstallingId);
-      return t("localCli.busy.uninstalling", { name: tool?.id ?? uninstallingId });
+    if (isUninstalling && uninstallingTool) {
+      return t("localCli.busy.uninstalling", { name: uninstallingTool.id });
     }
     if (fetchProgress) {
       return t("localCli.busy.fetchingDesc", {
@@ -176,7 +174,7 @@ export function LocalCliPage() {
       });
     }
     return null;
-  }, [isChecking, isUpdating, isUninstalling, fetchProgress, t, tools, updatingId, uninstallingId]);
+  }, [isChecking, isUpdating, isUninstalling, fetchProgress, t, updatingTool, uninstallingTool]);
 
   const handleCheckUpdates = () => {
     checkUpdates(undefined, {
@@ -186,13 +184,13 @@ export function LocalCliPage() {
     });
   };
 
-  const handleUpdateTool = (toolId: string) => {
-    updateTool(toolId);
+  const handleUpdateTool = (tool: LocalCliTool) => {
+    updateTool(tool);
   };
 
   const handleOpenFolder = async (tool: LocalCliTool) => {
     try {
-      await api.openLocalCliFolder(tool.id);
+      await api.openLocalCliFolder(tool.detected_path);
       appToast.success(t("localCli.folder.opened"), { duration: 3000 });
     } catch (error: any) {
       appToast.error(
@@ -207,7 +205,7 @@ export function LocalCliPage() {
   const handleConfirmUninstall = async () => {
     if (!pendingUninstall || isUninstalling) return;
     const tool = pendingUninstall;
-    await uninstallTool(tool.id);
+    await uninstallTool(tool);
     setPendingUninstall(null);
   };
 
@@ -376,15 +374,15 @@ export function LocalCliPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
               {filtered.map((tool) => (
                 <CliToolCard
-                  key={tool.id}
+                  key={tool.detected_path}
                   tool={tool}
                   description={getToolDescription(tool)}
                   isFetchingDesc={isFetchingDesc && !tool.description && !descriptionMap[tool.id]}
                   onUpdate={handleUpdateTool}
-                  isUpdating={isUpdating && updatingId === tool.id}
+                  isUpdating={isUpdating && updatingTool?.detected_path === tool.detected_path}
                   onOpenFolder={handleOpenFolder}
                   onRequestUninstall={setPendingUninstall}
-                  isUninstalling={isUninstalling && uninstallingId === tool.id}
+                  isUninstalling={isUninstalling && uninstallingTool?.detected_path === tool.detected_path}
                   isAnyOperationPending={isUpdating || isChecking || isUninstalling}
                 />
               ))}
@@ -436,7 +434,7 @@ export function LocalCliPage() {
         operationCount={1}
         pathCount={1}
         isConfirming={
-          pendingUninstall ? isUninstalling && uninstallingId === pendingUninstall.id : false
+          pendingUninstall ? isUninstalling && uninstallingTool?.detected_path === pendingUninstall.detected_path : false
         }
         labels={{
           title: t("localCli.uninstallDialog.title"),
@@ -513,7 +511,7 @@ function CliToolCard({
   tool: LocalCliTool;
   description?: string;
   isFetchingDesc: boolean;
-  onUpdate: (id: string) => void;
+  onUpdate: (tool: LocalCliTool) => void;
   onOpenFolder: (tool: LocalCliTool) => void;
   onRequestUninstall: (tool: LocalCliTool) => void;
   isUpdating: boolean;
@@ -522,7 +520,6 @@ function CliToolCard({
 }) {
   const { t } = useTranslation();
   const hasUpdate = tool.update_available;
-  const updateLog = tool.update_log ? sanitizeTerminalText(tool.update_log) : "";
   const packageName = tool.package_name && tool.package_name !== tool.id ? tool.package_name : null;
   const lastChecked = formatLastChecked(tool.last_checked, t("localCli.card.notChecked"));
 
@@ -556,7 +553,7 @@ function CliToolCard({
         <div className="flex gap-2 shrink-0">
           {hasUpdate && (
             <button
-              onClick={() => onUpdate(tool.id)}
+              onClick={() => onUpdate(tool)}
               disabled={isAnyOperationPending}
               className="apple-button-primary h-8 px-3 text-xs flex items-center gap-1.5"
             >
@@ -649,16 +646,6 @@ function CliToolCard({
         </div>
       </div>
 
-      {updateLog && (
-        <div className="mt-3 pt-3 border-t border-border/60">
-          <div className="text-xs font-medium text-blue-500 mb-2">
-            {t("localCli.card.updateLog")}
-          </div>
-          <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono bg-secondary/50 rounded-xl p-3 max-h-32 overflow-y-auto">
-            {updateLog}
-          </pre>
-        </div>
-      )}
     </div>
   );
 }
