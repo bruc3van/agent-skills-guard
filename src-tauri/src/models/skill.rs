@@ -28,9 +28,9 @@ pub struct Skill {
     pub security_report: Option<SecurityReport>, // 完整扫描报告
     pub scanned_at: Option<DateTime<Utc>>, // 扫描时间戳
     pub installed_commit_sha: Option<String>, // 安装时对应的仓库 commit SHA
-    pub source_path: Option<String>,          // 统一源路径 (~/.agents/skills/<name>)
-    pub linked_tools: Vec<String>,            // 已创建链接的工具 id 列表
-    pub is_local_only: bool,                  // true = 用户手动放入，未经本工具安装
+    pub source_path: Option<String>,    // 统一源路径 (~/.agents/skills/<name>)
+    pub linked_tools: Vec<String>,      // 已创建链接的工具 id 列表
+    pub is_local_only: bool,            // true = 用户手动放入，未经本工具安装
 }
 
 impl Skill {

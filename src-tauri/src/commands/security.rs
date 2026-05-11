@@ -46,7 +46,10 @@ pub async fn scan_all_installed_skills(
                 };
                 let path = PathBuf::from(local_path);
                 if !path.exists() || !path.is_dir() {
-                    log::warn!("Skill directory does not exist, marking as uninstalled: {:?}", path);
+                    log::warn!(
+                        "Skill directory does not exist, marking as uninstalled: {:?}",
+                        path
+                    );
                     let mut updated = skill.clone();
                     updated.installed = false;
                     updated.installed_at = None;

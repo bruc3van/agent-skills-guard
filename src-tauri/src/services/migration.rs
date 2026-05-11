@@ -121,8 +121,11 @@ impl MigrationManager {
             }
 
             let source_path = choose_source_path(&group);
-            let mut skill =
-                Skill::new(group.name.clone(), LOCAL_REPOSITORY_URL.to_string(), source_path.clone());
+            let mut skill = Skill::new(
+                group.name.clone(),
+                LOCAL_REPOSITORY_URL.to_string(),
+                source_path.clone(),
+            );
             skill.id = build_local_skill_id(&group.checksum, &group.canonical_key);
             skill.description = group.description.clone();
             skill.installed = true;

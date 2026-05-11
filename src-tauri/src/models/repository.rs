@@ -50,9 +50,7 @@ impl Repository {
         }
 
         let owner = parts[parts.len() - 2].to_string();
-        let repo = parts[parts.len() - 1]
-            .trim_end_matches(".git")
-            .to_string();
+        let repo = parts[parts.len() - 1].trim_end_matches(".git").to_string();
 
         if owner.is_empty() || repo.is_empty() {
             return Err(anyhow!("Invalid GitHub URL (empty owner or repo): {}", url));

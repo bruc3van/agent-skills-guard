@@ -108,7 +108,10 @@ impl Plugin {
         self.installed_at = existing.installed_at;
         self.installed_version = existing.installed_version.clone();
         self.claude_id = existing.claude_id.clone().or(self.claude_id.take());
-        self.discovery_source = existing.discovery_source.clone().or(self.discovery_source.take());
+        self.discovery_source = existing
+            .discovery_source
+            .clone()
+            .or(self.discovery_source.take());
         self.claude_scope = existing.claude_scope.clone();
         self.claude_enabled = existing.claude_enabled;
         self.claude_install_path = existing.claude_install_path.clone();
@@ -122,7 +125,10 @@ impl Plugin {
         self.install_log = existing.install_log.clone();
         // 清除旧的 "unsupported" 状态，保留其他有效状态
         if existing.install_status.as_deref() != Some("unsupported") {
-            self.install_status = existing.install_status.clone().or(self.install_status.take());
+            self.install_status = existing
+                .install_status
+                .clone()
+                .or(self.install_status.take());
         }
     }
 

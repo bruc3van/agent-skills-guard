@@ -541,10 +541,7 @@ impl GitHubService {
                 Some(path) => {
                     let candidate = extract_dir.join(path);
                     if !is_safe_path(&candidate, extract_dir) {
-                        log::warn!(
-                            "ZIP条目尝试路径遍历，跳过: {}",
-                            file.name()
-                        );
+                        log::warn!("ZIP条目尝试路径遍历，跳过: {}", file.name());
                         continue;
                     }
                     candidate

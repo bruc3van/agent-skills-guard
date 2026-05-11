@@ -86,7 +86,8 @@ pub async fn refresh_featured_marketplaces(
     app: tauri::AppHandle,
 ) -> Result<FeaturedMarketplacesConfig, String> {
     let cache_path = featured_marketplaces_cache_path(&app)?;
-    let yaml_content = download_yaml_to_cache(FEATURED_MARKETPLACES_REMOTE_URL, &cache_path).await?;
+    let yaml_content =
+        download_yaml_to_cache(FEATURED_MARKETPLACES_REMOTE_URL, &cache_path).await?;
 
     serde_yaml::from_str::<FeaturedMarketplacesConfig>(&yaml_content)
         .map_err(|e| format!("Failed to parse downloaded featured marketplaces: {}", e))

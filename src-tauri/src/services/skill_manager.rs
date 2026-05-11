@@ -1708,14 +1708,9 @@ impl SkillManager {
         for entry in &entries {
             if entry.content_type == "dir" {
                 let sub_local = local_dir.join(&entry.name);
-                Box::pin(self.download_directory_recursive(
-                    owner,
-                    repo,
-                    &entry.path,
-                    &sub_local,
-                ))
-                .await
-                .with_context(|| format!("下载子目录失败: {}", entry.path))?;
+                Box::pin(self.download_directory_recursive(owner, repo, &entry.path, &sub_local))
+                    .await
+                    .with_context(|| format!("下载子目录失败: {}", entry.path))?;
             } else if entry.content_type == "file" {
                 let download_url = entry
                     .download_url
@@ -2456,10 +2451,8 @@ impl SkillManager {
                     ) {
                         log::info!("复用已存在的兼容工具路径 [{:?}]", link);
                     } else {
-                        let msg = format!(
-                            "工具 '{}' 下已存在同名但内容不同的技能，不覆盖",
-                            tool.id()
-                        );
+                        let msg =
+                            format!("工具 '{}' 下已存在同名但内容不同的技能，不覆盖", tool.id());
                         log::warn!("{}", msg);
                         sync_errors.push(msg);
                     }
