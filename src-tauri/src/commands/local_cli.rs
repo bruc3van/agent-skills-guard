@@ -14,6 +14,10 @@ pub fn build_pty_update_args(tool: &LocalCliTool) -> Option<(String, Vec<String>
             resolve_package_manager_command(tool, &package_manager_names("npm")),
             vec!["install".to_string(), "-g".to_string(), pkg.to_string()],
         ),
+        PackageManager::Pnpm => (
+            resolve_package_manager_command(tool, &package_manager_names("pnpm")),
+            vec!["add".to_string(), "-g".to_string(), pkg.to_string()],
+        ),
         PackageManager::Pip => {
             let mut args = pip_prefix_args();
             args.extend([
@@ -46,6 +50,10 @@ pub fn build_pty_uninstall_args(tool: &LocalCliTool) -> Option<(String, Vec<Stri
         PackageManager::Npm => (
             resolve_package_manager_command(tool, &package_manager_names("npm")),
             vec!["uninstall".to_string(), "-g".to_string(), pkg.to_string()],
+        ),
+        PackageManager::Pnpm => (
+            resolve_package_manager_command(tool, &package_manager_names("pnpm")),
+            vec!["remove".to_string(), "-g".to_string(), pkg.to_string()],
         ),
         PackageManager::Pip => {
             let mut args = pip_prefix_args();
@@ -493,6 +501,23 @@ mod tests {
     }
 
     #[test]
+    fn build_pty_args_for_pnpm() {
+        let mut tool = LocalCliTool::new(
+            "mmdc",
+            "/Users/u/Library/pnpm/bin/mmdc",
+            PackageManager::Pnpm,
+        );
+        tool.package_name = Some("@mermaid-js/mermaid-cli".to_string());
+        let (bin, argv) = build_pty_update_args(&tool).unwrap();
+        assert_eq!(bin, "pnpm");
+        assert_eq!(argv, vec!["add", "-g", "@mermaid-js/mermaid-cli"]);
+
+        let (bin, argv) = build_pty_uninstall_args(&tool).unwrap();
+        assert_eq!(bin, "pnpm");
+        assert_eq!(argv, vec!["remove", "-g", "@mermaid-js/mermaid-cli"]);
+    }
+
+    #[test]
     fn build_pty_args_for_pip() {
         let mut tool = LocalCliTool::new("bdc", "/home/u/.local/bin/bdc", PackageManager::Pip);
         tool.package_name = Some("bruce-doc-converter".to_string());
@@ -552,6 +577,7 @@ mod tests {
     fn build_pty_args_do_not_generate_sudo_commands() {
         let managers = [
             PackageManager::Npm,
+            PackageManager::Pnpm,
             PackageManager::Pip,
             PackageManager::Brew,
             PackageManager::Scoop,
@@ -579,6 +605,11 @@ mod tests {
                 vec!["uninstall", "-g", "@mermaid-js/mermaid-cli"],
             ),
             (
+                PackageManager::Pnpm,
+                "pnpm",
+                vec!["remove", "-g", "@mermaid-js/mermaid-cli"],
+            ),
+            (
                 PackageManager::Pip,
                 "python3",
                 vec!["-m", "pip", "uninstall", "-y", "bruce-doc-converter"],
@@ -604,6 +635,9 @@ mod tests {
             let mut tool = LocalCliTool::new("tool", "/usr/bin/tool", manager.clone());
             tool.package_name = Some(expected_args.last().unwrap().to_string());
             if matches!(manager, PackageManager::Npm) {
+                tool.package_name = Some("@mermaid-js/mermaid-cli".to_string());
+            }
+            if matches!(manager, PackageManager::Pnpm) {
                 tool.package_name = Some("@mermaid-js/mermaid-cli".to_string());
             }
             if matches!(manager, PackageManager::Pip) {

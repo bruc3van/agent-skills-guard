@@ -38,7 +38,7 @@ function cleanAnsi(s: string): string {
 
 type ManagerTab = "all" | string;
 
-const VISIBLE_MANAGERS = ["npm", "pip", "brew", "scoop", "choco", "unknown"];
+const VISIBLE_MANAGERS = ["npm", "pnpm", "pip", "brew", "scoop", "choco", "unknown"];
 
 export function LocalCliPage() {
   const { t } = useTranslation();

@@ -5,6 +5,7 @@ use std::path::Path;
 #[serde(rename_all = "snake_case")]
 pub enum PackageManager {
     Npm,
+    Pnpm,
     Pip,
     Brew,
     Scoop,
@@ -16,6 +17,7 @@ impl PackageManager {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Npm => "npm",
+            Self::Pnpm => "pnpm",
             Self::Pip => "pip",
             Self::Brew => "brew",
             Self::Scoop => "scoop",
@@ -27,6 +29,7 @@ impl PackageManager {
     pub fn from_str(s: &str) -> Self {
         match s {
             "npm" => Self::Npm,
+            "pnpm" => Self::Pnpm,
             "pip" => Self::Pip,
             "brew" => Self::Brew,
             "scoop" => Self::Scoop,
@@ -39,6 +42,15 @@ impl PackageManager {
 pub fn detect_manager_from_path(path: &Path) -> PackageManager {
     let s = path.to_string_lossy().to_lowercase();
     let s = s.replace('\\', "/");
+
+    if s.contains("/appdata/local/pnpm/bin/")
+        || s.contains("/appdata/roaming/pnpm/")
+        || s.contains("/library/pnpm/bin/")
+        || s.contains("/.local/share/pnpm/bin/")
+        || s.contains("/.pnpm-global/bin/")
+    {
+        return PackageManager::Pnpm;
+    }
 
     if s.contains("/appdata/roaming/npm/")
         || s.contains("/.npm-global/bin/")
@@ -113,6 +125,7 @@ impl LocalCliTool {
         let name = self.package_name.as_deref()?;
         match self.manager {
             PackageManager::Npm => Some(format!("npm install -g {}", name)),
+            PackageManager::Pnpm => Some(format!("pnpm add -g {}", name)),
             PackageManager::Pip => Some(format!("pip install --upgrade {}", name)),
             PackageManager::Brew => Some(format!("brew upgrade {}", name)),
             PackageManager::Scoop => Some(format!("scoop update {}", name)),
@@ -147,6 +160,24 @@ mod tests {
     }
 
     #[test]
+    fn detect_manager_from_pnpm_paths() {
+        let windows_path = std::path::Path::new(r"C:\Users\user\AppData\Local\pnpm\bin\mmdc.cmd");
+        assert_eq!(detect_manager_from_path(windows_path), PackageManager::Pnpm);
+
+        let macos_path = std::path::Path::new("/Users/user/Library/pnpm/bin/mmdc");
+        assert_eq!(detect_manager_from_path(macos_path), PackageManager::Pnpm);
+
+        let linux_path = std::path::Path::new("/home/user/.local/share/pnpm/bin/mmdc");
+        assert_eq!(detect_manager_from_path(linux_path), PackageManager::Pnpm);
+    }
+
+    #[test]
+    fn detect_manager_does_not_match_arbitrary_pnpm_bin_segment() {
+        let path = std::path::Path::new("/home/user/my-pnpm/bin/tool");
+        assert_eq!(detect_manager_from_path(path), PackageManager::Unknown);
+    }
+
+    #[test]
     fn detect_manager_from_pip_path() {
         let path = std::path::Path::new(r"C:\Python311\Scripts\bruce-doc-converter.exe");
         assert_eq!(detect_manager_from_path(path), PackageManager::Pip);
@@ -177,6 +208,20 @@ mod tests {
         assert_eq!(
             tool.update_command(),
             Some("npm install -g @mermaid-js/mermaid-cli".to_string())
+        );
+    }
+
+    #[test]
+    fn update_command_for_pnpm() {
+        let mut tool = LocalCliTool::new(
+            "mmdc",
+            "/Users/u/Library/pnpm/bin/mmdc",
+            PackageManager::Pnpm,
+        );
+        tool.package_name = Some("@mermaid-js/mermaid-cli".to_string());
+        assert_eq!(
+            tool.update_command(),
+            Some("pnpm add -g @mermaid-js/mermaid-cli".to_string())
         );
     }
 

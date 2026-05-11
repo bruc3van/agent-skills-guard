@@ -1,6 +1,14 @@
 use crate::models::{detect_manager_from_path, LocalCliTool, PackageManager};
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
+
+static PNPM_SHIM_PACKAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"node_modules[/\\](@?[^/\\]+[/\\][^/\\]+|[^/\\]+)[/\\]"#)
+        .expect("pnpm shim package regex should compile")
+});
 
 pub fn tool_id_from_path(path: &Path) -> String {
     let stem = path
@@ -66,6 +74,11 @@ fn common_cli_search_dirs(home: Option<PathBuf>) -> Vec<PathBuf> {
     ];
     if let Some(home) = home {
         dirs.push(home.join(".local").join("bin"));
+        dirs.push(home.join("AppData").join("Local").join("pnpm").join("bin"));
+        dirs.push(home.join("AppData").join("Roaming").join("pnpm"));
+        dirs.push(home.join("Library").join("pnpm").join("bin"));
+        dirs.push(home.join(".local").join("share").join("pnpm").join("bin"));
+        dirs.push(home.join(".pnpm-global").join("bin"));
     }
     dirs
 }
@@ -100,6 +113,7 @@ pub fn parse_version(output: &str) -> Option<String> {
 pub fn detect_version(path: &Path) -> Option<String> {
     match detect_manager_from_path(path) {
         PackageManager::Npm => detect_npm_version(path),
+        PackageManager::Pnpm => detect_pnpm_version(path),
         PackageManager::Pip => detect_pip_version(path),
         PackageManager::Brew
         | PackageManager::Scoop
@@ -131,6 +145,7 @@ pub fn discover_local_cli_tools() -> Vec<LocalCliTool> {
 fn resolve_package_name(path: &Path, manager: &PackageManager) -> Option<String> {
     match manager {
         PackageManager::Npm => resolve_npm_package_name(path),
+        PackageManager::Pnpm => resolve_pnpm_package_name(path),
         PackageManager::Pip => resolve_pip_package_name(path),
         PackageManager::Brew | PackageManager::Scoop | PackageManager::Choco => {
             Some(tool_id_from_path(path))
@@ -142,6 +157,7 @@ fn resolve_package_name(path: &Path, manager: &PackageManager) -> Option<String>
 fn resolve_description(path: &Path, manager: &PackageManager) -> Option<String> {
     match manager {
         PackageManager::Npm => resolve_npm_description(path),
+        PackageManager::Pnpm => resolve_pnpm_description(path),
         PackageManager::Pip => resolve_pip_description(path),
         _ => None,
     }
@@ -156,6 +172,11 @@ fn resolve_npm_description(path: &Path) -> Option<String> {
     let npm_global = npm_global_root(path)?;
     let package_name = resolve_npm_package_name(path)?;
     let pkg_json_path = npm_package_json_path(&npm_global, &package_name);
+    read_package_json_field(&pkg_json_path, "description")
+}
+
+fn resolve_pnpm_description(path: &Path) -> Option<String> {
+    let pkg_json_path = pnpm_package_json_path(path)?;
     read_package_json_field(&pkg_json_path, "description")
 }
 
@@ -231,6 +252,123 @@ fn detect_npm_version(path: &Path) -> Option<String> {
         &npm_package_json_path(&npm_global, &package_name),
         "version",
     )
+}
+
+fn resolve_pnpm_package_name(path: &Path) -> Option<String> {
+    let pkg_json_path = pnpm_package_json_path(path)?;
+    read_package_json_field(&pkg_json_path, "name").or_else(|| Some(tool_id_from_path(path)))
+}
+
+fn detect_pnpm_version(path: &Path) -> Option<String> {
+    let pkg_json_path = pnpm_package_json_path(path)?;
+    read_package_json_field(&pkg_json_path, "version")
+}
+
+fn pnpm_package_json_path(path: &Path) -> Option<PathBuf> {
+    let id = tool_id_from_path(path);
+
+    if let Some(name) = extract_pnpm_package_from_shim(path) {
+        for root in pnpm_global_node_modules_roots(path) {
+            let pkg_json_path = node_package_json_path(&root, &name);
+            if pkg_json_path.exists() {
+                return Some(pkg_json_path);
+            }
+        }
+    }
+
+    for pkg_json_path in pnpm_global_package_json_paths(path) {
+        let Some(name) = read_package_json_field(&pkg_json_path, "name") else {
+            continue;
+        };
+        if name == id || name.rsplit('/').next() == Some(id.as_str()) {
+            return Some(pkg_json_path);
+        }
+    }
+
+    None
+}
+
+fn node_package_json_path(node_modules_root: &Path, package_name: &str) -> PathBuf {
+    package_name
+        .split('/')
+        .fold(node_modules_root.to_path_buf(), |acc, part| acc.join(part))
+        .join("package.json")
+}
+
+fn extract_pnpm_package_from_shim(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    PNPM_SHIM_PACKAGE_RE
+        .captures_iter(&content)
+        .filter_map(|c| c.get(1))
+        .map(|m| m.as_str().replace('\\', "/"))
+        .filter(|name| !name.starts_with(".pnpm/"))
+        .last()
+}
+
+fn pnpm_home_from_bin_path(path: &Path) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    let parent_name = parent
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+
+    if parent_name.eq_ignore_ascii_case("bin") {
+        return parent.parent().map(Path::to_path_buf);
+    }
+
+    if parent_name.eq_ignore_ascii_case("pnpm") || parent_name.eq_ignore_ascii_case(".pnpm-global")
+    {
+        return Some(parent.to_path_buf());
+    }
+
+    None
+}
+
+fn pnpm_global_node_modules_roots(path: &Path) -> Vec<PathBuf> {
+    let Some(home) = pnpm_home_from_bin_path(path) else {
+        return vec![];
+    };
+
+    let mut roots = vec![home.join("global").join("node_modules")];
+    let global = home.join("global");
+    if let Ok(entries) = std::fs::read_dir(global) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() && is_pnpm_global_version_dir(&path) {
+                roots.push(path.join("node_modules"));
+            }
+        }
+    }
+    roots
+}
+
+fn is_pnpm_global_version_dir(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn pnpm_global_package_json_paths(path: &Path) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    for root in pnpm_global_node_modules_roots(path) {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let package_dir = entry.path();
+            let package_name = entry.file_name().to_string_lossy().to_string();
+            if package_name.starts_with('@') {
+                if let Ok(scoped_entries) = std::fs::read_dir(package_dir) {
+                    for scoped_entry in scoped_entries.flatten() {
+                        result.push(scoped_entry.path().join("package.json"));
+                    }
+                }
+            } else {
+                result.push(package_dir.join("package.json"));
+            }
+        }
+    }
+    result
 }
 
 #[cfg(windows)]
@@ -553,6 +691,148 @@ mod tests {
         fs::write(&shim, b"@echo off\r\necho should-not-run\r\n").unwrap();
 
         assert_eq!(detect_version(&shim), Some("1.2.3".to_string()));
+    }
+
+    #[test]
+    fn detect_version_and_description_read_pnpm_global_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let pnpm_home = dir.path().join("Library").join("pnpm");
+        let bin = pnpm_home.join("bin");
+        let package_root = pnpm_home
+            .join("global")
+            .join("5")
+            .join("node_modules")
+            .join("@scope")
+            .join("my-tool");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&package_root).unwrap();
+        fs::write(
+            package_root.join("package.json"),
+            r#"{"name":"@scope/my-tool","version":"2.3.4","description":"A pnpm CLI"}"#,
+        )
+        .unwrap();
+        let shim = bin.join("my-tool");
+        fs::write(&shim, b"#!/bin/sh\n").unwrap();
+
+        assert_eq!(detect_version(&shim), Some("2.3.4".to_string()));
+        assert_eq!(
+            resolve_description_for_path(&shim),
+            Some("A pnpm CLI".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_version_reads_pnpm_package_from_virtual_store_shim() {
+        let dir = tempfile::tempdir().unwrap();
+        let pnpm_home = dir.path().join("Library").join("pnpm");
+        let bin = pnpm_home.join("bin");
+        let node_modules = pnpm_home.join("global").join("5").join("node_modules");
+        let package_root = node_modules.join("@scope").join("my-tool");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&package_root).unwrap();
+        fs::write(
+            package_root.join("package.json"),
+            r#"{"name":"@scope/my-tool","version":"3.4.5"}"#,
+        )
+        .unwrap();
+        let shim = bin.join("my-tool");
+        fs::write(
+            &shim,
+            format!(
+                "#!/bin/sh\nnode \"{}/.pnpm/@scope+my-tool@3.4.5/node_modules/@scope/my-tool/bin.js\"\n",
+                node_modules.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(detect_version(&shim), Some("3.4.5".to_string()));
+    }
+
+    #[test]
+    fn pnpm_home_from_bin_path_handles_known_layouts() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let macos_home = dir.path().join("Library").join("pnpm");
+        assert_eq!(
+            pnpm_home_from_bin_path(&macos_home.join("bin").join("mmdc")),
+            Some(macos_home)
+        );
+
+        let global_home = dir.path().join(".pnpm-global");
+        assert_eq!(
+            pnpm_home_from_bin_path(&global_home.join("bin").join("mmdc")),
+            Some(global_home)
+        );
+
+        let roaming_home = dir.path().join("AppData").join("Roaming").join("pnpm");
+        assert_eq!(
+            pnpm_home_from_bin_path(&roaming_home.join("mmdc.cmd")),
+            Some(roaming_home)
+        );
+    }
+
+    #[test]
+    fn pnpm_global_node_modules_roots_only_include_numeric_global_versions() {
+        let dir = tempfile::tempdir().unwrap();
+        let pnpm_home = dir.path().join("Library").join("pnpm");
+        let global = pnpm_home.join("global");
+        fs::create_dir_all(global.join("5").join("node_modules")).unwrap();
+        fs::create_dir_all(global.join("10").join("node_modules")).unwrap();
+        fs::create_dir_all(global.join("latest").join("node_modules")).unwrap();
+        fs::create_dir_all(global.join("5x").join("node_modules")).unwrap();
+        fs::create_dir_all(pnpm_home.join("bin")).unwrap();
+
+        let roots = pnpm_global_node_modules_roots(&pnpm_home.join("bin").join("mmdc"));
+
+        assert!(roots.contains(&global.join("node_modules")));
+        assert!(roots.contains(&global.join("5").join("node_modules")));
+        assert!(roots.contains(&global.join("10").join("node_modules")));
+        assert!(!roots.contains(&global.join("latest").join("node_modules")));
+        assert!(!roots.contains(&global.join("5x").join("node_modules")));
+    }
+
+    #[test]
+    fn detect_version_ignores_pnpm_packages_in_non_numeric_global_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let pnpm_home = dir.path().join("Library").join("pnpm");
+        let bin = pnpm_home.join("bin");
+        let package_root = pnpm_home
+            .join("global")
+            .join("latest")
+            .join("node_modules")
+            .join("my-tool");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&package_root).unwrap();
+        fs::write(
+            package_root.join("package.json"),
+            r#"{"name":"my-tool","version":"9.9.9"}"#,
+        )
+        .unwrap();
+        let shim = bin.join("my-tool");
+        fs::write(&shim, b"#!/bin/sh\n").unwrap();
+
+        assert_eq!(detect_version(&shim), None);
+    }
+
+    #[test]
+    fn detect_version_does_not_execute_pnpm_shim() {
+        let dir = tempfile::tempdir().unwrap();
+        let pnpm_home = dir.path().join("AppData").join("Local").join("pnpm");
+        let bin = pnpm_home.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let marker = dir.path().join("executed.txt");
+        let shim = bin.join("suspicious.cmd");
+        fs::write(
+            &shim,
+            format!(
+                "@echo off\r\necho executed > \"{}\"\r\necho 9.9.9\r\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(detect_version(&shim), None);
+        assert!(!marker.exists());
     }
 
     #[test]

@@ -14,6 +14,7 @@ export function groupByManager(tools: LocalCliTool[]): Record<string, LocalCliTo
 export function managerLabel(manager: string): string {
   const labels: Record<string, string> = {
     npm: "npm",
+    pnpm: "pnpm",
     pip: "pip",
     brew: "Homebrew",
     scoop: "Scoop",

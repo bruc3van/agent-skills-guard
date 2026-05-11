@@ -76,6 +76,22 @@ describe("LocalCliPage", () => {
     expect(screen.getByText("bruce-doc-converter")).not.toBeNull();
   });
 
+  it("显示 pnpm 管理器筛选标签", async () => {
+    mockTools = [
+      {
+        id: "mmdc",
+        detected_path: "/Users/u/Library/pnpm/bin/mmdc",
+        manager: "pnpm",
+        current_version: "11.0.0",
+        update_available: false,
+      },
+    ];
+    const { LocalCliPage } = await import("./LocalCliPage");
+    render(<LocalCliPage />, { wrapper });
+
+    expect(screen.getByText("localCli.tabs.pnpm")).not.toBeNull();
+  });
+
   it("工具列表变化后继续为新工具请求说明", async () => {
     fetchLocalCliDescriptions.mockResolvedValue([]);
     const { LocalCliPage } = await import("./LocalCliPage");

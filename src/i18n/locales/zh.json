@@ -699,6 +699,7 @@
     "tabs": {
       "all": "全部 ({{count}})",
       "npm": "npm ({{count}})",
+      "pnpm": "pnpm ({{count}})",
       "pip": "pip ({{count}})",
       "brew": "brew ({{count}})",
       "scoop": "scoop ({{count}})",

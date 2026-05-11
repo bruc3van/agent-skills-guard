@@ -699,6 +699,7 @@
     "tabs": {
       "all": "All ({{count}})",
       "npm": "npm ({{count}})",
+      "pnpm": "pnpm ({{count}})",
       "pip": "pip ({{count}})",
       "brew": "brew ({{count}})",
       "scoop": "scoop ({{count}})",

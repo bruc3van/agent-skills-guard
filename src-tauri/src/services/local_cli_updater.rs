@@ -77,7 +77,7 @@ impl LocalCliUpdater {
             };
 
             let latest_result = match tool.manager {
-                PackageManager::Npm => fetch_npm_latest(&pkg_name).await,
+                PackageManager::Npm | PackageManager::Pnpm => fetch_npm_latest(&pkg_name).await,
                 PackageManager::Pip => fetch_pypi_latest(&pkg_name).await,
                 _ => continue,
             };
