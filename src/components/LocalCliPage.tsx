@@ -82,6 +82,7 @@ export function LocalCliPage() {
       if (index >= missing.length) {
         setIsFetchingDesc(false);
         setFetchProgress(null);
+        void refetch();
         return;
       }
       const tool = missing[index];
@@ -102,7 +103,7 @@ export function LocalCliPage() {
     return () => {
       cancelled = true;
     };
-  }, [tools, isLoading, descriptionMap]);
+  }, [tools, isLoading, descriptionMap, refetch]);
 
   const getToolDescription = (tool: LocalCliTool): string | undefined => {
     const raw = tool.description || descriptionMap[tool.id];

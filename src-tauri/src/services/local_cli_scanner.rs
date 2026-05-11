@@ -1,7 +1,9 @@
 use crate::models::{detect_manager_from_path, LocalCliTool, PackageManager};
 use regex::Regex;
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
+    process::Command,
     sync::LazyLock,
 };
 
@@ -64,7 +66,9 @@ pub fn scan_path_for_executables() -> Vec<PathBuf> {
         .unwrap_or_default();
     path_dirs.extend(common_cli_search_dirs(dirs::home_dir()));
 
-    scan_path_dirs_for_supported_executables(path_dirs)
+    let bins = scan_path_dirs_for_supported_executables(path_dirs);
+    let brew_installed_on_request = brew_installed_on_request_formulae();
+    filter_brew_executables_to_installed_on_request(bins, brew_installed_on_request.as_ref())
 }
 
 fn common_cli_search_dirs(home: Option<PathBuf>) -> Vec<PathBuf> {
@@ -114,6 +118,65 @@ fn dedupe_supported_executables(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     }
 
     result
+}
+
+fn brew_installed_on_request_formulae() -> Option<HashSet<String>> {
+    let output = Command::new("brew")
+        .args(["list", "--formula", "--installed-on-request"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    Some(
+        stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect(),
+    )
+}
+
+fn filter_brew_executables_to_installed_on_request(
+    paths: Vec<PathBuf>,
+    installed_on_request: Option<&HashSet<String>>,
+) -> Vec<PathBuf> {
+    let Some(installed_on_request) = installed_on_request else {
+        return paths;
+    };
+
+    paths
+        .into_iter()
+        .filter(|path| {
+            if detect_manager_from_path(path) != PackageManager::Brew {
+                return true;
+            }
+
+            brew_formula_name_from_path(path)
+                .map(|formula| installed_on_request.contains(&formula))
+                .unwrap_or(true)
+        })
+        .collect()
+}
+
+fn brew_formula_name_from_path(path: &Path) -> Option<String> {
+    std::fs::canonicalize(path)
+        .ok()
+        .and_then(|p| brew_formula_name_from_cellar_path(&p))
+        .or_else(|| brew_formula_name_from_cellar_path(path))
+}
+
+fn brew_formula_name_from_cellar_path(path: &Path) -> Option<String> {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    normalized
+        .split_once("/Cellar/")
+        .and_then(|(_, rest)| rest.split('/').next())
+        .filter(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn executable_dedupe_key(path: &Path) -> String {
@@ -710,6 +773,27 @@ mod tests {
         assert!(found.contains(&py314_scripts.join("pip.exe")));
         assert!(found.contains(&py313_scripts.join("pip3.exe")));
         assert!(!file_names.iter().any(|name| name == "pip3.13.exe"));
+    }
+
+    #[test]
+    fn filters_brew_executables_to_installed_on_request_formulae() {
+        let paths = vec![
+            PathBuf::from("/opt/homebrew/Cellar/ripgrep/14.1.1/bin/rg"),
+            PathBuf::from("/opt/homebrew/Cellar/openssl@3/3.5.4/bin/openssl"),
+            PathBuf::from("/Users/example/.local/bin/bdc"),
+        ];
+        let installed_on_request = ["ripgrep".to_string()].into_iter().collect();
+
+        let found =
+            filter_brew_executables_to_installed_on_request(paths, Some(&installed_on_request));
+
+        assert_eq!(
+            found,
+            vec![
+                PathBuf::from("/opt/homebrew/Cellar/ripgrep/14.1.1/bin/rg"),
+                PathBuf::from("/Users/example/.local/bin/bdc"),
+            ]
+        );
     }
 
     #[test]

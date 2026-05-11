@@ -162,6 +162,7 @@ fn read_junction_or_symlink_target(link: &Path) -> Result<std::path::PathBuf> {
 }
 
 /// Junction 创建失败时的降级方案：直接复制目录内容
+#[cfg(windows)]
 fn copy_dir_fallback(source: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(source)? {

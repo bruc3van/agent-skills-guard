@@ -20,12 +20,13 @@ const fetchLocalCliDescriptions = vi.fn();
 const openLocalCliFolder = vi.fn();
 const uninstallLocalCliTool = vi.fn();
 const uninstallMutation = vi.fn();
+const refetchLocalCliTools = vi.fn();
 
 vi.mock("../hooks/useLocalCli", () => ({
   useLocalCliTools: () => ({
     data: mockTools,
     isLoading: false,
-    refetch: vi.fn(),
+    refetch: refetchLocalCliTools,
   }),
   useCheckLocalCliUpdates: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateLocalCliTool: () => ({
@@ -67,6 +68,7 @@ afterEach(() => {
   openLocalCliFolder.mockReset();
   uninstallLocalCliTool.mockReset();
   uninstallMutation.mockReset();
+  refetchLocalCliTools.mockReset();
 });
 
 describe("LocalCliPage", () => {
@@ -98,7 +100,7 @@ describe("LocalCliPage", () => {
     const { rerender } = render(<LocalCliPage />, { wrapper });
 
     await waitFor(() => {
-      expect(fetchLocalCliDescriptions).toHaveBeenCalledWith(["bruce-doc-converter"]);
+      expect(fetchLocalCliDescriptions).toHaveBeenCalledWith(["/home/u/.local/bin/bdc"]);
     });
 
     mockTools = [
@@ -114,7 +116,19 @@ describe("LocalCliPage", () => {
     rerender(<LocalCliPage />);
 
     await waitFor(() => {
-      expect(fetchLocalCliDescriptions).toHaveBeenCalledWith(["new-cli"]);
+      expect(fetchLocalCliDescriptions).toHaveBeenCalledWith(["/home/u/.local/bin/new-cli"]);
+    });
+  });
+
+  it("逐一获取说明信息完成后刷新 CLI 列表", async () => {
+    fetchLocalCliDescriptions.mockResolvedValue([
+      ["/home/u/.local/bin/bdc", "Bruce doc converter CLI"],
+    ]);
+    const { LocalCliPage } = await import("./LocalCliPage");
+    render(<LocalCliPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(refetchLocalCliTools).toHaveBeenCalled();
     });
   });
 
@@ -129,7 +143,7 @@ describe("LocalCliPage", () => {
         name: "localCli.card.openFolder: /home/u/.local/bin/bdc",
       })
     );
-    expect(openLocalCliFolder).toHaveBeenCalledWith("bruce-doc-converter");
+    expect(openLocalCliFolder).toHaveBeenCalledWith("/home/u/.local/bin/bdc");
 
     await user.click(
       screen.getByRole("button", {
