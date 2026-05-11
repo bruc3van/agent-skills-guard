@@ -8,4 +8,5 @@ export interface LocalCliTool {
   last_checked?: string;
   update_status?: string;
   update_log?: string;
+  package_name?: string;
 }

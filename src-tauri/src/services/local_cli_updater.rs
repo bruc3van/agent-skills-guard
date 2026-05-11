@@ -69,9 +69,14 @@ impl LocalCliUpdater {
                 continue;
             }
 
+            let pkg_name = match tool.effective_package_name() {
+                Some(name) => name.to_string(),
+                None => continue,
+            };
+
             let latest_result = match tool.manager {
-                PackageManager::Npm => fetch_npm_latest(&tool.id).await,
-                PackageManager::Pip => fetch_pypi_latest(&tool.id).await,
+                PackageManager::Npm => fetch_npm_latest(&pkg_name).await,
+                PackageManager::Pip => fetch_pypi_latest(&pkg_name).await,
                 _ => continue,
             };
 
@@ -89,6 +94,7 @@ impl LocalCliUpdater {
                         Some(&latest),
                         tool.update_available,
                         tool.last_checked.as_deref(),
+                        tool.package_name.as_deref(),
                     );
                 }
                 Err(e) => log::warn!("检查 {} 更新失败: {}", tool.id, e),

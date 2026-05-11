@@ -993,10 +993,15 @@ impl Database {
                 update_available INTEGER NOT NULL DEFAULT 0,
                 last_checked TEXT,
                 update_status TEXT,
-                update_log TEXT
+                update_log TEXT,
+                package_name TEXT
             )",
             [],
         )?;
+        let _ = conn.execute(
+            "ALTER TABLE local_cli_tools ADD COLUMN package_name TEXT",
+            [],
+        );
         Ok(())
     }
 
@@ -1009,19 +1014,21 @@ impl Database {
         latest_version: Option<&str>,
         update_available: bool,
         last_checked: Option<&str>,
+        package_name: Option<&str>,
     ) -> Result<()> {
         let conn = self.lock_conn();
         conn.execute(
             "INSERT INTO local_cli_tools
-                 (id, detected_path, manager, current_version, latest_version, update_available, last_checked)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 (id, detected_path, manager, current_version, latest_version, update_available, last_checked, package_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(id) DO UPDATE SET
                detected_path     = excluded.detected_path,
                manager           = excluded.manager,
                current_version   = excluded.current_version,
                latest_version    = excluded.latest_version,
                update_available  = excluded.update_available,
-               last_checked      = excluded.last_checked",
+               last_checked      = excluded.last_checked,
+               package_name      = excluded.package_name",
             params![
                 id,
                 detected_path,
@@ -1029,7 +1036,8 @@ impl Database {
                 current_version,
                 latest_version,
                 update_available as i32,
-                last_checked
+                last_checked,
+                package_name
             ],
         )?;
         Ok(())
@@ -1064,13 +1072,14 @@ impl Database {
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<String>,
         )>,
     > {
         let conn = self.lock_conn();
         let row = conn
             .query_row(
                 "SELECT id, detected_path, manager, current_version, latest_version,
-                        update_available, last_checked, update_status, update_log
+                        update_available, last_checked, update_status, update_log, package_name
                  FROM local_cli_tools WHERE id = ?1",
                 params![id],
                 |r| {
@@ -1084,6 +1093,7 @@ impl Database {
                         r.get(6)?,
                         r.get(7)?,
                         r.get(8)?,
+                        r.get(9)?,
                     ))
                 },
             )
@@ -1105,12 +1115,13 @@ impl Database {
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<String>,
         )>,
     > {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, detected_path, manager, current_version, latest_version,
-                    update_available, last_checked, update_status, update_log
+                    update_available, last_checked, update_status, update_log, package_name
              FROM local_cli_tools ORDER BY manager, id",
         )?;
         let rows = stmt
@@ -1125,6 +1136,7 @@ impl Database {
                     r.get(6)?,
                     r.get(7)?,
                     r.get(8)?,
+                    r.get(9)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1259,6 +1271,7 @@ mod tests {
             Some("0.4.0"),
             true,
             Some("2025-01-01T00:00:00Z"),
+            Some("bruce-doc-converter"),
         )
         .unwrap();
 
@@ -1268,6 +1281,7 @@ mod tests {
         assert_eq!(t.0, "bruce-doc-converter");
         assert_eq!(t.2, "pip");
         assert_eq!(t.3.as_deref(), Some("0.3.1"));
+        assert_eq!(t.9.as_deref(), Some("bruce-doc-converter"));
 
         let all = db.get_all_local_cli_tools().unwrap();
         assert_eq!(all.len(), 1);

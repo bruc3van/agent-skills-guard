@@ -1,4 +1,5 @@
 import { Loader2, RefreshCw, Terminal } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { LocalCliTool } from "../../types";
 import { canAutoUpdate } from "../../lib/local-cli";
 
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export function LocalCliToolRow({ tool, onUpdate, isUpdating }: Props) {
+  const { t } = useTranslation();
   const hasUpdate = tool.update_available;
   const status = tool.update_status;
 
@@ -33,12 +35,12 @@ export function LocalCliToolRow({ tool, onUpdate, isUpdating }: Props) {
           )}
           {status === "success" && (
             <span className="text-[10px] bg-emerald-500/15 text-emerald-600 border border-emerald-500/40 px-1.5 py-0.5 rounded font-mono">
-              已更新
+              {t("localCli.updated")}
             </span>
           )}
           {status === "failed" && (
             <span className="text-[10px] bg-red-500/15 text-red-600 border border-red-500/40 px-1.5 py-0.5 rounded font-mono">
-              更新失败
+              {t("localCli.updateFailed")}
             </span>
           )}
         </div>
@@ -58,7 +60,7 @@ export function LocalCliToolRow({ tool, onUpdate, isUpdating }: Props) {
           ) : (
             <RefreshCw className="w-3 h-3" />
           )}
-          更新
+          {t("localCli.update")}
         </button>
       )}
     </div>

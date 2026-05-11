@@ -17,11 +17,13 @@ pub struct ClaudeCommand {
 pub struct ClaudeCommandOutput {
     pub command: String,
     pub output: String,
+    pub exit_success: bool,
 }
 
 pub struct ClaudeCliResult {
     pub outputs: Vec<ClaudeCommandOutput>,
     pub raw_log: String,
+    pub exit_success: bool,
 }
 
 pub struct ClaudeCli {
@@ -36,19 +38,28 @@ impl ClaudeCli {
     pub fn run(&self, commands: &[ClaudeCommand]) -> Result<ClaudeCliResult> {
         let mut raw_log = String::new();
         let mut outputs = Vec::new();
+        let mut all_success = true;
         for command in commands {
-            let output = self.run_command(command)?;
+            let (output, exit_success) = self.run_command(command)?;
             raw_log.push_str(&output);
+            if !exit_success {
+                all_success = false;
+            }
             outputs.push(ClaudeCommandOutput {
                 command: command.args.join(" "),
                 output,
+                exit_success,
             });
         }
 
-        Ok(ClaudeCliResult { outputs, raw_log })
+        Ok(ClaudeCliResult {
+            outputs,
+            raw_log,
+            exit_success: all_success,
+        })
     }
 
-    fn run_command(&self, command: &ClaudeCommand) -> Result<String> {
+    fn run_command(&self, command: &ClaudeCommand) -> Result<(String, bool)> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -88,7 +99,7 @@ impl ClaudeCli {
             }
         });
 
-        let output =
+        let (output, exit_success) =
             read_until_exit_with_prompts(&rx, &mut writer, child.as_mut(), command.timeout)?;
 
         drop(writer);
@@ -114,7 +125,7 @@ impl ClaudeCli {
             log::warn!("PTY reader thread did not finish in time; detaching.");
         }
 
-        Ok(output)
+        Ok((output, exit_success))
     }
 
     fn build_command_builder(&self, command: &ClaudeCommand) -> CommandBuilder {
@@ -163,11 +174,12 @@ fn read_until_exit_with_prompts(
     writer: &mut dyn Write,
     child: &mut dyn portable_pty::Child,
     timeout: Duration,
-) -> Result<String> {
+) -> Result<(String, bool)> {
     let start = Instant::now();
     let mut buffer = String::new();
     let mut trust_attempts: u8 = 0;
     let mut last_trust_sent: Option<Instant> = None;
+    let mut exit_success = false;
 
     loop {
         if start.elapsed() >= timeout {
@@ -192,14 +204,16 @@ fn read_until_exit_with_prompts(
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                if matches!(child.try_wait(), Ok(Some(_))) {
+                if let Ok(Some(status)) = child.try_wait() {
+                    exit_success = status.success();
                     break;
                 }
             }
             Err(RecvTimeoutError::Disconnected) => break,
         }
 
-        if matches!(child.try_wait(), Ok(Some(_))) {
+        if let Ok(Some(status)) = child.try_wait() {
+            exit_success = status.success();
             break;
         }
     }
@@ -212,7 +226,7 @@ fn read_until_exit_with_prompts(
         }
     }
 
-    Ok(buffer)
+    Ok((buffer, exit_success))
 }
 
 fn is_workspace_trust_prompt(output: &str) -> bool {

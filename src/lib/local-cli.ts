@@ -24,5 +24,5 @@ export function managerLabel(manager: string): string {
 }
 
 export function canAutoUpdate(tool: LocalCliTool): boolean {
-  return tool.manager !== "unknown";
+  return tool.manager !== "unknown" && !!tool.package_name;
 }

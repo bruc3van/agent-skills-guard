@@ -691,6 +691,9 @@
     "rescan": "RESCAN",
     "checkUpdates": "CHECK_UPDATES",
     "checking": "CHECKING...",
-    "search": "SEARCH_TOOLS..."
+    "search": "SEARCH_TOOLS...",
+    "updated": "UPDATED",
+    "updateFailed": "UPDATE_FAILED",
+    "update": "UPDATE"
   }
 }

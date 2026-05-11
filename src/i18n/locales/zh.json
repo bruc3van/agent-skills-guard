@@ -691,6 +691,9 @@
     "rescan": "重新扫描",
     "checkUpdates": "检查更新",
     "checking": "检查中...",
-    "search": "搜索工具..."
+    "search": "搜索工具...",
+    "updated": "已更新",
+    "updateFailed": "更新失败",
+    "update": "更新"
   }
 }
