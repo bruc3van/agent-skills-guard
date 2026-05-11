@@ -16,6 +16,7 @@ import type {
   FeaturedMarketplacesConfig,
   ClearAllCachesResult,
   AgentToolInfo,
+  LocalCliTool,
 } from "../types";
 import type { SecurityReport } from "../types/security";
 import type { SkillScanResult } from "../types/security";
@@ -297,5 +298,18 @@ export const api = {
 
   async syncAllSkillsToTools(tools: string[]): Promise<void> {
     return invoke("sync_all_skills_to_tools", { tools });
+  },
+
+  // 本地 CLI 管理
+  async listLocalCliTools(): Promise<LocalCliTool[]> {
+    return invoke("list_local_cli_tools");
+  },
+
+  async checkLocalCliUpdates(): Promise<LocalCliTool[]> {
+    return invoke("check_local_cli_updates");
+  },
+
+  async updateLocalCliTool(toolId: string): Promise<string> {
+    return invoke("update_local_cli_tool", { toolId });
   },
 };

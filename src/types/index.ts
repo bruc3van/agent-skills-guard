@@ -177,3 +177,5 @@ export interface InstallPathSelection {
   path: string;
   displayName: string;
 }
+
+export type { LocalCliTool } from "./local_cli_tool";
