@@ -6,7 +6,7 @@ use std::{
 };
 
 static PNPM_SHIM_PACKAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"node_modules[/\\](@?[^/\\]+[/\\][^/\\]+|[^/\\]+)[/\\]"#)
+    Regex::new(r#"node_modules[/\\](@[^/\\]+[/\\][^/\\]+|[^/\\]+)[/\\]"#)
         .expect("pnpm shim package regex should compile")
 });
 
@@ -383,7 +383,7 @@ fn read_npm_shim_content(path: &Path) -> Option<String> {
 
 #[cfg(windows)]
 fn extract_npm_package_from_shim(content: &str) -> Option<String> {
-    let re = Regex::new(r#"node_modules[/\\](@?[^/\\]+[/\\][^/\\]+|[^/\\]+)[/\\]"#).ok()?;
+    let re = Regex::new(r#"node_modules[/\\](@[^/\\]+[/\\][^/\\]+|[^/\\]+)[/\\]"#).ok()?;
     re.captures(content)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().replace('\\', "/"))
@@ -749,6 +749,37 @@ mod tests {
     }
 
     #[test]
+    fn detect_version_reads_unscoped_pnpm_package_from_shim() {
+        let dir = tempfile::tempdir().unwrap();
+        let pnpm_home = dir.path().join("Library").join("pnpm");
+        let bin = pnpm_home.join("bin");
+        let node_modules = pnpm_home.join("global").join("5").join("node_modules");
+        let package_root = node_modules.join("typescript");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&package_root).unwrap();
+        fs::write(
+            package_root.join("package.json"),
+            r#"{"name":"typescript","version":"5.9.3"}"#,
+        )
+        .unwrap();
+        let shim = bin.join("tsserver");
+        fs::write(
+            &shim,
+            format!(
+                "#!/bin/sh\nnode \"{}/.pnpm/typescript@5.9.3/node_modules/typescript/bin/tsserver\"\n",
+                node_modules.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve_pnpm_package_name(&shim),
+            Some("typescript".to_string())
+        );
+        assert_eq!(detect_version(&shim), Some("5.9.3".to_string()));
+    }
+
+    #[test]
     fn pnpm_home_from_bin_path_handles_known_layouts() {
         let dir = tempfile::tempdir().unwrap();
 
@@ -908,6 +939,36 @@ mod tests {
         assert_eq!(
             resolve_pip_package_name(&scripts.join("bdc.exe")),
             Some("bruce-doc-converter".to_string())
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn extract_npm_package_from_unscoped_shim_stops_at_package_name() {
+        let content = r#"@IF EXIST "%~dp0\node.exe" (
+  "%~dp0\node.exe" "%~dp0\node_modules\typescript\bin\tsserver" %*
+) ELSE (
+  node "%~dp0\node_modules\typescript\bin\tsserver" %*
+)"#;
+
+        assert_eq!(
+            extract_npm_package_from_shim(content),
+            Some("typescript".to_string())
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn extract_npm_package_from_scoped_shim_includes_scope() {
+        let content = r#"@IF EXIST "%~dp0\node.exe" (
+  "%~dp0\node.exe" "%~dp0\node_modules\@anthropic-ai\claude-code\cli.js" %*
+) ELSE (
+  node "%~dp0\node_modules\@anthropic-ai\claude-code\cli.js" %*
+)"#;
+
+        assert_eq!(
+            extract_npm_package_from_shim(content),
+            Some("@anthropic-ai/claude-code".to_string())
         );
     }
 }
