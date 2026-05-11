@@ -51,11 +51,23 @@ pub fn scan_dir_for_executables(dir: &Path) -> Vec<PathBuf> {
 }
 
 pub fn scan_path_for_executables() -> Vec<PathBuf> {
-    let path_dirs: Vec<PathBuf> = std::env::var_os("PATH")
+    let mut path_dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
+    path_dirs.extend(common_cli_search_dirs(dirs::home_dir()));
 
     scan_path_dirs_for_supported_executables(path_dirs)
+}
+
+fn common_cli_search_dirs(home: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut dirs = vec![
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ];
+    if let Some(home) = home {
+        dirs.push(home.join(".local").join("bin"));
+    }
+    dirs
 }
 
 pub fn scan_path_dirs_for_supported_executables(path_dirs: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -473,6 +485,15 @@ mod tests {
         ]);
 
         assert_eq!(found, vec![supported]);
+    }
+
+    #[test]
+    fn common_cli_search_dirs_include_macos_and_user_bins() {
+        let home = PathBuf::from("/Users/example");
+        let dirs = common_cli_search_dirs(Some(home.clone()));
+        assert!(dirs.contains(&PathBuf::from("/opt/homebrew/bin")));
+        assert!(dirs.contains(&PathBuf::from("/usr/local/bin")));
+        assert!(dirs.contains(&home.join(".local").join("bin")));
     }
 
     #[cfg(windows)]

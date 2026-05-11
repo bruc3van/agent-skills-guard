@@ -202,6 +202,13 @@ fn read_until_exit_with_prompts(
                         last_trust_sent = Some(Instant::now());
                     }
                 }
+
+                if is_unsupported_interactive_prompt(&buffer) {
+                    buffer.push_str(
+                        "\nUnsupported interactive prompt detected. Please run this command manually in a terminal.\n",
+                    );
+                    return Ok((buffer, false));
+                }
             }
             Err(RecvTimeoutError::Timeout) => {
                 if let Ok(Some(status)) = child.try_wait() {
@@ -234,6 +241,16 @@ fn is_workspace_trust_prompt(output: &str) -> bool {
     text.contains("quick safety check")
         || (text.contains("trust this folder") && text.contains("enter to confirm"))
         || (text.contains("accessing workspace") && text.contains("trust"))
+}
+
+fn is_unsupported_interactive_prompt(output: &str) -> bool {
+    let text = output.to_lowercase();
+    text.contains("password:")
+        || text.contains("[sudo] password")
+        || text.contains("administrator permission")
+        || text.contains("administrator privileges")
+        || text.contains("run as administrator")
+        || text.contains("permission denied")
 }
 
 fn send_enter(writer: &mut dyn Write) -> Result<()> {
@@ -281,5 +298,17 @@ mod tests {
         assert_eq!(argv[4], "plugin");
         assert_eq!(argv[5], "list");
         assert_eq!(argv[6], "--json");
+    }
+
+    #[test]
+    fn detects_unsupported_interactive_prompts() {
+        assert!(is_unsupported_interactive_prompt(
+            "[sudo] password for user:"
+        ));
+        assert!(is_unsupported_interactive_prompt("Password:"));
+        assert!(is_unsupported_interactive_prompt(
+            "Run as administrator to continue"
+        ));
+        assert!(!is_unsupported_interactive_prompt("updated 1 package"));
     }
 }

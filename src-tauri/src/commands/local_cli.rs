@@ -2,7 +2,7 @@ use crate::commands::AppState;
 use crate::models::{LocalCliTool, PackageManager};
 use crate::services::claude_cli::{ClaudeCli, ClaudeCommand};
 use crate::services::{discover_local_cli_tools, resolve_description_for_path, LocalCliUpdater};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::State;
@@ -11,21 +11,28 @@ pub fn build_pty_update_args(tool: &LocalCliTool) -> Option<(String, Vec<String>
     let pkg = tool.package_name.as_deref()?;
     let (bin, args) = match tool.manager {
         PackageManager::Npm => (
-            "npm",
+            resolve_package_manager_command(tool, &package_manager_names("npm")),
             vec!["install".to_string(), "-g".to_string(), pkg.to_string()],
         ),
-        PackageManager::Pip => (
-            "pip",
-            vec![
+        PackageManager::Pip => {
+            let mut args = pip_prefix_args();
+            args.extend([
                 "install".to_string(),
                 "--upgrade".to_string(),
                 pkg.to_string(),
-            ],
+            ]);
+            (resolve_python_command(tool), args)
+        }
+        PackageManager::Brew => (
+            resolve_package_manager_command(tool, &package_manager_names("brew")),
+            vec!["upgrade".to_string(), pkg.to_string()],
         ),
-        PackageManager::Brew => ("brew", vec!["upgrade".to_string(), pkg.to_string()]),
-        PackageManager::Scoop => ("scoop", vec!["update".to_string(), pkg.to_string()]),
+        PackageManager::Scoop => (
+            resolve_package_manager_command(tool, &package_manager_names("scoop")),
+            vec!["update".to_string(), pkg.to_string()],
+        ),
         PackageManager::Choco => (
-            "choco",
+            resolve_package_manager_command(tool, &package_manager_names("choco")),
             vec!["upgrade".to_string(), pkg.to_string(), "-y".to_string()],
         ),
         PackageManager::Unknown => return None,
@@ -37,22 +44,153 @@ pub fn build_pty_uninstall_args(tool: &LocalCliTool) -> Option<(String, Vec<Stri
     let pkg = tool.package_name.as_deref()?;
     let (bin, args) = match tool.manager {
         PackageManager::Npm => (
-            "npm",
+            resolve_package_manager_command(tool, &package_manager_names("npm")),
             vec!["uninstall".to_string(), "-g".to_string(), pkg.to_string()],
         ),
-        PackageManager::Pip => (
-            "pip",
-            vec!["uninstall".to_string(), "-y".to_string(), pkg.to_string()],
+        PackageManager::Pip => {
+            let mut args = pip_prefix_args();
+            args.extend(["uninstall".to_string(), "-y".to_string(), pkg.to_string()]);
+            (resolve_python_command(tool), args)
+        }
+        PackageManager::Brew => (
+            resolve_package_manager_command(tool, &package_manager_names("brew")),
+            vec!["uninstall".to_string(), pkg.to_string()],
         ),
-        PackageManager::Brew => ("brew", vec!["uninstall".to_string(), pkg.to_string()]),
-        PackageManager::Scoop => ("scoop", vec!["uninstall".to_string(), pkg.to_string()]),
+        PackageManager::Scoop => (
+            resolve_package_manager_command(tool, &package_manager_names("scoop")),
+            vec!["uninstall".to_string(), pkg.to_string()],
+        ),
         PackageManager::Choco => (
-            "choco",
+            resolve_package_manager_command(tool, &package_manager_names("choco")),
             vec!["uninstall".to_string(), pkg.to_string(), "-y".to_string()],
         ),
         PackageManager::Unknown => return None,
     };
     Some((bin.to_string(), args))
+}
+
+fn pip_prefix_args() -> Vec<String> {
+    vec!["-m".to_string(), "pip".to_string()]
+}
+
+fn package_manager_names(base: &str) -> Vec<String> {
+    if cfg!(windows) {
+        vec![
+            format!("{}.cmd", base),
+            format!("{}.exe", base),
+            base.to_string(),
+        ]
+    } else {
+        vec![base.to_string()]
+    }
+}
+
+fn resolve_package_manager_command(tool: &LocalCliTool, names: &[String]) -> String {
+    let detected_path = Path::new(&tool.detected_path);
+    if let Some(path) = find_sibling_command(detected_path, names) {
+        return path.to_string_lossy().to_string();
+    }
+
+    for path in common_package_manager_paths(names) {
+        if path.is_file() {
+            return path.to_string_lossy().to_string();
+        }
+    }
+
+    names
+        .last()
+        .cloned()
+        .unwrap_or_else(|| tool.manager.as_str().to_string())
+}
+
+fn resolve_python_command(tool: &LocalCliTool) -> String {
+    let detected_path = Path::new(&tool.detected_path);
+    let names = python_names();
+    if let Some(path) = find_sibling_command(detected_path, &names) {
+        return path.to_string_lossy().to_string();
+    }
+
+    if let Some(path) = find_python_next_to_scripts_dir(detected_path) {
+        return path.to_string_lossy().to_string();
+    }
+
+    for path in common_python_paths() {
+        if path.is_file() {
+            return path.to_string_lossy().to_string();
+        }
+    }
+
+    default_python_command(detected_path)
+}
+
+fn find_sibling_command(detected_path: &Path, names: &[String]) -> Option<PathBuf> {
+    let parent = detected_path.parent()?;
+    names
+        .iter()
+        .map(|name| parent.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
+fn find_python_next_to_scripts_dir(detected_path: &Path) -> Option<PathBuf> {
+    let parent = detected_path.parent()?;
+    let parent_name = parent
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    if !parent_name.eq_ignore_ascii_case("scripts") {
+        return None;
+    }
+    let root = parent.parent()?;
+    python_names()
+        .iter()
+        .map(|name| root.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
+fn python_names() -> Vec<String> {
+    if cfg!(windows) {
+        vec!["python.exe".to_string(), "python".to_string()]
+    } else {
+        vec!["python3".to_string(), "python".to_string()]
+    }
+}
+
+fn common_package_manager_paths(names: &[String]) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for prefix in common_bin_prefixes() {
+        for name in names {
+            paths.push(prefix.join(name));
+        }
+    }
+    paths
+}
+
+fn common_python_paths() -> Vec<PathBuf> {
+    common_bin_prefixes()
+        .into_iter()
+        .flat_map(|prefix| {
+            python_names()
+                .into_iter()
+                .map(move |name| prefix.join(name))
+        })
+        .collect()
+}
+
+fn common_bin_prefixes() -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+    ]
+}
+
+fn default_python_command(detected_path: &Path) -> String {
+    let path = detected_path.to_string_lossy();
+    if cfg!(windows) && (path.contains('\\') || path.contains(':')) {
+        "python".to_string()
+    } else {
+        "python3".to_string()
+    }
 }
 
 #[tauri::command]
@@ -359,8 +497,77 @@ mod tests {
         let mut tool = LocalCliTool::new("bdc", "/home/u/.local/bin/bdc", PackageManager::Pip);
         tool.package_name = Some("bruce-doc-converter".to_string());
         let (bin, argv) = build_pty_update_args(&tool).unwrap();
-        assert_eq!(bin, "pip");
-        assert_eq!(argv, vec!["install", "--upgrade", "bruce-doc-converter"]);
+        assert_eq!(bin, "python3");
+        assert_eq!(
+            argv,
+            vec!["-m", "pip", "install", "--upgrade", "bruce-doc-converter"]
+        );
+    }
+
+    #[test]
+    fn build_pty_args_for_pip_uses_python_from_same_virtualenv() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = dir.path().join("venv");
+        let bin_dir = env.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let python = bin_dir.join("python");
+        std::fs::write(&python, b"").unwrap();
+
+        let mut tool = LocalCliTool::new(
+            "bdc",
+            &bin_dir.join("bdc").to_string_lossy(),
+            PackageManager::Pip,
+        );
+        tool.package_name = Some("bruce-doc-converter".to_string());
+
+        let (bin, argv) = build_pty_uninstall_args(&tool).unwrap();
+        assert_eq!(bin, python.to_string_lossy());
+        assert_eq!(
+            argv,
+            vec!["-m", "pip", "uninstall", "-y", "bruce-doc-converter"]
+        );
+    }
+
+    #[test]
+    fn build_pty_args_prefers_package_manager_next_to_detected_cli() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let npm = bin_dir.join(if cfg!(windows) { "npm.cmd" } else { "npm" });
+        std::fs::write(&npm, b"").unwrap();
+
+        let mut tool = LocalCliTool::new(
+            "mmdc",
+            &bin_dir.join("mmdc").to_string_lossy(),
+            PackageManager::Npm,
+        );
+        tool.package_name = Some("@mermaid-js/mermaid-cli".to_string());
+
+        let (bin, argv) = build_pty_update_args(&tool).unwrap();
+        assert_eq!(bin, npm.to_string_lossy());
+        assert_eq!(argv, vec!["install", "-g", "@mermaid-js/mermaid-cli"]);
+    }
+
+    #[test]
+    fn build_pty_args_do_not_generate_sudo_commands() {
+        let managers = [
+            PackageManager::Npm,
+            PackageManager::Pip,
+            PackageManager::Brew,
+            PackageManager::Scoop,
+            PackageManager::Choco,
+        ];
+
+        for manager in managers {
+            let mut tool = LocalCliTool::new("tool", "/usr/local/bin/tool", manager);
+            tool.package_name = Some("tool".to_string());
+            let (update_bin, update_args) = build_pty_update_args(&tool).unwrap();
+            let (uninstall_bin, uninstall_args) = build_pty_uninstall_args(&tool).unwrap();
+            assert_ne!(update_bin, "sudo");
+            assert_ne!(uninstall_bin, "sudo");
+            assert!(!update_args.iter().any(|arg| arg == "sudo"));
+            assert!(!uninstall_args.iter().any(|arg| arg == "sudo"));
+        }
     }
 
     #[test]
@@ -373,8 +580,8 @@ mod tests {
             ),
             (
                 PackageManager::Pip,
-                "pip",
-                vec!["uninstall", "-y", "bruce-doc-converter"],
+                "python3",
+                vec!["-m", "pip", "uninstall", "-y", "bruce-doc-converter"],
             ),
             (
                 PackageManager::Brew,
