@@ -8,6 +8,7 @@
     "marketplace": "MARKET",
     "installed": "INSTALLED",
     "repositories": "REPOSITORIES",
+    "localCli": "LOCAL_CLI",
     "settings": "SETTINGS"
   },
   "market": {
@@ -682,5 +683,14 @@
       },
       "comingSoon": "More settings coming soon..."
     }
+  },
+  "localCli": {
+    "title": "LOCAL_CLI_TOOLS",
+    "subtitle": "{{total}} tools in PATH · {{updates}} updates available",
+    "loading": "SCANNING_PATH...",
+    "rescan": "RESCAN",
+    "checkUpdates": "CHECK_UPDATES",
+    "checking": "CHECKING...",
+    "search": "SEARCH_TOOLS..."
   }
 }

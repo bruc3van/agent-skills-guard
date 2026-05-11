@@ -1,6 +1,6 @@
 import type { SecurityIssue, SecurityReport } from "./security";
 
-export type TabType = "overview" | "marketplace" | "installed" | "repositories" | "settings";
+export type TabType = "overview" | "marketplace" | "installed" | "repositories" | "local-cli" | "settings";
 
 export interface Repository {
   id: string;

@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { LayoutDashboard, Package, ShoppingCart, Database, Settings } from "lucide-react";
+import { LayoutDashboard, Package, ShoppingCart, Database, Settings, Terminal } from "lucide-react";
 import type { TabType } from "../types";
 
 interface SidebarProps {
@@ -12,6 +12,7 @@ const mainNavItems: { id: TabType; icon: typeof LayoutDashboard; labelKey: strin
   { id: "marketplace", icon: ShoppingCart, labelKey: "nav.marketplace" },
   { id: "installed", icon: Package, labelKey: "nav.installed" },
   { id: "repositories", icon: Database, labelKey: "nav.repositories" },
+  { id: "local-cli", icon: Terminal, labelKey: "nav.localCli" },
 ];
 
 const settingsItem = { id: "settings" as TabType, icon: Settings, labelKey: "nav.settings" };

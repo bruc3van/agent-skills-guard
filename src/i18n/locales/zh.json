@@ -8,6 +8,7 @@
     "marketplace": "市场",
     "installed": "已安装",
     "repositories": "仓库",
+    "localCli": "本地 CLI",
     "settings": "设置"
   },
   "market": {
@@ -682,5 +683,14 @@
       },
       "comingSoon": "更多设置项即将推出..."
     }
+  },
+  "localCli": {
+    "title": "本地 CLI 工具",
+    "subtitle": "PATH 中共 {{total}} 个工具 · {{updates}} 个可更新",
+    "loading": "正在扫描 PATH...",
+    "rescan": "重新扫描",
+    "checkUpdates": "检查更新",
+    "checking": "检查中...",
+    "search": "搜索工具..."
   }
 }
