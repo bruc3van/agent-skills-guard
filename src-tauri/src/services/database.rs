@@ -1078,6 +1078,12 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_local_cli_tool(&self, id: &str) -> Result<()> {
+        let conn = self.lock_conn();
+        conn.execute("DELETE FROM local_cli_tools WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn get_local_cli_tool(
         &self,

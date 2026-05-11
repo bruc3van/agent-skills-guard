@@ -695,6 +695,7 @@
     "updated": "UPDATED",
     "updateFailed": "UPDATE_FAILED",
     "update": "UPDATE",
+    "uninstall": "UNINSTALL",
     "tabs": {
       "all": "All ({{count}})",
       "npm": "npm ({{count}})",
@@ -720,12 +721,27 @@
       "latest": "Latest",
       "path": "Path",
       "updating": "Updating...",
+      "uninstalling": "Uninstalling...",
+      "openFolder": "Open install folder",
       "updateLog": "Update log",
       "noVersion": "Unknown"
     },
     "busy": {
       "updating": "Updating {{name}}...",
+      "uninstalling": "Uninstalling {{name}}...",
       "fetchingDesc": "Fetching description for {{name}} ({{done}}/{{total}})..."
+    },
+    "folder": {
+      "opened": "Install folder opened",
+      "openFailed": "Failed to open install folder: {{error}}"
+    },
+    "uninstallDialog": {
+      "title": "Confirm CLI uninstall",
+      "description": "This will uninstall {{name}}.",
+      "impact": "This will use {{manager}} to uninstall package {{package}} and may remove the CLI command.",
+      "cancel": "Cancel",
+      "confirm": "Uninstall",
+      "confirming": "Uninstalling..."
     }
   }
 }

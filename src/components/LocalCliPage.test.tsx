@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
@@ -16,6 +17,9 @@ let mockTools: LocalCliTool[] = [
 ];
 
 const fetchLocalCliDescriptions = vi.fn();
+const openLocalCliFolder = vi.fn();
+const uninstallLocalCliTool = vi.fn();
+const uninstallMutation = vi.fn();
 
 vi.mock("../hooks/useLocalCli", () => ({
   useLocalCliTools: () => ({
@@ -29,10 +33,17 @@ vi.mock("../hooks/useLocalCli", () => ({
     isPending: false,
     variables: null,
   }),
+  useUninstallLocalCliTool: () => ({
+    mutateAsync: uninstallMutation,
+    isPending: false,
+    variables: null,
+  }),
 }));
 vi.mock("../lib/api", () => ({
   api: {
     fetchLocalCliDescriptions,
+    openLocalCliFolder,
+    uninstallLocalCliTool,
   },
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
@@ -42,6 +53,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
 );
 
 afterEach(() => {
+  cleanup();
   mockTools = [
     {
       id: "bruce-doc-converter",
@@ -52,6 +64,9 @@ afterEach(() => {
     },
   ];
   fetchLocalCliDescriptions.mockReset();
+  openLocalCliFolder.mockReset();
+  uninstallLocalCliTool.mockReset();
+  uninstallMutation.mockReset();
 });
 
 describe("LocalCliPage", () => {
@@ -85,5 +100,27 @@ describe("LocalCliPage", () => {
     await waitFor(() => {
       expect(fetchLocalCliDescriptions).toHaveBeenCalledWith(["new-cli"]);
     });
+  });
+
+  it("CLI 卡片提供打开文件夹和卸载确认操作", async () => {
+    fetchLocalCliDescriptions.mockResolvedValue([]);
+    const user = userEvent.setup();
+    const { LocalCliPage } = await import("./LocalCliPage");
+    render(<LocalCliPage />, { wrapper });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "localCli.card.openFolder: /home/u/.local/bin/bdc",
+      })
+    );
+    expect(openLocalCliFolder).toHaveBeenCalledWith("bruce-doc-converter");
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "localCli.uninstall: bruce-doc-converter",
+      })
+    );
+
+    expect(screen.getByText("localCli.uninstallDialog.title")).not.toBeNull();
   });
 });

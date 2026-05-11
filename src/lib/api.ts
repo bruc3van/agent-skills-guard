@@ -130,7 +130,9 @@ export const api = {
     return invoke("refresh_featured_marketplaces");
   },
 
-  async importFeaturedRepositories(categoryIds?: string[]): Promise<ImportFeaturedRepositoriesResult> {
+  async importFeaturedRepositories(
+    categoryIds?: string[]
+  ): Promise<ImportFeaturedRepositoriesResult> {
     return invoke("import_featured_repositories", { categoryIds: categoryIds || null });
   },
 
@@ -258,7 +260,11 @@ export const api = {
     });
   },
 
-  async scanInstalledSkill(skillId: string, locale: string, scanId?: string): Promise<SkillScanResult> {
+  async scanInstalledSkill(
+    skillId: string,
+    locale: string,
+    scanId?: string
+  ): Promise<SkillScanResult> {
     return invoke("scan_installed_skill", { skillId, locale, scanId: scanId || null });
   },
 
@@ -311,6 +317,14 @@ export const api = {
 
   async updateLocalCliTool(toolId: string): Promise<string> {
     return invoke("update_local_cli_tool", { toolId });
+  },
+
+  async uninstallLocalCliTool(toolId: string): Promise<string> {
+    return invoke("uninstall_local_cli_tool", { toolId });
+  },
+
+  async openLocalCliFolder(toolId: string): Promise<void> {
+    return invoke("open_local_cli_folder", { toolId });
   },
 
   async fetchLocalCliDescriptions(toolIds: string[]): Promise<Array<[string, string]>> {

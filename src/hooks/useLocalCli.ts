@@ -38,3 +38,17 @@ export function useUpdateLocalCliTool() {
     },
   });
 }
+
+export function useUninstallLocalCliTool() {
+  const qc = useQueryClient();
+  return useMutation<string, Error, string>({
+    mutationFn: (toolId) => api.uninstallLocalCliTool(toolId),
+    onSuccess: (_log, toolId) => {
+      qc.invalidateQueries({ queryKey: LOCAL_CLI_QUERY_KEY });
+      appToast.success(`${toolId} 卸载完成`);
+    },
+    onError: (err, toolId) => {
+      appToast.error(`${toolId} 卸载失败: ${err.message}`);
+    },
+  });
+}

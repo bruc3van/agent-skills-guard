@@ -1,15 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Loader2, Search, SearchX, Download, Package } from "lucide-react";
+import {
+  RefreshCw,
+  Loader2,
+  Search,
+  SearchX,
+  Download,
+  Package,
+  Trash2,
+  FolderOpen,
+} from "lucide-react";
 import {
   useLocalCliTools,
   useCheckLocalCliUpdates,
   useUpdateLocalCliTool,
+  useUninstallLocalCliTool,
 } from "../hooks/useLocalCli";
 import { managerLabel } from "../lib/local-cli";
 import { useTranslation } from "react-i18next";
 import { PageBusyNotice } from "./ui/PageBusyNotice";
 import type { LocalCliTool } from "../types";
 import { api } from "../lib/api";
+import { appToast } from "../lib/toast";
+import { SkillUninstallConfirmDialog } from "./SkillUninstallConfirmDialog";
 
 const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[^\[\]()]|\[[\?0-9;]*[a-zA-Z]/g;
 const SPECIAL_CHARS_RE = /[─│┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬█▓▒░■□▪▫●○◆◇★☆╭╮╯╰\/\\|_=#@*~^+]/g;
@@ -37,11 +49,17 @@ export function LocalCliPage() {
     isPending: isUpdating,
     variables: updatingId,
   } = useUpdateLocalCliTool();
+  const {
+    mutateAsync: uninstallTool,
+    isPending: isUninstalling,
+    variables: uninstallingId,
+  } = useUninstallLocalCliTool();
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<ManagerTab>("all");
   const [showUpdatesOnly, setShowUpdatesOnly] = useState(false);
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
   const listContainerRef = useRef<HTMLDivElement | null>(null);
+  const [pendingUninstall, setPendingUninstall] = useState<LocalCliTool | null>(null);
 
   // Description cache: toolId -> description
   const [descriptionMap, setDescriptionMap] = useState<Record<string, string>>({});
@@ -158,6 +176,10 @@ export function LocalCliPage() {
       const tool = tools.find((t) => t.id === updatingId);
       return t("localCli.busy.updating", { name: tool?.id ?? updatingId });
     }
+    if (isUninstalling && uninstallingId) {
+      const tool = tools.find((t) => t.id === uninstallingId);
+      return t("localCli.busy.uninstalling", { name: tool?.id ?? uninstallingId });
+    }
     if (fetchProgress) {
       return t("localCli.busy.fetchingDesc", {
         name: fetchProgress.current,
@@ -166,7 +188,7 @@ export function LocalCliPage() {
       });
     }
     return null;
-  }, [isChecking, isUpdating, fetchProgress, t, tools, updatingId]);
+  }, [isChecking, isUpdating, isUninstalling, fetchProgress, t, tools, updatingId, uninstallingId]);
 
   const handleCheckUpdates = () => {
     checkUpdates(undefined, {
@@ -178,6 +200,27 @@ export function LocalCliPage() {
 
   const handleUpdateTool = (toolId: string) => {
     updateTool(toolId);
+  };
+
+  const handleOpenFolder = async (tool: LocalCliTool) => {
+    try {
+      await api.openLocalCliFolder(tool.id);
+      appToast.success(t("localCli.folder.opened"), { duration: 3000 });
+    } catch (error: any) {
+      appToast.error(
+        t("localCli.folder.openFailed", {
+          error: error?.message || String(error),
+        }),
+        { duration: 5000 }
+      );
+    }
+  };
+
+  const handleConfirmUninstall = async () => {
+    if (!pendingUninstall || isUninstalling) return;
+    const tool = pendingUninstall;
+    await uninstallTool(tool.id);
+    setPendingUninstall(null);
   };
 
   const handleFocusUpdates = (tab?: string) => {
@@ -351,7 +394,10 @@ export function LocalCliPage() {
                   isFetchingDesc={isFetchingDesc && !tool.description && !descriptionMap[tool.id]}
                   onUpdate={handleUpdateTool}
                   isUpdating={isUpdating && updatingId === tool.id}
-                  isAnyOperationPending={isUpdating || isChecking}
+                  onOpenFolder={handleOpenFolder}
+                  onRequestUninstall={setPendingUninstall}
+                  isUninstalling={isUninstalling && uninstallingId === tool.id}
+                  isAnyOperationPending={isUpdating || isChecking || isUninstalling}
                 />
               ))}
             </div>
@@ -395,6 +441,35 @@ export function LocalCliPage() {
           )}
         </div>
       </div>
+
+      <SkillUninstallConfirmDialog
+        open={pendingUninstall !== null}
+        skillName={pendingUninstall?.id ?? ""}
+        operationCount={1}
+        pathCount={1}
+        isConfirming={
+          pendingUninstall ? isUninstalling && uninstallingId === pendingUninstall.id : false
+        }
+        labels={{
+          title: t("localCli.uninstallDialog.title"),
+          description: t("localCli.uninstallDialog.description", {
+            name: pendingUninstall?.id ?? "",
+          }),
+          impact: t("localCli.uninstallDialog.impact", {
+            manager: pendingUninstall ? managerLabel(pendingUninstall.manager) : "",
+            package: pendingUninstall?.package_name ?? pendingUninstall?.id ?? "",
+          }),
+          cancel: t("localCli.uninstallDialog.cancel"),
+          confirm: t("localCli.uninstallDialog.confirm"),
+          confirming: t("localCli.uninstallDialog.confirming"),
+        }}
+        onCancel={() => {
+          if (!isUninstalling) setPendingUninstall(null);
+        }}
+        onConfirm={() => {
+          void handleConfirmUninstall();
+        }}
+      />
     </div>
   );
 }
@@ -428,14 +503,20 @@ function CliToolCard({
   description,
   isFetchingDesc,
   onUpdate,
+  onOpenFolder,
+  onRequestUninstall,
   isUpdating,
+  isUninstalling,
   isAnyOperationPending,
 }: {
   tool: LocalCliTool;
   description?: string;
   isFetchingDesc: boolean;
   onUpdate: (id: string) => void;
+  onOpenFolder: (tool: LocalCliTool) => void;
+  onRequestUninstall: (tool: LocalCliTool) => void;
   isUpdating: boolean;
+  isUninstalling: boolean;
   isAnyOperationPending: boolean;
 }) {
   const { t } = useTranslation();
@@ -483,6 +564,25 @@ function CliToolCard({
               )}
             </button>
           )}
+          <button
+            onClick={() => onRequestUninstall(tool)}
+            disabled={isAnyOperationPending}
+            aria-label={`${t("localCli.uninstall")}: ${tool.id}`}
+            title={`${t("localCli.uninstall")}: ${tool.id}`}
+            className="apple-button-destructive h-8 px-3 text-xs flex items-center gap-1.5"
+          >
+            {isUninstalling ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                {t("localCli.card.uninstalling")}
+              </>
+            ) : (
+              <>
+                <Trash2 className="w-3.5 h-3.5" />
+                {t("localCli.uninstall")}
+              </>
+            )}
+          </button>
         </div>
       </div>
 
@@ -517,12 +617,23 @@ function CliToolCard({
       </div>
 
       <div className="mt-auto pt-4 border-t border-border/60">
-        <p
-          title={tool.detected_path}
-          className="text-xs text-muted-foreground/60 font-mono truncate"
-        >
-          {tool.detected_path}
-        </p>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => onOpenFolder(tool)}
+            aria-label={`${t("localCli.card.openFolder")}: ${tool.detected_path}`}
+            title={`${t("localCli.card.openFolder")}: ${tool.detected_path}`}
+            className="text-blue-500 hover:text-blue-600 transition-colors"
+          >
+            <FolderOpen className="w-4 h-4" />
+          </button>
+          <p
+            title={tool.detected_path}
+            className="text-xs text-muted-foreground/60 font-mono truncate"
+          >
+            {tool.detected_path}
+          </p>
+        </div>
       </div>
 
       {tool.update_log && (
