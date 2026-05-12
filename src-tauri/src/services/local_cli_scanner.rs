@@ -277,7 +277,7 @@ where
         if formula_tools.len() == 1 {
             tools.push(formula_tools.pop().unwrap());
         } else {
-            tools.push(merge_formula_tools(formula, formula_tools));
+            tools.push(merge_package_tools(formula_tools, &PackageManager::Brew));
         }
     }
 
@@ -285,38 +285,40 @@ where
     tools
 }
 
-/// Merge multiple tools from the same Homebrew formula into a single entry.
-/// The merged entry uses the formula name as id and collects all binary names
+/// Merge multiple tools from the same package into a single entry.
+/// Uses the package name as the display id and collects all binary names
 /// into `bundled_tool_ids`. The detected_path points to the best representative
-/// binary (one matching the formula name, or the first one found).
-fn merge_formula_tools(formula: String, mut tools: Vec<LocalCliTool>) -> LocalCliTool {
-    let formula_base = formula.rsplit('/').next().unwrap_or(&formula);
-    let formula_base_lower = formula_base.to_lowercase();
+/// binary (one matching the package name, or the first one found).
+fn merge_package_tools(mut tools: Vec<LocalCliTool>, manager: &PackageManager) -> LocalCliTool {
+    let pkg_name = tools[0]
+        .package_name
+        .clone()
+        .unwrap_or_else(|| tools[0].id.clone());
+    let pkg_base = pkg_name
+        .rsplit('/')
+        .next()
+        .unwrap_or(&pkg_name)
+        .to_lowercase();
 
-    // Pick the best representative binary for detected_path:
-    // 1. Exact match on formula base name (e.g. "ffmpeg" for formula "ffmpeg")
-    // 2. Formula base is a prefix of binary id (e.g. "python" for "python@3.13")
-    // 3. First tool alphabetically
+    tools.sort_by(|a, b| a.id.cmp(&b.id));
     let best_idx = tools
         .iter()
-        .position(|t| t.id == formula_base_lower)
-        .or_else(|| tools.iter().position(|t| t.id.starts_with(&formula_base_lower)))
+        .position(|t| t.id == pkg_base)
+        .or_else(|| tools.iter().position(|t| t.id.starts_with(&pkg_base)))
         .unwrap_or(0);
 
-    // Collect all binary ids (excluding the representative if it's the only one)
-    let mut bundled: Vec<String> = tools
-        .iter()
-        .map(|t| t.id.clone())
-        .collect();
-
+    let mut bundled: Vec<String> = tools.iter().map(|t| t.id.clone()).collect();
     let representative = tools.swap_remove(best_idx);
-    // Remove the representative's id from bundled list
     if let Some(pos) = bundled.iter().position(|id| id == &representative.id) {
         bundled.remove(pos);
     }
 
-    let mut merged = LocalCliTool::new(&formula, &representative.detected_path, PackageManager::Brew);
-    merged.package_name = Some(formula);
+    let mut merged = LocalCliTool::new(
+        &pkg_name,
+        &representative.detected_path,
+        manager.clone(),
+    );
+    merged.package_name = Some(pkg_name);
     merged.current_version = representative.current_version;
     merged.description = representative.description;
     merged.bundled_tool_ids = bundled;
@@ -1003,14 +1005,35 @@ fn discover_brew_tools() -> Vec<LocalCliTool> {
 }
 
 fn discover_scoop_choco_tools() -> Vec<LocalCliTool> {
-    supported_path_executables()
+    let tools: Vec<LocalCliTool> = supported_path_executables()
         .into_iter()
         .filter_map(|path| {
             let manager = detect_manager_from_path(&path);
             matches!(manager, PackageManager::Scoop | PackageManager::Choco)
                 .then(|| tool_from_path(&path, manager))
         })
-        .collect()
+        .collect();
+
+    let mut grouped: HashMap<(PackageManager, String), Vec<LocalCliTool>> = HashMap::new();
+    for tool in tools {
+        let pkg = tool.package_name.clone().unwrap_or_else(|| tool.id.clone());
+        grouped
+            .entry((tool.manager.clone(), pkg.to_lowercase()))
+            .or_default()
+            .push(tool);
+    }
+
+    let mut result = Vec::new();
+    for ((manager, _pkg_lower), group) in grouped {
+        if group.len() == 1 {
+            result.push(group.into_iter().next().unwrap());
+        } else {
+            result.push(merge_package_tools(group, &manager));
+        }
+    }
+
+    result.sort_by(|a, b| a.id.cmp(&b.id));
+    result
 }
 
 fn supported_path_executables() -> Vec<PathBuf> {
@@ -1038,14 +1061,109 @@ fn dedupe_paths(paths: &mut Vec<PathBuf>) {
     paths.retain(|path| seen.insert(path.clone()));
 }
 
+fn scoop_apps_dir() -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let dir = home.join("scoop").join("apps");
+    dir.is_dir().then_some(dir)
+}
+
+fn scoop_binary_app_map() -> &'static HashMap<String, String> {
+    static MAP: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
+        let mut map = HashMap::new();
+        let Some(apps_dir) = scoop_apps_dir() else {
+            return map;
+        };
+        let Ok(entries) = std::fs::read_dir(&apps_dir) else {
+            return map;
+        };
+        for entry in entries.flatten() {
+            let app_name = entry.file_name().to_string_lossy().to_lowercase();
+            if app_name == "scoop" {
+                continue;
+            }
+            let current = entry.path().join("current");
+            for subdir in &["bin", ""] {
+                let subdir_path;
+                let dir = if subdir.is_empty() {
+                    &current
+                } else {
+                    subdir_path = current.join(subdir);
+                    &subdir_path
+                };
+                let Ok(dir_entries) = std::fs::read_dir(dir) else { continue };
+                for bin_entry in dir_entries.flatten() {
+                    if !is_executable(&bin_entry.path()) {
+                        continue;
+                    }
+                    if let Some(name) = bin_entry.path().file_stem().and_then(|n| n.to_str()) {
+                        map.entry(name.to_lowercase()).or_insert_with(|| app_name.clone());
+                    }
+                }
+            }
+        }
+        map
+    });
+    &MAP
+}
+
+fn choco_lib_dir() -> Option<PathBuf> {
+    ["C:\\ProgramData\\chocolatey\\lib", "C:\\ProgramData\\choco\\lib"]
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_dir())
+}
+
+fn choco_binary_package_map() -> &'static HashMap<String, String> {
+    static MAP: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
+        let mut map = HashMap::new();
+        let Some(lib_dir) = choco_lib_dir() else {
+            return map;
+        };
+        let Ok(entries) = std::fs::read_dir(&lib_dir) else {
+            return map;
+        };
+        for entry in entries.flatten() {
+            let pkg_name = entry.file_name().to_string_lossy().to_lowercase();
+            let tools_dir = entry.path().join("tools");
+            let Ok(tool_entries) = std::fs::read_dir(&tools_dir) else { continue };
+            for tool_entry in tool_entries.flatten() {
+                if !is_executable(&tool_entry.path()) {
+                    continue;
+                }
+                if let Some(name) = tool_entry.path().file_stem().and_then(|n| n.to_str()) {
+                    map.entry(name.to_lowercase()).or_insert_with(|| pkg_name.clone());
+                }
+            }
+        }
+        map
+    });
+    &MAP
+}
+
+fn resolve_scoop_app_name(path: &Path) -> Option<String> {
+    let binary_name = path.file_stem()?.to_str()?.to_lowercase();
+    scoop_binary_app_map()
+        .get(&binary_name)
+        .cloned()
+        .or_else(|| Some(tool_id_from_path(path)))
+}
+
+fn resolve_choco_package_name(path: &Path) -> Option<String> {
+    let binary_name = path.file_stem()?.to_str()?.to_lowercase();
+    choco_binary_package_map()
+        .get(&binary_name)
+        .cloned()
+        .or_else(|| Some(tool_id_from_path(path)))
+}
+
 fn resolve_package_name(path: &Path, manager: &PackageManager) -> Option<String> {
     match manager {
         PackageManager::Npm => resolve_npm_package_name(path),
         PackageManager::Pnpm => resolve_pnpm_package_name(path),
         PackageManager::Pip => resolve_pip_package_name(path),
-        PackageManager::Brew | PackageManager::Scoop | PackageManager::Choco => {
-            Some(tool_id_from_path(path))
-        }
+        PackageManager::Brew => Some(tool_id_from_path(path)),
+        PackageManager::Scoop => resolve_scoop_app_name(path),
+        PackageManager::Choco => resolve_choco_package_name(path),
         PackageManager::Unknown => None,
     }
 }
