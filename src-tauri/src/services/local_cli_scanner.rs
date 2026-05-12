@@ -185,8 +185,8 @@ fn is_likely_cli_binary(path: &Path) -> bool {
     let normalized = path.to_string_lossy().replace('\\', "/");
     normalized.contains("/bin/")
         || normalized.contains("/sbin/")
-        || normalized.contains("/libexec/")
-        || normalized.contains("/ubin/")
+        || normalized.contains("/libexec/bin/")
+        || normalized.contains("/libexec/gnubin/")
 }
 
 fn brew_executable_paths_for_formula_with<F>(formula: &str, run: &mut F) -> Vec<PathBuf>
