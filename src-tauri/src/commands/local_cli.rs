@@ -821,7 +821,19 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&script_target, &detected_script).unwrap();
         #[cfg(windows)]
-        std::os::windows::fs::symlink_file(&script_target, &detected_script).unwrap();
+        {
+            if let Err(err) = std::os::windows::fs::symlink_file(&script_target, &detected_script) {
+                if err.raw_os_error() == Some(1314) {
+                    std::fs::write(
+                        &detected_script,
+                        format!("#!{}\nimport sys\n", python.to_string_lossy()),
+                    )
+                    .unwrap();
+                } else {
+                    panic!("failed to create symlink: {err}");
+                }
+            }
+        }
 
         let mut tool = LocalCliTool::new(
             "markitdown",

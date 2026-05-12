@@ -1,7 +1,8 @@
 use crate::models::{detect_manager_from_path, LocalCliTool, PackageManager};
 use regex::Regex;
+use serde::Deserialize;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     process::Command,
     sync::LazyLock,
@@ -122,8 +123,16 @@ fn dedupe_supported_executables(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 
 fn brew_installed_on_request_formulae() -> Option<HashSet<String>> {
     let brew = find_brew_command()?;
-    brew_formula_list(&brew, &["list", "--formula", "--installed-on-request"])
-        .or_else(|| brew_formula_list(&brew, &["leaves"]))
+    brew_installed_on_request_formulae_with(|args| brew_stdout(&brew, args))
+}
+
+fn brew_installed_on_request_formulae_with<F>(mut run: F) -> Option<HashSet<String>>
+where
+    F: FnMut(&[&str]) -> Option<String>,
+{
+    run(&["list", "--formula", "--installed-on-request"])
+        .and_then(|stdout| parse_brew_list_output(&stdout))
+        .or_else(|| run(&["leaves"]).and_then(|stdout| parse_brew_list_output(&stdout)))
 }
 
 fn find_brew_command() -> Option<PathBuf> {
@@ -135,32 +144,7 @@ fn find_brew_command() -> Option<PathBuf> {
     })
 }
 
-fn brew_formula_list(brew: &Path, args: &[&str]) -> Option<HashSet<String>> {
-    let output = Command::new(brew)
-        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
-        .env("HOMEBREW_NO_INSTALL_CLEANUP", "1")
-        .env("HOMEBREW_NO_ANALYTICS", "1")
-        .args(args)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    Some(
-        stdout
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(ToOwned::to_owned)
-            .collect(),
-    )
-}
-
-fn run_brew(args: &[&str]) -> Option<String> {
-    let brew = find_brew_command()?;
+fn brew_stdout(brew: &Path, args: &[&str]) -> Option<String> {
     let output = Command::new(brew)
         .env("HOMEBREW_NO_AUTO_UPDATE", "1")
         .env("HOMEBREW_NO_INSTALL_CLEANUP", "1")
@@ -174,6 +158,83 @@ fn run_brew(args: &[&str]) -> Option<String> {
     }
 
     String::from_utf8(output.stdout).ok()
+}
+
+fn parse_brew_list_output(stdout: &str) -> Option<HashSet<String>> {
+    Some(
+        stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect(),
+    )
+}
+
+fn parse_brew_formula_executable_paths(stdout: &str) -> Vec<PathBuf> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| is_executable(path))
+        .collect()
+}
+
+fn brew_executable_paths_for_formula_with<F>(formula: &str, run: &mut F) -> Vec<PathBuf>
+where
+    F: FnMut(&[&str]) -> Option<String>,
+{
+    let list_args = ["list", "--formula", formula];
+    let mut paths = run(&list_args)
+        .map(|stdout| parse_brew_formula_executable_paths(&stdout))
+        .unwrap_or_default();
+
+    if paths.is_empty() {
+        let prefix_args = ["--prefix", formula];
+        if let Some(prefix) = run(&prefix_args) {
+            paths = scan_dir_for_executables(&PathBuf::from(prefix.trim()).join("bin"));
+        }
+    }
+
+    dedupe_paths(&mut paths);
+    paths.sort();
+    paths
+}
+
+fn brew_tools_from_formulae_with<F>(formulae: &HashSet<String>, mut run: F) -> Vec<LocalCliTool>
+where
+    F: FnMut(&[&str]) -> Option<String>,
+{
+    let mut formulae = formulae.iter().cloned().collect::<Vec<_>>();
+    formulae.sort();
+
+    let mut tools = Vec::new();
+    for formula in formulae {
+        let version = {
+            let args = ["list", "--versions", formula.as_str()];
+            run(&args).and_then(|output| parse_brew_list_versions_output(&output))
+        };
+        let description = {
+            let args = ["desc", "--formula", formula.as_str()];
+            run(&args).and_then(|output| parse_brew_desc_output(&output))
+        };
+
+        for path in brew_executable_paths_for_formula_with(&formula, &mut run) {
+            let mut tool = LocalCliTool::new(
+                &tool_id_from_path(&path),
+                &path.to_string_lossy(),
+                PackageManager::Brew,
+            );
+            tool.package_name = Some(formula.clone());
+            tool.current_version = version.clone();
+            tool.description = description.clone();
+            tools.push(tool);
+        }
+    }
+
+    tools.sort_by(|a, b| a.id.cmp(&b.id));
+    tools
 }
 
 fn filter_brew_executables_to_installed_on_request(
@@ -256,6 +317,348 @@ fn is_pip_launcher_id(id: &str) -> bool {
             .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
 }
 
+#[derive(Debug, Deserialize)]
+struct PackageListEntry {
+    version: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NpmListOutput {
+    dependencies: Option<HashMap<String, PackageListEntry>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PnpmListRoot {
+    dependencies: Option<HashMap<String, PackageListEntry>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NodePackageJson {
+    name: Option<String>,
+    version: Option<String>,
+    description: Option<String>,
+    bin: Option<NodeBinField>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum NodeBinField {
+    String(String),
+    Object(HashMap<String, serde_json::Value>),
+}
+
+#[derive(Debug, Deserialize)]
+struct PipListPackage {
+    name: String,
+    version: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct PipShowOutput {
+    summary: Option<String>,
+    location: Option<PathBuf>,
+    files: Vec<String>,
+}
+
+fn run_command_stdout(command: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(command).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
+}
+
+fn command_global_node_modules(command: &str) -> Option<PathBuf> {
+    run_command_stdout(command, &["root", "-g"]).map(|stdout| PathBuf::from(stdout.trim()))
+}
+
+fn shim_path(bin_dir: &Path, binary_name: &str) -> PathBuf {
+    // npm/pnpm create .cmd shims on Windows; .ps1 variants exist but are not on PATH by default.
+    #[cfg(windows)]
+    {
+        bin_dir.join(format!("{}.cmd", binary_name))
+    }
+
+    #[cfg(not(windows))]
+    {
+        bin_dir.join(binary_name)
+    }
+}
+
+fn node_package_json_path(node_modules_root: &Path, package_name: &str) -> PathBuf {
+    package_name
+        .split('/')
+        .fold(node_modules_root.to_path_buf(), |acc, part| acc.join(part))
+        .join("package.json")
+}
+
+fn node_package_bin_names(package_name: &str, bin: &NodeBinField) -> Vec<String> {
+    match bin {
+        NodeBinField::String(_) => {
+            package_name
+                .rsplit('/')
+                .next()
+                .filter(|name| !name.is_empty())
+                .map(|name| vec![name.to_string()])
+                .unwrap_or_default()
+        }
+        NodeBinField::Object(entries) => entries.keys().cloned().collect(),
+    }
+}
+
+fn read_node_package_json(node_modules_root: &Path, package_name: &str) -> Option<NodePackageJson> {
+    let path = node_package_json_path(node_modules_root, package_name);
+    let content = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn node_tools_from_dependencies(
+    node_modules_root: &Path,
+    bin_dir: &Path,
+    dependencies: HashMap<String, PackageListEntry>,
+    manager: PackageManager,
+) -> Vec<LocalCliTool> {
+    let mut tools = Vec::new();
+
+    for (listed_name, listed_entry) in dependencies {
+        let Some(package_json) = read_node_package_json(node_modules_root, &listed_name) else {
+            continue;
+        };
+        let Some(bin_field) = package_json.bin.as_ref() else {
+            continue;
+        };
+
+        let package_name = package_json.name.as_deref().unwrap_or(&listed_name);
+        let version = package_json.version.or(listed_entry.version);
+        let description = package_json.description;
+
+        for bin_name in node_package_bin_names(package_name, bin_field) {
+            let detected_path = shim_path(bin_dir, &bin_name);
+            let mut tool = LocalCliTool::new(
+                &tool_id_from_path(&detected_path),
+                &detected_path.to_string_lossy(),
+                manager.clone(),
+            );
+            tool.current_version = version.clone();
+            tool.package_name = Some(package_name.to_string());
+            tool.description = description.clone();
+            tools.push(tool);
+        }
+    }
+
+    tools.sort_by(|a, b| a.id.cmp(&b.id));
+    tools
+}
+
+fn npm_tools_from_list_output(
+    node_modules_root: &Path,
+    bin_dir: &Path,
+    output: &str,
+) -> Vec<LocalCliTool> {
+    let Ok(parsed) = serde_json::from_str::<NpmListOutput>(output) else {
+        return vec![];
+    };
+    let Some(dependencies) = parsed.dependencies else {
+        return vec![];
+    };
+
+    node_tools_from_dependencies(
+        node_modules_root,
+        bin_dir,
+        dependencies,
+        PackageManager::Npm,
+    )
+}
+
+fn pnpm_tools_from_list_output(
+    node_modules_root: &Path,
+    bin_dir: &Path,
+    output: &str,
+) -> Vec<LocalCliTool> {
+    let Ok(parsed) = serde_json::from_str::<Vec<PnpmListRoot>>(output) else {
+        return vec![];
+    };
+    let Some(dependencies) = parsed.into_iter().next().and_then(|root| root.dependencies) else {
+        return vec![];
+    };
+
+    node_tools_from_dependencies(
+        node_modules_root,
+        bin_dir,
+        dependencies,
+        PackageManager::Pnpm,
+    )
+}
+
+fn parse_pip_show_output(output: &str) -> PipShowOutput {
+    let mut parsed = PipShowOutput::default();
+    let mut in_files = false;
+
+    for line in output.lines() {
+        if in_files {
+            if line.starts_with(' ') || line.starts_with('\t') {
+                let file = line.trim();
+                if !file.is_empty() {
+                    parsed.files.push(file.to_string());
+                }
+                continue;
+            }
+            in_files = false;
+        }
+
+        if line == "Files:" {
+            in_files = true;
+            continue;
+        }
+
+        if let Some(summary) = line.strip_prefix("Summary:") {
+            let summary = summary.trim();
+            if !summary.is_empty() {
+                parsed.summary = Some(summary.to_string());
+            }
+        } else if let Some(location) = line.strip_prefix("Location:") {
+            let location = location.trim();
+            if !location.is_empty() {
+                parsed.location = Some(PathBuf::from(location));
+            }
+        }
+    }
+
+    parsed
+}
+
+fn pip_script_roots_from_location(location: &Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let normalized = location.to_string_lossy().replace('\\', "/").to_lowercase();
+
+    if normalized.ends_with("/site-packages") {
+        if let Some(parent) = location.parent() {
+            roots.push(parent.join("Scripts"));
+            roots.push(parent.join("bin"));
+
+            if parent
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.eq_ignore_ascii_case("Lib") || name.eq_ignore_ascii_case("lib")
+                })
+            {
+                if let Some(env_root) = parent.parent() {
+                    roots.push(env_root.join("Scripts"));
+                    roots.push(env_root.join("bin"));
+                }
+            } else if parent
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.to_lowercase().starts_with("python"))
+            {
+                if let Some(lib_root) = parent.parent() {
+                    if lib_root
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.eq_ignore_ascii_case("lib"))
+                    {
+                        if let Some(env_root) = lib_root.parent() {
+                            roots.push(env_root.join("bin"));
+                            roots.push(env_root.join("Scripts"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    roots
+}
+
+fn common_pip_script_roots(home: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = home {
+        roots.push(home.join(".local").join("bin"));
+    }
+
+    if let Some(appdata) = std::env::var_os("APPDATA").map(PathBuf::from) {
+        let python = appdata.join("Python");
+        if let Ok(entries) = std::fs::read_dir(python) {
+            for entry in entries.flatten() {
+                roots.push(entry.path().join("Scripts"));
+            }
+        }
+    }
+
+    roots
+}
+
+fn pip_script_file_name(file: &str) -> Option<String> {
+    let normalized = file.replace('\\', "/");
+    let lower = normalized.to_lowercase();
+    if !lower.contains("/bin/") && !lower.contains("/scripts/") {
+        return None;
+    }
+
+    normalized
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn find_pip_script(script_roots: &[PathBuf], file_name: &str) -> Option<PathBuf> {
+    script_roots
+        .iter()
+        .map(|root| root.join(file_name))
+        .find(|path| path.exists())
+}
+
+fn pip_tools_from_command_outputs(
+    versions: &HashMap<String, Option<String>>,
+    show_outputs: &HashMap<String, String>,
+    script_roots: &[PathBuf],
+) -> Vec<LocalCliTool> {
+    let mut tools = Vec::new();
+    let mut seen_paths = HashSet::new();
+
+    for (package_name, version) in versions.iter() {
+        let Some(show_output) = show_outputs.get(package_name.as_str()) else {
+            continue;
+        };
+        let show = parse_pip_show_output(show_output);
+        if show.files.is_empty() {
+            continue;
+        }
+
+        let mut roots = script_roots.to_vec();
+        if let Some(location) = show.location.as_ref() {
+            roots.extend(pip_script_roots_from_location(location));
+        }
+
+        for file in show.files {
+            let Some(file_name) = pip_script_file_name(&file) else {
+                continue;
+            };
+            let Some(path) = find_pip_script(&roots, &file_name) else {
+                continue;
+            };
+            if !seen_paths.insert(path.clone()) {
+                continue;
+            }
+
+            let mut tool = LocalCliTool::new(
+                &tool_id_from_path(&path),
+                &path.to_string_lossy(),
+                PackageManager::Pip,
+            );
+            tool.current_version = version.clone();
+            tool.package_name = Some(package_name.clone());
+            tool.description = show.summary.clone();
+            tools.push(tool);
+        }
+    }
+
+    tools.sort_by(|a, b| a.id.cmp(&b.id));
+    tools
+}
+
 pub fn parse_version(output: &str) -> Option<String> {
     // Optional "v" prefix then semver triple — use a capture group to exclude the "v"
     let re = Regex::new(r"v?(\d+\.\d+\.\d+)").ok()?;
@@ -275,23 +678,139 @@ pub fn detect_version(path: &Path) -> Option<String> {
 }
 
 pub fn discover_local_cli_tools() -> Vec<LocalCliTool> {
-    use rayon::prelude::*;
+    let mut tools = Vec::new();
+    tools.extend(discover_npm_tools());
+    tools.extend(discover_pnpm_tools());
+    tools.extend(discover_pip_tools());
+    tools.extend(discover_brew_tools());
+    tools.extend(discover_scoop_choco_tools());
+    tools
+}
 
-    let bins = scan_path_for_executables();
+fn discover_npm_tools() -> Vec<LocalCliTool> {
+    let Some(node_modules_root) = command_global_node_modules("npm") else {
+        return vec![];
+    };
+    let Some(bin_dir) = node_modules_root.parent().map(Path::to_path_buf) else {
+        return vec![];
+    };
+    let Some(output) = run_command_stdout("npm", &["ls", "-g", "--depth=0", "--json"]) else {
+        return vec![];
+    };
 
-    bins.par_iter()
-        .map(|path| {
-            let id = tool_id_from_path(path);
-            let manager = detect_manager_from_path(path);
-            let package_name = resolve_package_name(path, &manager);
-            let description = resolve_description(path, &manager);
-            let mut tool = LocalCliTool::new(&id, &path.to_string_lossy(), manager);
-            tool.current_version = detect_version(path);
-            tool.package_name = package_name;
-            tool.description = description;
-            tool
+    npm_tools_from_list_output(&node_modules_root, &bin_dir, &output)
+}
+
+fn discover_pnpm_tools() -> Vec<LocalCliTool> {
+    let Some(node_modules_root) = command_global_node_modules("pnpm") else {
+        return vec![];
+    };
+    let Some(bin_dir) = node_modules_root.parent().map(Path::to_path_buf) else {
+        return vec![];
+    };
+    let Some(output) = run_command_stdout("pnpm", &["ls", "-g", "--depth=0", "--json"]) else {
+        return vec![];
+    };
+
+    pnpm_tools_from_list_output(&node_modules_root, &bin_dir, &output)
+}
+
+fn discover_pip_tools() -> Vec<LocalCliTool> {
+    let Some(list_output) = run_command_stdout("pip", &["list", "--format=json"]) else {
+        return vec![];
+    };
+    let Ok(packages) = serde_json::from_str::<Vec<PipListPackage>>(&list_output) else {
+        eprintln!("local_cli_scanner: failed to parse `pip list` output");
+        return vec![];
+    };
+
+    if packages.is_empty() {
+        return vec![];
+    }
+
+    let versions: HashMap<String, Option<String>> = packages
+        .iter()
+        .map(|p| (p.name.clone(), p.version.clone()))
+        .collect();
+
+    // Batch all packages into one pip show call to avoid N+1 subprocess overhead.
+    let names: Vec<&str> = packages.iter().map(|p| p.name.as_str()).collect();
+    let mut show_args = vec!["show", "-f"];
+    show_args.extend(names);
+
+    let Some(combined_show) = run_command_stdout("pip", &show_args) else {
+        return vec![];
+    };
+
+    // pip separates blocks with "\n---\n"; normalize line endings first.
+    let normalized = combined_show.replace("\r\n", "\n");
+    let mut show_outputs = HashMap::new();
+    let mut script_roots = common_pip_script_roots(dirs::home_dir());
+
+    for block in normalized.split("\n---\n") {
+        let name = block
+            .lines()
+            .find_map(|line| line.strip_prefix("Name:").map(|s| s.trim().to_string()));
+        if let Some(name) = name {
+            let show = parse_pip_show_output(block);
+            if let Some(location) = show.location.as_ref() {
+                script_roots.extend(pip_script_roots_from_location(location));
+            }
+            show_outputs.insert(name, block.to_string());
+        }
+    }
+
+    dedupe_paths(&mut script_roots);
+    pip_tools_from_command_outputs(&versions, &show_outputs, &script_roots)
+}
+
+fn discover_brew_tools() -> Vec<LocalCliTool> {
+    let Some(brew) = find_brew_command() else {
+        return vec![];
+    };
+    let Some(installed_on_request) =
+        brew_installed_on_request_formulae_with(|args| brew_stdout(&brew, args))
+    else {
+        return vec![];
+    };
+
+    brew_tools_from_formulae_with(&installed_on_request, |args| brew_stdout(&brew, args))
+}
+
+fn discover_scoop_choco_tools() -> Vec<LocalCliTool> {
+    supported_path_executables()
+        .into_iter()
+        .filter_map(|path| {
+            let manager = detect_manager_from_path(&path);
+            matches!(manager, PackageManager::Scoop | PackageManager::Choco)
+                .then(|| tool_from_path(&path, manager))
         })
         .collect()
+}
+
+fn supported_path_executables() -> Vec<PathBuf> {
+    let mut path_dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    path_dirs.extend(common_cli_search_dirs(dirs::home_dir()));
+    scan_path_dirs_for_supported_executables(path_dirs)
+}
+
+fn tool_from_path(path: &Path, manager: PackageManager) -> LocalCliTool {
+    let id = tool_id_from_path(path);
+    let package_name = resolve_package_name(path, &manager);
+    let description = resolve_description(path, &manager);
+    let mut tool = LocalCliTool::new(&id, &path.to_string_lossy(), manager);
+    tool.current_version = detect_version(path);
+    tool.package_name = package_name;
+    tool.description = description;
+    tool
+}
+
+// Deduplicates script-root search directories; distinct from dedupe_supported_executables which deduplicates tools by identity.
+fn dedupe_paths(paths: &mut Vec<PathBuf>) {
+    let mut seen = HashSet::new();
+    paths.retain(|path| seen.insert(path.clone()));
 }
 
 fn resolve_package_name(path: &Path, manager: &PackageManager) -> Option<String> {
@@ -324,7 +843,7 @@ pub fn resolve_description_for_path(path: &Path) -> Option<String> {
 fn resolve_npm_description(path: &Path) -> Option<String> {
     let npm_global = npm_global_root(path)?;
     let package_name = resolve_npm_package_name(path)?;
-    let pkg_json_path = npm_package_json_path(&npm_global, &package_name);
+    let pkg_json_path = node_package_json_path(&npm_global.join("node_modules"), &package_name);
     read_package_json_field(&pkg_json_path, "description")
 }
 
@@ -354,7 +873,7 @@ fn resolve_npm_package_name(path: &Path) -> Option<String> {
     };
 
     let id = tool_id_from_path(path);
-    let pkg_json_path = npm_package_json_path(&npm_global, &id);
+    let pkg_json_path = node_package_json_path(&npm_global.join("node_modules"), &id);
     if pkg_json_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&pkg_json_path) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -385,13 +904,6 @@ fn npm_global_root(path: &Path) -> Option<PathBuf> {
         .map(|pos| PathBuf::from(s[..pos + 5].to_string()))
 }
 
-fn npm_package_json_path(npm_global: &Path, package_name: &str) -> PathBuf {
-    package_name
-        .split('/')
-        .fold(npm_global.join("node_modules"), |acc, part| acc.join(part))
-        .join("package.json")
-}
-
 fn read_package_json_field(path: &Path, field: &str) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
     let json = serde_json::from_str::<serde_json::Value>(&content).ok()?;
@@ -402,20 +914,22 @@ fn detect_npm_version(path: &Path) -> Option<String> {
     let npm_global = npm_global_root(path)?;
     let package_name = resolve_npm_package_name(path)?;
     read_package_json_field(
-        &npm_package_json_path(&npm_global, &package_name),
+        &node_package_json_path(&npm_global.join("node_modules"), &package_name),
         "version",
     )
 }
 
 fn detect_brew_version(path: &Path) -> Option<String> {
     let formula = brew_formula_name_from_path(path)?;
-    let output = run_brew(&["list", "--versions", &formula])?;
+    let brew = find_brew_command()?;
+    let output = brew_stdout(&brew, &["list", "--versions", &formula])?;
     parse_brew_list_versions_output(&output)
 }
 
 fn resolve_brew_description(path: &Path) -> Option<String> {
     let formula = brew_formula_name_from_path(path)?;
-    let output = run_brew(&["desc", "--formula", &formula])?;
+    let brew = find_brew_command()?;
+    let output = brew_stdout(&brew, &["desc", "--formula", &formula])?;
     parse_brew_desc_output(&output)
 }
 
@@ -468,13 +982,6 @@ fn pnpm_package_json_path(path: &Path) -> Option<PathBuf> {
     }
 
     None
-}
-
-fn node_package_json_path(node_modules_root: &Path, package_name: &str) -> PathBuf {
-    package_name
-        .split('/')
-        .fold(node_modules_root.to_path_buf(), |acc, part| acc.join(part))
-        .join("package.json")
 }
 
 fn extract_pnpm_package_from_shim(path: &Path) -> Option<String> {
@@ -565,8 +1072,8 @@ fn read_npm_shim_content(path: &Path) -> Option<String> {
 
 #[cfg(windows)]
 fn extract_npm_package_from_shim(content: &str) -> Option<String> {
-    let re = Regex::new(r#"node_modules[/\\](@[^/\\]+[/\\][^/\\]+|[^/\\]+)[/\\]"#).ok()?;
-    re.captures(content)
+    PNPM_SHIM_PACKAGE_RE
+        .captures(content)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().replace('\\', "/"))
 }
@@ -734,9 +1241,13 @@ fn detect_pip_version(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::fs;
 
     fn write_executable(path: &Path, content: &[u8]) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
         fs::write(path, content).unwrap();
         #[cfg(unix)]
         {
@@ -789,6 +1300,328 @@ mod tests {
         );
         assert_eq!(parse_brew_desc_output("ripgrep:"), None);
         assert_eq!(parse_brew_desc_output(""), None);
+    }
+
+    #[test]
+    fn npm_list_output_discovers_top_level_packages_and_bins() {
+        let dir = tempfile::tempdir().unwrap();
+        let node_modules = dir.path().join("node_modules");
+        let bin = dir.path().join("bin");
+        let typescript = node_modules.join("typescript");
+        let scoped = node_modules.join("@scope").join("pkg");
+        fs::create_dir_all(&typescript).unwrap();
+        fs::create_dir_all(&scoped).unwrap();
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(
+            typescript.join("package.json"),
+            r#"{"name":"typescript","version":"5.4.0","description":"TypeScript","bin":{"tsc":"./bin/tsc","tsserver":"./bin/tsserver"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            scoped.join("package.json"),
+            r#"{"name":"@scope/pkg","version":"1.0.0","description":"Scoped CLI","bin":"./cli.js"}"#,
+        )
+        .unwrap();
+
+        let tools = npm_tools_from_list_output(
+            &node_modules,
+            &bin,
+            r#"{"dependencies":{"typescript":{"version":"5.4.0"},"@scope/pkg":{"version":"1.0.0"}}}"#,
+        );
+
+        assert_eq!(tools.len(), 3);
+        assert!(tools.iter().any(|tool| {
+            tool.id == "tsc"
+                && tool.manager == PackageManager::Npm
+                && tool.package_name.as_deref() == Some("typescript")
+                && tool.current_version.as_deref() == Some("5.4.0")
+                && tool.description.as_deref() == Some("TypeScript")
+                && tool.detected_path == shim_path(&bin, "tsc").to_string_lossy().as_ref()
+        }));
+        assert!(tools.iter().any(|tool| {
+            tool.id == "pkg"
+                && tool.package_name.as_deref() == Some("@scope/pkg")
+                && tool.current_version.as_deref() == Some("1.0.0")
+                && tool.description.as_deref() == Some("Scoped CLI")
+                && tool.detected_path == shim_path(&bin, "pkg").to_string_lossy().as_ref()
+        }));
+    }
+
+    #[test]
+    fn npm_list_output_returns_empty_for_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let tools = npm_tools_from_list_output(dir.path(), dir.path(), "{not-json");
+
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn pnpm_list_output_uses_array_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let node_modules = dir.path().join("node_modules");
+        let bin = dir.path().join("bin");
+        let package = node_modules.join("@mermaid-js").join("mermaid-cli");
+        fs::create_dir_all(&package).unwrap();
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(
+            package.join("package.json"),
+            r#"{"name":"@mermaid-js/mermaid-cli","version":"11.0.0","description":"Mermaid CLI","bin":{"mmdc":"./src/cli.js"}}"#,
+        )
+        .unwrap();
+
+        let tools = pnpm_tools_from_list_output(
+            &node_modules,
+            &bin,
+            r#"[{"name":"global","version":"0.0.0","dependencies":{"@mermaid-js/mermaid-cli":{"version":"11.0.0"}}}]"#,
+        );
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].id, "mmdc");
+        assert_eq!(tools[0].manager, PackageManager::Pnpm);
+        assert_eq!(
+            tools[0].package_name.as_deref(),
+            Some("@mermaid-js/mermaid-cli")
+        );
+        assert_eq!(tools[0].current_version.as_deref(), Some("11.0.0"));
+        assert_eq!(tools[0].description.as_deref(), Some("Mermaid CLI"));
+    }
+
+    #[test]
+    fn pnpm_list_output_returns_empty_without_dependencies() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert!(pnpm_tools_from_list_output(dir.path(), dir.path(), "[]").is_empty());
+        assert!(
+            pnpm_tools_from_list_output(dir.path(), dir.path(), r#"[{"name":"global"}]"#)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn pip_outputs_discover_scripts_from_windows_and_unix_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir.path().join("Python311").join("Scripts");
+        let bin = dir.path().join("venv").join("bin");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(scripts.join("bdc.exe"), b"").unwrap();
+        fs::write(bin.join("uv"), b"").unwrap();
+
+        let mut shows = HashMap::new();
+        shows.insert(
+            "bruce-doc-converter".to_string(),
+            "Name: bruce-doc-converter\nVersion: 0.1.2\nSummary: Converter\nLocation: C:\\Python311\\Lib\\site-packages\nFiles:\n  ..\\..\\Scripts\\bdc.exe\n".to_string(),
+        );
+        shows.insert(
+            "uv".to_string(),
+            "Name: uv\nVersion: 0.5.0\nSummary: Python package manager\nLocation: /tmp/venv/lib/python3.11/site-packages\nFiles:\n  ../../../bin/uv\n".to_string(),
+        );
+
+        let versions: HashMap<String, Option<String>> = [
+            ("bruce-doc-converter".to_string(), Some("0.1.2".to_string())),
+            ("uv".to_string(), Some("0.5.0".to_string())),
+        ]
+        .into_iter()
+        .collect();
+        let tools = pip_tools_from_command_outputs(
+            &versions,
+            &shows,
+            &[scripts.clone(), bin.clone()],
+        );
+
+        assert_eq!(tools.len(), 2);
+        assert!(tools.iter().any(|tool| {
+            tool.id == "bdc"
+                && tool.package_name.as_deref() == Some("bruce-doc-converter")
+                && tool.current_version.as_deref() == Some("0.1.2")
+                && tool.description.as_deref() == Some("Converter")
+                && tool.detected_path == scripts.join("bdc.exe").to_string_lossy().as_ref()
+        }));
+        assert!(tools.iter().any(|tool| {
+            tool.id == "uv"
+                && tool.package_name.as_deref() == Some("uv")
+                && tool.current_version.as_deref() == Some("0.5.0")
+                && tool.description.as_deref() == Some("Python package manager")
+                && tool.detected_path == bin.join("uv").to_string_lossy().as_ref()
+        }));
+    }
+
+    #[test]
+    fn pip_output_without_files_section_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut shows = HashMap::new();
+        shows.insert(
+            "no-cli".to_string(),
+            "Name: no-cli\nVersion: 1.0.0\nSummary: Library only\nLocation: /tmp/site-packages\n"
+                .to_string(),
+        );
+
+        let versions: HashMap<String, Option<String>> =
+            [("no-cli".to_string(), Some("1.0.0".to_string()))]
+                .into_iter()
+                .collect();
+        let tools = pip_tools_from_command_outputs(
+            &versions,
+            &shows,
+            &[dir.path().to_path_buf()],
+        );
+
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn brew_request_formulae_prefers_installed_on_request() {
+        let calls = std::cell::RefCell::new(Vec::new());
+
+        let formulae = brew_installed_on_request_formulae_with(|args| {
+            calls
+                .borrow_mut()
+                .push(args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>());
+            if args == ["list", "--formula", "--installed-on-request"] {
+                Some("ripgrep\npandoc\n".to_string())
+            } else {
+                panic!("brew leaves should not be called when installed-on-request succeeds");
+            }
+        });
+
+        assert_eq!(
+            formulae,
+            Some(
+                ["ripgrep".to_string(), "pandoc".to_string()]
+                    .into_iter()
+                    .collect()
+            )
+        );
+        assert_eq!(
+            calls.into_inner(),
+            vec![vec![
+                "list".to_string(),
+                "--formula".to_string(),
+                "--installed-on-request".to_string()
+            ]]
+        );
+    }
+
+    #[test]
+    fn brew_request_formulae_falls_back_to_leaves() {
+        let calls = std::cell::RefCell::new(Vec::new());
+
+        let formulae = brew_installed_on_request_formulae_with(|args| {
+            calls
+                .borrow_mut()
+                .push(args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>());
+            if args == ["list", "--formula", "--installed-on-request"] {
+                None
+            } else if args == ["leaves"] {
+                Some("node\n".to_string())
+            } else {
+                None
+            }
+        });
+
+        assert_eq!(formulae, Some(["node".to_string()].into_iter().collect()));
+        assert_eq!(calls.into_inner().len(), 2);
+    }
+
+    #[test]
+    fn brew_tools_are_discovered_from_formula_file_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let homebrew = dir.path().join("opt").join("homebrew");
+        let rg = homebrew
+            .join("Cellar")
+            .join("ripgrep")
+            .join("14.1.1")
+            .join("bin")
+            .join(if cfg!(windows) { "rg.cmd" } else { "rg" });
+        let fd = homebrew
+            .join("Cellar")
+            .join("fd")
+            .join("10.0.0")
+            .join("bin")
+            .join(if cfg!(windows) { "fd.cmd" } else { "fd" });
+        let dependency = homebrew
+            .join("Cellar")
+            .join("openssl@3")
+            .join("3.5.4")
+            .join("bin")
+            .join(if cfg!(windows) {
+                "openssl.cmd"
+            } else {
+                "openssl"
+            });
+        write_executable(&rg, b"#!/bin/sh\n");
+        write_executable(&fd, b"#!/bin/sh\n");
+        write_executable(&dependency, b"#!/bin/sh\n");
+        let formulae = ["ripgrep".to_string(), "fd".to_string()]
+            .into_iter()
+            .collect::<HashSet<_>>();
+
+        let tools = brew_tools_from_formulae_with(&formulae, |args| match args {
+            ["list", "--formula", "ripgrep"] => Some(format!(
+                "{}\n{}/README.md\n",
+                rg.to_string_lossy(),
+                rg.parent().unwrap().parent().unwrap().to_string_lossy()
+            )),
+            ["list", "--formula", "fd"] => Some(fd.to_string_lossy().to_string()),
+            ["list", "--versions", "ripgrep"] => Some("ripgrep 14.1.1\n".to_string()),
+            ["list", "--versions", "fd"] => Some("fd 10.0.0\n".to_string()),
+            ["desc", "--formula", "ripgrep"] => Some("ripgrep: Search tool\n".to_string()),
+            ["desc", "--formula", "fd"] => Some("fd: Find entries\n".to_string()),
+            _ => None,
+        });
+
+        let ids = tools
+            .iter()
+            .map(|tool| tool.id.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(ids, ["rg", "fd"].into_iter().collect());
+        assert!(!tools
+            .iter()
+            .any(|tool| tool.detected_path == dependency.to_string_lossy().as_ref()));
+        assert!(tools.iter().any(|tool| {
+            tool.id == "rg"
+                && tool.manager == PackageManager::Brew
+                && tool.package_name.as_deref() == Some("ripgrep")
+                && tool.current_version.as_deref() == Some("14.1.1")
+                && tool.description.as_deref() == Some("Search tool")
+                && tool.detected_path == rg.to_string_lossy().as_ref()
+        }));
+    }
+
+    #[test]
+    fn brew_tools_fall_back_to_prefix_bin_when_file_list_has_no_executables() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir
+            .path()
+            .join("opt")
+            .join("homebrew")
+            .join("Cellar")
+            .join("pandoc")
+            .join("3.7.0.2");
+        let pandoc = prefix.join("bin").join(if cfg!(windows) {
+            "pandoc.cmd"
+        } else {
+            "pandoc"
+        });
+        write_executable(&pandoc, b"#!/bin/sh\n");
+        let formulae = ["pandoc".to_string()].into_iter().collect::<HashSet<_>>();
+
+        let tools = brew_tools_from_formulae_with(&formulae, |args| match args {
+            ["list", "--formula", "pandoc"] => Some(format!(
+                "{}/INSTALL_RECEIPT.json\n",
+                prefix.to_string_lossy()
+            )),
+            ["--prefix", "pandoc"] => Some(prefix.to_string_lossy().to_string()),
+            ["list", "--versions", "pandoc"] => Some("pandoc 3.7.0.2\n".to_string()),
+            ["desc", "--formula", "pandoc"] => Some("pandoc: Markup converter\n".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].id, "pandoc");
+        assert_eq!(tools[0].detected_path, pandoc.to_string_lossy().as_ref());
+        assert_eq!(tools[0].package_name.as_deref(), Some("pandoc"));
     }
 
     #[test]
@@ -933,7 +1766,14 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&target, &link).unwrap();
         #[cfg(windows)]
-        std::os::windows::fs::symlink_file(&target, &link).unwrap();
+        {
+            if let Err(err) = std::os::windows::fs::symlink_file(&target, &link) {
+                if err.raw_os_error() == Some(1314) {
+                    return;
+                }
+                panic!("failed to create symlink: {err}");
+            }
+        }
 
         assert_eq!(
             brew_formula_name_from_path(&link),

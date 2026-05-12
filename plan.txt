@@ -1,0 +1,193 @@
+# 过滤非顶层依赖包 & 修复元数据获取
+
+## Context
+
+当前 `discover_local_cli_tools()` 通过扫描 `~/.local/bin/` 等目录发现 pip 工具，但 pip 把所有依赖的脚本都装到同一个目录，导致大量非用户安装的依赖被扫出。npm 的 `npm_global_root()` 用字符串匹配 `/npm/` 来定位路径，对 `~/.npm-global/bin/`、Homebrew 安装路径等全部失败，导致 version/package_name/description 为 None，卸载报错。
+
+## 策略：全部用包管理器命令驱动
+
+| 包管理器 | 命令 | 二进制路径来源 |
+|---------|------|-------------|
+| npm | `npm ls -g --depth=0 --json` | 全局 bin 目录下的 shim（Windows: `.cmd`，Unix: symlink） |
+| pnpm | `pnpm ls -g --depth=0 --json` | 全局 bin 目录下的 shim |
+| pip | `pip list --format=json` + `pip show -f` | 按平台查找 Scripts/bin 目录 |
+| brew | `brew list --formula --installed-on-request`，失败时降级到 `brew leaves` | 文件系统 `/opt/homebrew/bin` + `/Cellar/` 路径匹配 |
+
+统一思路：**命令定"有哪些包"，包元数据找"二进制在哪"**。
+
+## 修改文件
+
+- `src-tauri/src/services/local_cli_scanner.rs`
+
+---
+
+## 修改 1：`discover_npm_tools()` — npm 命令驱动
+
+npm ls 输出格式（对象）：
+```json
+{ "dependencies": { "typescript": { "version": "5.4.0" }, "@scope/pkg": { "version": "1.0.0" } } }
+```
+
+```rust
+fn discover_npm_tools() -> Vec<LocalCliTool> {
+    // 1. npm root -g (OnceLock 缓存) -> node_modules 路径，上一级为全局 bin 目录
+    // 2. npm ls -g --depth=0 --json -> { "dependencies": { name: { "version": "x.y.z" } } }
+    // 3. 对每个包读取 node_modules/<name>/package.json 的 bin 字段：
+    //    - bin 为 string  -> 二进制名 = 包名末段（去掉 scope）
+    //    - bin 为 object  -> 每个 key 是一个二进制名
+    //    - version / description 同时从 package.json 读取
+    // 4. detected_path = <全局 bin 目录>/<二进制名>（Windows 加 .cmd 后缀）
+    //    （不使用 node_modules 内部路径，避免 detect_manager_from_path 失效）
+    // 5. 命令不存在或 JSON 解析失败 -> 返回空 Vec，不 panic
+}
+```
+
+**注意**：全局 bin 目录 = `npm root -g` 的上一级目录（即 `node_modules` 的父目录）。
+
+---
+
+## 修改 2：`discover_pnpm_tools()` — pnpm 命令驱动
+
+pnpm ls 输出格式与 npm **不同**，是**数组**：
+```json
+[{ "name": "...", "version": "...", "dependencies": { "pkg": { "version": "1.0.0" } } }]
+```
+
+```rust
+fn discover_pnpm_tools() -> Vec<LocalCliTool> {
+    // 1. pnpm root -g (OnceLock 缓存) -> node_modules 路径，上一级为全局 bin 目录
+    // 2. pnpm ls -g --depth=0 --json -> 数组，取 [0].dependencies
+    // 3. 对每个包读取 node_modules/<name>/package.json 的 bin 字段（同 npm 逻辑）
+    // 4. detected_path = <全局 bin 目录>/<二进制名>（Windows 加 .cmd 后缀）
+    // 5. 命令不存在或 JSON 解析失败 -> 返回空 Vec
+}
+```
+
+**注意**：pnpm ls 返回数组而非对象，需单独解析，不能复用 npm 的解析逻辑。
+
+---
+
+## 修改 3：`discover_pip_tools()` — pip 命令驱动
+
+```rust
+fn discover_pip_tools() -> Vec<LocalCliTool> {
+    // 1. pip list --format=json -> [{name, version}, ...]
+    // 2. 确定脚本搜索根目录（按平台）：
+    //    - Windows: pip show <任意包> 取 Location，向上两级找 Scripts/
+    //              或 %APPDATA%\Python\PythonXXX\Scripts
+    //    - macOS/Linux: ~/.local/bin，或 Location 上级的 bin/
+    // 3. 对每个包: pip show -f <name> 获取 Files 列表 + Location + Summary
+    //    从 Files 中提取相对路径包含 /bin/ 或 /Scripts/ 的条目
+    //    拼接 <scripts_root>/<文件名> 得到 detected_path（验证文件存在）
+    // 4. version 直接来自 pip list 结果，description 来自 Summary 字段
+    // 5. pip show -f 每次调用耗时，包数量大时可考虑 rayon 并行
+}
+```
+
+**注意**：当前 `pip_metadata_roots_for_script` 已处理 Windows `Scripts/` 和 macOS `lib/pythonX.Y/site-packages` 两种路径，新实现需覆盖同样的平台差异，不能只写 `~/.local/bin`。
+
+---
+
+## 修改 4：brew 过滤策略调整
+
+**当前代码**（[local_cli_scanner.rs:123](src-tauri/src/services/local_cli_scanner.rs#L123)）直接调用：
+```rust
+Command::new("brew").args(["list", "--formula", "--installed-on-request"])
+```
+没有任何辅助函数，没有兜底逻辑。
+
+**改动**：保持 `--installed-on-request` 为首选（语义更准确：用户主动安装的包），失败时降级到 `brew leaves`：
+
+```rust
+fn brew_installed_on_request_formulae() -> Option<HashSet<String>> {
+    // 首选 --installed-on-request（older Homebrew 可能不支持）
+    let brew = find_brew_command()?;
+    let output = Command::new(&brew)
+        .args(["list", "--formula", "--installed-on-request"])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        return parse_brew_list_output(&output.stdout);
+    }
+    // 降级到 brew leaves
+    let output = Command::new(&brew).args(["leaves"]).output().ok()?;
+    if output.status.success() {
+        return parse_brew_list_output(&output.stdout);
+    }
+    None
+}
+```
+
+`filter_brew_executables_to_installed_on_request` 函数名和逻辑**不变**。
+
+**语义说明**：`brew leaves`（无依赖的叶子节点）≠ `--installed-on-request`（用户主动安装）。若用户同时显式安装了某依赖包，`brew leaves` 会漏掉它，故保持 `--installed-on-request` 为主。
+
+---
+
+## 修改 5：重构 `discover_local_cli_tools()`
+
+```rust
+pub fn discover_local_cli_tools() -> Vec<LocalCliTool> {
+    let mut tools = Vec::new();
+
+    tools.extend(discover_npm_tools());     // npm ls -g --depth=0 --json
+    tools.extend(discover_pnpm_tools());    // pnpm ls -g --depth=0 --json
+    tools.extend(discover_pip_tools());     // pip list --format=json + pip show -f
+    tools.extend(discover_brew_tools());    // --installed-on-request + 文件系统找二进制
+
+    // scoop/choco: 文件系统扫描（保持不变）
+    tools
+}
+```
+
+`scan_path_for_executables()` 不再统一调用。brew 仍需文件系统扫描，但用 `brew_installed_on_request_formulae` 过滤。
+
+---
+
+## 修改 6：清理旧代码
+
+| 函数 | 处理方式 | 原因 |
+|------|---------|------|
+| `npm_global_root()` | **删除** | 改用 `npm root -g` 命令，字符串匹配方式不可靠 |
+| `resolve_npm_package_name()` / `detect_npm_version()` | **删除** | discover_npm_tools 直接从 package.json 读取，不再需要 |
+| `brew_installed_on_request_formulae()` | **保留并修改**（见修改 4） | 改为带降级的实现 |
+| `filter_brew_executables_to_installed_on_request()` | **保留，名称不变** | 逻辑正确，无需修改 |
+| pnpm 文件系统扫描函数（`pnpm_package_json_path` 等） | **删除** | discover_pnpm_tools 改为命令驱动后不再调用 |
+
+---
+
+## 新增测试
+
+除现有测试外，需新增：
+
+1. **npm JSON 解析**
+   - 正常输出（含 scoped 包 `@scope/pkg`）
+   - bin 字段为 string vs object
+   - JSON 格式错误时返回空 Vec
+
+2. **pnpm JSON 解析**
+   - 数组格式（与 npm 对象格式区分）
+   - 空数组 / `[0].dependencies` 不存在时返回空 Vec
+
+3. **pip 跨平台路径**
+   - Windows：从 `Scripts/` 目录找脚本
+   - Unix：从 `bin/` 目录找脚本
+   - `pip show -f` 无 `Files:` 段时跳过该包
+
+4. **brew 降级逻辑**
+   - `--installed-on-request` 成功时不调用 `brew leaves`
+   - `--installed-on-request` 失败时正确降级
+
+---
+
+## 验证
+
+1. `cargo test` — 现有测试 + 新增测试全部通过
+2. `cargo check` — 编译通过（无 unused function 警告）
+3. 构建后手动检查：
+   - npm 列表与 `npm ls -g --depth=0 --json` 输出一致
+   - pnpm 列表与 `pnpm ls -g --depth=0 --json` 输出一致
+   - pip 列表来自 `pip list`，不包含依赖脚本
+   - brew 列表来自 `--installed-on-request`（或 `brew leaves` 降级）
+   - 所有包的 version、package_name、description 均有值
+   - 卸载功能正常
