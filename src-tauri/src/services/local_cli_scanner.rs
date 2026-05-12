@@ -177,8 +177,16 @@ fn parse_brew_formula_executable_paths(stdout: &str) -> Vec<PathBuf> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .map(PathBuf::from)
-        .filter(|path| is_executable(path))
+        .filter(|path| is_executable(path) && is_likely_cli_binary(path))
         .collect()
+}
+
+fn is_likely_cli_binary(path: &Path) -> bool {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    normalized.contains("/bin/")
+        || normalized.contains("/sbin/")
+        || normalized.contains("/libexec/")
+        || normalized.contains("/ubin/")
 }
 
 fn brew_executable_paths_for_formula_with<F>(formula: &str, run: &mut F) -> Vec<PathBuf>
@@ -342,15 +350,10 @@ struct NodePackageJson {
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
+#[allow(dead_code)]
 enum NodeBinField {
     String(String),
     Object(HashMap<String, serde_json::Value>),
-}
-
-#[derive(Debug, Deserialize)]
-struct PipListPackage {
-    name: String,
-    version: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -361,11 +364,35 @@ struct PipShowOutput {
 }
 
 fn run_command_stdout(command: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(command).args(args).output().ok()?;
+    let output = spawn_command(command, args).ok()?;
     if !output.status.success() {
         return None;
     }
     String::from_utf8(output.stdout).ok()
+}
+
+
+fn spawn_command(command: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
+    // On Windows, .cmd/.bat scripts cannot be executed directly via CreateProcess — they require
+    // cmd.exe. Resolve the command via `which` (which respects PATHEXT) so npm.cmd, pnpm.cmd, etc.
+    // are detected and wrapped appropriately.
+    #[cfg(windows)]
+    if let Ok(resolved) = which::which(command) {
+        let ext = resolved
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if ext == "cmd" || ext == "bat" {
+            return Command::new("cmd")
+                .arg("/c")
+                .arg(&resolved)
+                .args(args)
+                .output();
+        }
+        return Command::new(resolved).args(args).output();
+    }
+    Command::new(command).args(args).output()
 }
 
 fn command_global_node_modules(command: &str) -> Option<PathBuf> {
@@ -589,75 +616,6 @@ fn common_pip_script_roots(home: Option<PathBuf>) -> Vec<PathBuf> {
     roots
 }
 
-fn pip_script_file_name(file: &str) -> Option<String> {
-    let normalized = file.replace('\\', "/");
-    let lower = normalized.to_lowercase();
-    if !lower.contains("/bin/") && !lower.contains("/scripts/") {
-        return None;
-    }
-
-    normalized
-        .rsplit('/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn find_pip_script(script_roots: &[PathBuf], file_name: &str) -> Option<PathBuf> {
-    script_roots
-        .iter()
-        .map(|root| root.join(file_name))
-        .find(|path| path.exists())
-}
-
-fn pip_tools_from_command_outputs(
-    versions: &HashMap<String, Option<String>>,
-    show_outputs: &HashMap<String, String>,
-    script_roots: &[PathBuf],
-) -> Vec<LocalCliTool> {
-    let mut tools = Vec::new();
-    let mut seen_paths = HashSet::new();
-
-    for (package_name, version) in versions.iter() {
-        let Some(show_output) = show_outputs.get(package_name.as_str()) else {
-            continue;
-        };
-        let show = parse_pip_show_output(show_output);
-        if show.files.is_empty() {
-            continue;
-        }
-
-        let mut roots = script_roots.to_vec();
-        if let Some(location) = show.location.as_ref() {
-            roots.extend(pip_script_roots_from_location(location));
-        }
-
-        for file in show.files {
-            let Some(file_name) = pip_script_file_name(&file) else {
-                continue;
-            };
-            let Some(path) = find_pip_script(&roots, &file_name) else {
-                continue;
-            };
-            if !seen_paths.insert(path.clone()) {
-                continue;
-            }
-
-            let mut tool = LocalCliTool::new(
-                &tool_id_from_path(&path),
-                &path.to_string_lossy(),
-                PackageManager::Pip,
-            );
-            tool.current_version = version.clone();
-            tool.package_name = Some(package_name.clone());
-            tool.description = show.summary.clone();
-            tools.push(tool);
-        }
-    }
-
-    tools.sort_by(|a, b| a.id.cmp(&b.id));
-    tools
-}
 
 pub fn parse_version(output: &str) -> Option<String> {
     // Optional "v" prefix then semver triple — use a capture group to exclude the "v"
@@ -715,53 +673,197 @@ fn discover_pnpm_tools() -> Vec<LocalCliTool> {
     pnpm_tools_from_list_output(&node_modules_root, &bin_dir, &output)
 }
 
-fn discover_pip_tools() -> Vec<LocalCliTool> {
-    let Some(list_output) = run_command_stdout("pip", &["list", "--format=json"]) else {
-        return vec![];
-    };
-    let Ok(packages) = serde_json::from_str::<Vec<PipListPackage>>(&list_output) else {
-        eprintln!("local_cli_scanner: failed to parse `pip list` output");
-        return vec![];
-    };
+fn find_pip_site_packages() -> Vec<PathBuf> {
+    let mut results: Vec<PathBuf> = Vec::new();
 
-    if packages.is_empty() {
-        return vec![];
-    }
-
-    let versions: HashMap<String, Option<String>> = packages
-        .iter()
-        .map(|p| (p.name.clone(), p.version.clone()))
-        .collect();
-
-    // Batch all packages into one pip show call to avoid N+1 subprocess overhead.
-    let names: Vec<&str> = packages.iter().map(|p| p.name.as_str()).collect();
-    let mut show_args = vec!["show", "-f"];
-    show_args.extend(names);
-
-    let Some(combined_show) = run_command_stdout("pip", &show_args) else {
-        return vec![];
-    };
-
-    // pip separates blocks with "\n---\n"; normalize line endings first.
-    let normalized = combined_show.replace("\r\n", "\n");
-    let mut show_outputs = HashMap::new();
-    let mut script_roots = common_pip_script_roots(dirs::home_dir());
-
-    for block in normalized.split("\n---\n") {
-        let name = block
-            .lines()
-            .find_map(|line| line.strip_prefix("Name:").map(|s| s.trim().to_string()));
-        if let Some(name) = name {
-            let show = parse_pip_show_output(block);
-            if let Some(location) = show.location.as_ref() {
-                script_roots.extend(pip_script_roots_from_location(location));
+    // Primary: ask pip where it installed itself (works when pip is on PATH).
+    if let Some(stdout) = run_command_stdout("pip", &["show", "pip"]) {
+        let show = parse_pip_show_output(&stdout);
+        if let Some(location) = show.location {
+            if location.is_dir() && !results.contains(&location) {
+                results.push(location);
             }
-            show_outputs.insert(name, block.to_string());
         }
     }
 
-    dedupe_paths(&mut script_roots);
-    pip_tools_from_command_outputs(&versions, &show_outputs, &script_roots)
+    // Fallback: scan known filesystem paths, handles GUI apps that don't inherit user PATH.
+    fallback_pip_site_packages(&mut results);
+    results
+}
+
+fn fallback_pip_site_packages(out: &mut Vec<PathBuf>) {
+    #[cfg(windows)]
+    {
+        // Python.org user installer: %LOCALAPPDATA%\Programs\Python\Python3XX\Lib\site-packages
+        if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+            collect_python_site_packages_under(
+                &local_appdata.join("Programs").join("Python"),
+                &["Lib", "site-packages"],
+                out,
+            );
+        }
+        // pip install --user packages: %APPDATA%\Python\Python3XX\site-packages
+        if let Some(appdata) = std::env::var_os("APPDATA").map(PathBuf::from) {
+            collect_python_site_packages_under(
+                &appdata.join("Python"),
+                &["site-packages"],
+                out,
+            );
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        if let Some(home) = dirs::home_dir() {
+            collect_python_site_packages_under(
+                &home.join(".local").join("lib"),
+                &["site-packages"],
+                out,
+            );
+        }
+        for prefix in &["/usr/local/lib", "/usr/lib"] {
+            collect_python_site_packages_under(&PathBuf::from(prefix), &["site-packages"], out);
+        }
+    }
+}
+
+fn collect_python_site_packages_under(parent: &Path, sub_path: &[&str], out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if name.starts_with("python") {
+            let mut path = entry.path();
+            for sub in sub_path {
+                path = path.join(sub);
+            }
+            if path.is_dir() && !out.contains(&path) {
+                out.push(path);
+            }
+        }
+    }
+}
+
+fn console_script_names(entry_points_content: &str) -> Vec<String> {
+    let mut in_console_scripts = false;
+    let mut names = Vec::new();
+    for line in entry_points_content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_console_scripts = trimmed == "[console_scripts]";
+            continue;
+        }
+        if in_console_scripts && !trimmed.is_empty() && !trimmed.starts_with('#') {
+            if let Some(name) = trimmed.split('=').next() {
+                let name = name.trim().to_string();
+                if !name.is_empty() {
+                    names.push(name);
+                }
+            }
+        }
+    }
+    names
+}
+
+fn find_script_in_roots(roots: &[PathBuf], script_name: &str) -> Option<PathBuf> {
+    for root in roots {
+        // On Windows, pip installs .exe launchers; .cmd shims may also exist.
+        #[cfg(windows)]
+        for candidate in &[
+            root.join(format!("{}.exe", script_name)),
+            root.join(format!("{}.cmd", script_name)),
+            root.join(script_name),
+        ] {
+            if candidate.exists() {
+                return Some(candidate.clone());
+            }
+        }
+
+        #[cfg(not(windows))]
+        {
+            let candidate = root.join(script_name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn pip_tools_from_dist_info(site_packages: &Path, script_roots: &[PathBuf]) -> Vec<LocalCliTool> {
+    let Ok(entries) = std::fs::read_dir(site_packages) else {
+        return vec![];
+    };
+
+    let mut tools = Vec::new();
+    let mut seen_paths: HashSet<PathBuf> = HashSet::new();
+
+    for entry in entries.flatten() {
+        let dist_info_path = entry.path();
+        let dir_name = entry.file_name().to_string_lossy().to_lowercase();
+        if !dir_name.ends_with(".dist-info") {
+            continue;
+        }
+
+        let Ok(entry_points_content) =
+            std::fs::read_to_string(dist_info_path.join("entry_points.txt"))
+        else {
+            continue;
+        };
+
+        let script_names = console_script_names(&entry_points_content);
+        if script_names.is_empty() {
+            continue;
+        }
+
+        let metadata_path = dist_info_path.join("METADATA");
+        let version = read_metadata_field(&metadata_path, "Version");
+        let package_name = read_metadata_field(&metadata_path, "Name")
+            .or_else(|| pip_dist_name_from_dir(&dist_info_path));
+        let summary = read_metadata_field(&metadata_path, "Summary");
+
+        for script_name in script_names {
+            let Some(path) = find_script_in_roots(script_roots, &script_name) else {
+                continue;
+            };
+            if !seen_paths.insert(path.clone()) {
+                continue;
+            }
+            let mut tool = LocalCliTool::new(
+                &tool_id_from_path(&path),
+                &path.to_string_lossy(),
+                PackageManager::Pip,
+            );
+            tool.current_version = version.clone();
+            tool.package_name = package_name.clone();
+            tool.description = summary.clone();
+            tools.push(tool);
+        }
+    }
+
+    tools.sort_by(|a, b| a.id.cmp(&b.id));
+    tools
+}
+
+fn discover_pip_tools() -> Vec<LocalCliTool> {
+    let mut all_tools: Vec<LocalCliTool> = Vec::new();
+    let mut seen_ids: HashSet<String> = HashSet::new();
+
+    for site_packages in find_pip_site_packages() {
+        let mut script_roots = pip_script_roots_from_location(&site_packages);
+        script_roots.extend(common_pip_script_roots(dirs::home_dir()));
+        dedupe_paths(&mut script_roots);
+
+        for tool in pip_tools_from_dist_info(&site_packages, &script_roots) {
+            if seen_ids.insert(tool.id.clone()) {
+                all_tools.push(tool);
+            }
+        }
+    }
+
+    all_tools.sort_by(|a, b| a.id.cmp(&b.id));
+    all_tools
 }
 
 fn discover_brew_tools() -> Vec<LocalCliTool> {
@@ -1241,7 +1343,6 @@ fn detect_pip_version(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use std::fs;
 
     fn write_executable(path: &Path, content: &[u8]) {
@@ -1399,75 +1500,118 @@ mod tests {
     }
 
     #[test]
-    fn pip_outputs_discover_scripts_from_windows_and_unix_roots() {
-        let dir = tempfile::tempdir().unwrap();
-        let scripts = dir.path().join("Python311").join("Scripts");
-        let bin = dir.path().join("venv").join("bin");
-        fs::create_dir_all(&scripts).unwrap();
-        fs::create_dir_all(&bin).unwrap();
-        fs::write(scripts.join("bdc.exe"), b"").unwrap();
-        fs::write(bin.join("uv"), b"").unwrap();
-
-        let mut shows = HashMap::new();
-        shows.insert(
-            "bruce-doc-converter".to_string(),
-            "Name: bruce-doc-converter\nVersion: 0.1.2\nSummary: Converter\nLocation: C:\\Python311\\Lib\\site-packages\nFiles:\n  ..\\..\\Scripts\\bdc.exe\n".to_string(),
-        );
-        shows.insert(
-            "uv".to_string(),
-            "Name: uv\nVersion: 0.5.0\nSummary: Python package manager\nLocation: /tmp/venv/lib/python3.11/site-packages\nFiles:\n  ../../../bin/uv\n".to_string(),
-        );
-
-        let versions: HashMap<String, Option<String>> = [
-            ("bruce-doc-converter".to_string(), Some("0.1.2".to_string())),
-            ("uv".to_string(), Some("0.5.0".to_string())),
-        ]
-        .into_iter()
-        .collect();
-        let tools = pip_tools_from_command_outputs(
-            &versions,
-            &shows,
-            &[scripts.clone(), bin.clone()],
-        );
-
-        assert_eq!(tools.len(), 2);
-        assert!(tools.iter().any(|tool| {
-            tool.id == "bdc"
-                && tool.package_name.as_deref() == Some("bruce-doc-converter")
-                && tool.current_version.as_deref() == Some("0.1.2")
-                && tool.description.as_deref() == Some("Converter")
-                && tool.detected_path == scripts.join("bdc.exe").to_string_lossy().as_ref()
-        }));
-        assert!(tools.iter().any(|tool| {
-            tool.id == "uv"
-                && tool.package_name.as_deref() == Some("uv")
-                && tool.current_version.as_deref() == Some("0.5.0")
-                && tool.description.as_deref() == Some("Python package manager")
-                && tool.detected_path == bin.join("uv").to_string_lossy().as_ref()
-        }));
+    fn console_script_names_parses_entry_points_txt() {
+        let content = "[console_scripts]\nbdc = bruce_doc_converter.cli:main\nmarkitdown = markitdown.__main__:main\n\n[other_section]\nsomething = else\n";
+        let names = console_script_names(content);
+        assert_eq!(names, vec!["bdc", "markitdown"]);
     }
 
     #[test]
-    fn pip_output_without_files_section_is_skipped() {
+    fn console_script_names_returns_empty_when_no_console_scripts_section() {
+        let content = "[gui_scripts]\napp = myapp:main\n";
+        assert!(console_script_names(content).is_empty());
+    }
+
+    #[test]
+    fn pip_tools_from_dist_info_discovers_console_scripts() {
         let dir = tempfile::tempdir().unwrap();
-        let mut shows = HashMap::new();
-        shows.insert(
-            "no-cli".to_string(),
-            "Name: no-cli\nVersion: 1.0.0\nSummary: Library only\nLocation: /tmp/site-packages\n"
-                .to_string(),
-        );
+        let site_packages = dir.path().join("site-packages");
+        let scripts = dir.path().join("Scripts");
+        let dist_info = site_packages.join("bruce_doc_converter-0.3.1.dist-info");
+        fs::create_dir_all(&dist_info).unwrap();
+        fs::create_dir_all(&scripts).unwrap();
+        fs::write(
+            dist_info.join("entry_points.txt"),
+            "[console_scripts]\nbdc = bruce_doc_converter.cli:main\n",
+        )
+        .unwrap();
+        fs::write(
+            dist_info.join("METADATA"),
+            "Name: bruce-doc-converter\nVersion: 0.3.1\nSummary: Document converter\n",
+        )
+        .unwrap();
 
-        let versions: HashMap<String, Option<String>> =
-            [("no-cli".to_string(), Some("1.0.0".to_string()))]
-                .into_iter()
-                .collect();
-        let tools = pip_tools_from_command_outputs(
-            &versions,
-            &shows,
-            &[dir.path().to_path_buf()],
-        );
+        #[cfg(windows)]
+        let script_path = {
+            fs::write(scripts.join("bdc.exe"), b"").unwrap();
+            scripts.join("bdc.exe")
+        };
+        #[cfg(not(windows))]
+        let script_path = {
+            write_executable(&scripts.join("bdc"), b"#!/bin/sh\n");
+            scripts.join("bdc")
+        };
 
+        let tools = pip_tools_from_dist_info(&site_packages, &[scripts]);
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].id, "bdc");
+        assert_eq!(
+            tools[0].package_name.as_deref(),
+            Some("bruce-doc-converter")
+        );
+        assert_eq!(tools[0].current_version.as_deref(), Some("0.3.1"));
+        assert_eq!(tools[0].description.as_deref(), Some("Document converter"));
+        assert_eq!(
+            tools[0].detected_path,
+            script_path.to_string_lossy().as_ref()
+        );
+    }
+
+    #[test]
+    fn pip_tools_from_dist_info_skips_packages_without_entry_points_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let site_packages = dir.path().join("site-packages");
+        let dist_info = site_packages.join("requests-2.28.0.dist-info");
+        fs::create_dir_all(&dist_info).unwrap();
+        fs::write(
+            dist_info.join("METADATA"),
+            "Name: requests\nVersion: 2.28.0\n",
+        )
+        .unwrap();
+
+        let tools = pip_tools_from_dist_info(&site_packages, &[]);
         assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn pip_tools_from_dist_info_skips_scripts_missing_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let site_packages = dir.path().join("site-packages");
+        let dist_info = site_packages.join("ghost_tool-1.0.0.dist-info");
+        fs::create_dir_all(&dist_info).unwrap();
+        fs::write(
+            dist_info.join("entry_points.txt"),
+            "[console_scripts]\nghost = ghost_tool:main\n",
+        )
+        .unwrap();
+        fs::write(
+            dist_info.join("METADATA"),
+            "Name: ghost-tool\nVersion: 1.0.0\n",
+        )
+        .unwrap();
+
+        let tools = pip_tools_from_dist_info(&site_packages, &[dir.path().to_path_buf()]);
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn collect_python_site_packages_under_finds_python_version_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let python_dir = dir.path().join("Python");
+        let py313_site = python_dir.join("Python313").join("Lib").join("site-packages");
+        let py314_site = python_dir.join("Python314").join("Lib").join("site-packages");
+        let other_dir = python_dir.join("other").join("Lib").join("site-packages");
+        fs::create_dir_all(&py313_site).unwrap();
+        fs::create_dir_all(&py314_site).unwrap();
+        fs::create_dir_all(&other_dir).unwrap();
+
+        let mut out = Vec::new();
+        collect_python_site_packages_under(&python_dir, &["Lib", "site-packages"], &mut out);
+
+        assert!(out.contains(&py313_site));
+        assert!(out.contains(&py314_site));
+        assert!(!out.contains(&other_dir));
     }
 
     #[test]
