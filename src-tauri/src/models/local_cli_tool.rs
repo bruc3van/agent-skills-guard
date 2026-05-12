@@ -99,6 +99,8 @@ pub struct LocalCliTool {
     pub update_log: Option<String>,
     pub package_name: Option<String>,
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bundled_tool_ids: Vec<String>,
 }
 
 impl LocalCliTool {
@@ -115,6 +117,7 @@ impl LocalCliTool {
             update_log: None,
             package_name: None,
             description: None,
+            bundled_tool_ids: Vec::new(),
         }
     }
 

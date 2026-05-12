@@ -563,6 +563,14 @@ function CliToolCard({
           {packageName && (
             <div className="text-xs text-muted-foreground font-mono truncate">{packageName}</div>
           )}
+          {tool.bundled_tool_ids && tool.bundled_tool_ids.length > 0 && (
+            <div
+              className="text-[11px] text-muted-foreground/60 mt-0.5"
+              title={tool.bundled_tool_ids.join(", ")}
+            >
+              +{tool.bundled_tool_ids.length} {t("localCli.card.bundledTools")}
+            </div>
+          )}
         </div>
 
         <div className="flex gap-2 shrink-0">

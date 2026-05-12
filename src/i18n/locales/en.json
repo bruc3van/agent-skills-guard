@@ -727,7 +727,8 @@
       "updateLog": "Update log",
       "noVersion": "Unknown",
       "lastChecked": "Checked",
-      "notChecked": "Never"
+      "notChecked": "Never",
+      "bundledTools": "bundled tools"
     },
     "busy": {
       "updating": "Updating {{name}}...",

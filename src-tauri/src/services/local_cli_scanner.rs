@@ -257,6 +257,7 @@ where
         let linked_names = linked_binaries.get(&formula);
 
         let mut seen_ids: HashSet<String> = HashSet::new();
+        let mut formula_tools: Vec<LocalCliTool> = Vec::new();
         for path in brew_executable_paths_for_formula_with(&formula, &mut run, linked_names) {
             let id = tool_id_from_path(&path);
             if !seen_ids.insert(id.clone()) {
@@ -266,12 +267,60 @@ where
             tool.package_name = Some(formula.clone());
             tool.current_version = version.clone();
             tool.description = description.clone();
-            tools.push(tool);
+            formula_tools.push(tool);
+        }
+
+        if formula_tools.is_empty() {
+            continue;
+        }
+
+        if formula_tools.len() == 1 {
+            tools.push(formula_tools.pop().unwrap());
+        } else {
+            tools.push(merge_formula_tools(formula, formula_tools));
         }
     }
 
     tools.sort_by(|a, b| a.id.cmp(&b.id));
     tools
+}
+
+/// Merge multiple tools from the same Homebrew formula into a single entry.
+/// The merged entry uses the formula name as id and collects all binary names
+/// into `bundled_tool_ids`. The detected_path points to the best representative
+/// binary (one matching the formula name, or the first one found).
+fn merge_formula_tools(formula: String, mut tools: Vec<LocalCliTool>) -> LocalCliTool {
+    let formula_base = formula.rsplit('/').next().unwrap_or(&formula);
+    let formula_base_lower = formula_base.to_lowercase();
+
+    // Pick the best representative binary for detected_path:
+    // 1. Exact match on formula base name (e.g. "ffmpeg" for formula "ffmpeg")
+    // 2. Formula base is a prefix of binary id (e.g. "python" for "python@3.13")
+    // 3. First tool alphabetically
+    let best_idx = tools
+        .iter()
+        .position(|t| t.id == formula_base_lower)
+        .or_else(|| tools.iter().position(|t| t.id.starts_with(&formula_base_lower)))
+        .unwrap_or(0);
+
+    // Collect all binary ids (excluding the representative if it's the only one)
+    let mut bundled: Vec<String> = tools
+        .iter()
+        .map(|t| t.id.clone())
+        .collect();
+
+    let representative = tools.swap_remove(best_idx);
+    // Remove the representative's id from bundled list
+    if let Some(pos) = bundled.iter().position(|id| id == &representative.id) {
+        bundled.remove(pos);
+    }
+
+    let mut merged = LocalCliTool::new(&formula, &representative.detected_path, PackageManager::Brew);
+    merged.package_name = Some(formula);
+    merged.current_version = representative.current_version;
+    merged.description = representative.description;
+    merged.bundled_tool_ids = bundled;
+    merged
 }
 
 fn filter_brew_executables_to_installed_on_request(
@@ -1858,6 +1907,76 @@ mod tests {
                 && tool.description.as_deref() == Some("Search tool")
                 && tool.detected_path == rg.to_string_lossy().as_ref()
         }));
+    }
+
+    #[test]
+    fn brew_tools_merge_multiple_binaries_from_same_formula() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().join("prefix");
+        let bin_dir = prefix.join("bin");
+        let cellar_bin = prefix
+            .join("Cellar")
+            .join("ffmpeg")
+            .join("8.1_1")
+            .join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::create_dir_all(&cellar_bin).unwrap();
+
+        let ffmpeg_bin = cellar_bin.join("ffmpeg");
+        let ffplay_bin = cellar_bin.join("ffplay");
+        let ffprobe_bin = cellar_bin.join("ffprobe");
+        write_executable(&ffmpeg_bin, b"#!/bin/sh\n");
+        write_executable(&ffplay_bin, b"#!/bin/sh\n");
+        write_executable(&ffprobe_bin, b"#!/bin/sh\n");
+
+        let ffmpeg_link = bin_dir.join("ffmpeg");
+        let ffplay_link = bin_dir.join("ffplay");
+        let ffprobe_link = bin_dir.join("ffprobe");
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&ffmpeg_bin, &ffmpeg_link).unwrap();
+            std::os::unix::fs::symlink(&ffplay_bin, &ffplay_link).unwrap();
+            std::os::unix::fs::symlink(&ffprobe_bin, &ffprobe_link).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            if std::os::windows::fs::symlink_file(&ffmpeg_bin, &ffmpeg_link).is_err() {
+                return;
+            }
+            let _ = std::os::windows::fs::symlink_file(&ffplay_bin, &ffplay_link);
+            let _ = std::os::windows::fs::symlink_file(&ffprobe_bin, &ffprobe_link);
+        }
+
+        let prefix_str = prefix.to_string_lossy().to_string();
+        let formulae = ["ffmpeg".to_string()].into_iter().collect::<HashSet<_>>();
+
+        let tools = brew_tools_from_formulae_with(&formulae, |args| match args {
+            ["--prefix"] => Some(prefix_str.clone()),
+            ["--prefix", "ffmpeg"] => {
+                Some(cellar_bin.parent().unwrap().to_string_lossy().to_string())
+            }
+            ["list", "--versions", "ffmpeg"] => Some("ffmpeg 8.1_1\n".to_string()),
+            ["desc", "--formula", "ffmpeg"] => {
+                Some("ffmpeg: Play, record, convert, and stream audio and video\n".to_string())
+            }
+            _ => None,
+        });
+
+        assert_eq!(tools.len(), 1);
+        let merged = &tools[0];
+        assert_eq!(merged.id, "ffmpeg");
+        assert_eq!(merged.manager, PackageManager::Brew);
+        assert_eq!(merged.package_name.as_deref(), Some("ffmpeg"));
+        assert_eq!(merged.current_version.as_deref(), Some("8.1_1"));
+        assert_eq!(
+            merged.description.as_deref(),
+            Some("Play, record, convert, and stream audio and video")
+        );
+        assert_eq!(merged.detected_path, ffmpeg_bin.to_string_lossy().as_ref());
+        assert_eq!(merged.bundled_tool_ids.len(), 2);
+        assert!(merged.bundled_tool_ids.contains(&"ffplay".to_string()));
+        assert!(merged.bundled_tool_ids.contains(&"ffprobe".to_string()));
     }
 
     #[test]

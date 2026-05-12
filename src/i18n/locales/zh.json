@@ -727,7 +727,8 @@
       "updateLog": "更新日志",
       "noVersion": "未知版本",
       "lastChecked": "上次检查",
-      "notChecked": "未检查"
+      "notChecked": "未检查",
+      "bundledTools": "个附带工具"
     },
     "busy": {
       "updating": "正在更新 {{name}}...",
