@@ -505,11 +505,9 @@ pub async fn update_local_cli_tool(
         .set_local_cli_tool_update_status(&tool_path, "updating", None)
         .map_err(|e| e.to_string())?;
 
+    let timeout = Duration::from_secs(update_timeout_secs(&tool.manager));
     let cli = build_cli_for_manager(bin, &tool.manager);
-    let command = ClaudeCommand {
-        args,
-        timeout: Duration::from_secs(120),
-    };
+    let command = ClaudeCommand { args, timeout };
 
     let detected_path_clone = detected_path.clone();
     let manager_str_clone = manager_str.clone();
@@ -518,7 +516,8 @@ pub async fn update_local_cli_tool(
     match tokio::task::spawn_blocking(move || cli.run(&[command])).await {
         Ok(Ok(result)) => {
             let raw_log = sanitize_terminal_log(&result.raw_log);
-            if result.exit_success {
+            let is_up_to_date = !result.exit_success && is_already_up_to_date(&raw_log);
+            if result.exit_success || is_up_to_date {
                 let log = non_empty_log_or_default(
                     raw_log,
                     format!("{} 更新命令执行完成，但没有返回可显示日志", display_id),
@@ -573,11 +572,30 @@ fn build_cli_for_manager(bin: String, manager: &PackageManager) -> ClaudeCli {
             cli = cli.env_remove_prefix("npm_config_");
         }
         PackageManager::Brew => {
-            cli = cli.env_var("HOMEBREW_NO_AUTO_UPDATE", "1");
+            cli = cli
+                .env_var("HOMEBREW_NO_AUTO_UPDATE", "1")
+                .env_var("HOMEBREW_NO_EMOJI", "1");
         }
         _ => {}
     }
     cli
+}
+
+fn is_already_up_to_date(output: &str) -> bool {
+    let text = output.to_lowercase();
+    text.contains("already installed")
+        || text.contains("up to date")
+        || text.contains("already up-to-date")
+        || text.contains("already satisfied")
+        || text.contains("is already the latest version")
+        || text.contains("is the latest version")
+}
+
+fn update_timeout_secs(manager: &PackageManager) -> u64 {
+    match manager {
+        PackageManager::Brew => 300,
+        _ => 120,
+    }
 }
 
 #[tauri::command]
@@ -606,11 +624,9 @@ pub async fn uninstall_local_cli_tool(
         .set_local_cli_tool_update_status(&tool_path, "uninstalling", None)
         .map_err(|e| e.to_string())?;
 
+    let timeout = Duration::from_secs(update_timeout_secs(&tool.manager));
     let cli = build_cli_for_manager(bin, &tool.manager);
-    let command = ClaudeCommand {
-        args,
-        timeout: Duration::from_secs(120),
-    };
+    let command = ClaudeCommand { args, timeout };
 
     match tokio::task::spawn_blocking(move || cli.run(&[command])).await {
         Ok(Ok(result)) => {
