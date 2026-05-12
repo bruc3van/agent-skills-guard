@@ -118,6 +118,10 @@ fn resolve_python_command(tool: &LocalCliTool) -> String {
         return path.to_string_lossy().to_string();
     }
 
+    if let Some(path) = find_python_from_script_shebang(detected_path) {
+        return path.to_string_lossy().to_string();
+    }
+
     if let Some(path) = find_python_next_to_scripts_dir(detected_path) {
         return path.to_string_lossy().to_string();
     }
@@ -137,6 +141,26 @@ fn find_sibling_command(detected_path: &Path, names: &[String]) -> Option<PathBu
         .iter()
         .map(|name| parent.join(name))
         .find(|candidate| candidate.is_file())
+}
+
+fn find_python_from_script_shebang(detected_path: &Path) -> Option<PathBuf> {
+    let script = std::fs::canonicalize(detected_path).ok()?;
+    let content = std::fs::read_to_string(script).ok()?;
+    let first_line = content.lines().next()?.trim();
+    let python_path = first_line.strip_prefix("#!")?.trim();
+    let python_path = python_path.split_whitespace().next()?;
+    if !looks_like_python_command(python_path) {
+        return None;
+    }
+    let path = PathBuf::from(python_path);
+    path.is_file().then_some(path)
+}
+
+fn looks_like_python_command(command: &str) -> bool {
+    Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("python"))
 }
 
 fn find_python_next_to_scripts_dir(detected_path: &Path) -> Option<PathBuf> {
@@ -770,6 +794,46 @@ mod tests {
             argv,
             vec!["-m", "pip", "uninstall", "-y", "bruce-doc-converter"]
         );
+    }
+
+    #[test]
+    fn build_pty_args_for_pip_uses_python_from_script_shebang() {
+        let dir = tempfile::tempdir().unwrap();
+        let venv_bin = dir
+            .path()
+            .join("pipx")
+            .join("venvs")
+            .join("markitdown")
+            .join("bin");
+        let user_bin = dir.path().join(".local").join("bin");
+        std::fs::create_dir_all(&venv_bin).unwrap();
+        std::fs::create_dir_all(&user_bin).unwrap();
+        let python = venv_bin.join("python");
+        let script_target = venv_bin.join("markitdown");
+        let detected_script = user_bin.join("markitdown");
+        std::fs::write(&python, b"").unwrap();
+        std::fs::write(
+            &script_target,
+            format!("#!{}\nimport sys\n", python.to_string_lossy()),
+        )
+        .unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&script_target, &detected_script).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&script_target, &detected_script).unwrap();
+
+        let mut tool = LocalCliTool::new(
+            "markitdown",
+            &detected_script.to_string_lossy(),
+            PackageManager::Pip,
+        );
+        tool.package_name = Some("markitdown".to_string());
+
+        let (bin, argv) = build_pty_uninstall_args(&tool).unwrap();
+
+        assert_eq!(bin, python.to_string_lossy());
+        assert_eq!(argv, vec!["-m", "pip", "uninstall", "-y", "markitdown"]);
     }
 
     #[test]
