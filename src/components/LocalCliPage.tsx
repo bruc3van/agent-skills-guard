@@ -103,7 +103,7 @@ export function LocalCliPage() {
     return () => {
       cancelled = true;
     };
-  }, [tools, isLoading, descriptionMap, refetch]);
+  }, [tools, isLoading, refetch]);
 
   const getToolDescription = (tool: LocalCliTool): string | undefined => {
     const raw = tool.description || descriptionMap[tool.id];
