@@ -252,7 +252,12 @@ fn read_until_exit_with_prompts(
                     break;
                 }
             }
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Disconnected) => {
+                if let Ok(Some(status)) = child.try_wait() {
+                    exit_success = status.success();
+                }
+                break;
+            }
         }
 
         if let Ok(Some(status)) = child.try_wait() {

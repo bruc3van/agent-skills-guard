@@ -1,7 +1,7 @@
 use crate::commands::AppState;
 use crate::models::{LocalCliTool, PackageManager};
 use crate::services::claude_cli::{ClaudeCli, ClaudeCommand};
-use crate::services::{discover_local_cli_tools, resolve_description_for_path, LocalCliUpdater};
+use crate::services::{discover_local_cli_tools, local_cli_updater::is_outdated, resolve_description_for_path, LocalCliUpdater};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -438,11 +438,15 @@ pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<Loca
         .collect();
 
     for tool in tools.iter_mut() {
-        if let Some((_, _, _, latest, update_avail, checked, status, log, _pkg, desc)) =
+        if let Some((_, _, _, latest, _update_avail, checked, status, log, _pkg, desc)) =
             cache_map.get(&tool.detected_path)
         {
-            tool.latest_version = latest.clone();
-            tool.update_available = *update_avail;
+            tool.latest_version =
+                latest.as_deref().map(|v| v.strip_prefix('v').unwrap_or(v).to_string());
+            tool.update_available = is_outdated(
+                tool.current_version.as_deref(),
+                tool.latest_version.as_deref(),
+            );
             tool.last_checked = checked.clone();
             tool.update_status = status.clone();
             tool.update_log = log.clone();
@@ -517,7 +521,8 @@ pub async fn update_local_cli_tool(
         Ok(Ok(result)) => {
             let raw_log = sanitize_terminal_log(&result.raw_log);
             let is_up_to_date = !result.exit_success && is_already_up_to_date(&raw_log);
-            if result.exit_success || is_up_to_date {
+            let install_ok = !result.exit_success && is_install_success(&raw_log);
+            if result.exit_success || is_up_to_date || install_ok {
                 let log = non_empty_log_or_default(
                     raw_log,
                     format!("{} 更新命令执行完成，但没有返回可显示日志", display_id),
@@ -589,6 +594,13 @@ fn is_already_up_to_date(output: &str) -> bool {
         || text.contains("already satisfied")
         || text.contains("is already the latest version")
         || text.contains("is the latest version")
+}
+
+fn is_install_success(output: &str) -> bool {
+    let text = output.to_lowercase();
+    (text.contains("added") || text.contains("changed") || text.contains("removed"))
+        && text.contains("package")
+        && text.contains("in ")
 }
 
 fn update_timeout_secs(manager: &PackageManager) -> u64 {
@@ -1023,5 +1035,17 @@ mod tests {
         let log = sanitize_terminal_log(raw);
 
         assert_eq!(log, "opencode\nopencode installed");
+    }
+
+    #[test]
+    fn install_success_patterns() {
+        assert!(is_install_success("changed 1 package in 585ms"));
+        assert!(is_install_success(
+            "added 2 packages, removed 24 packages, and changed 295 packages in 7s"
+        ));
+        assert!(is_install_success("removed 2 packages, and changed 28 packages in 1s"));
+        assert!(is_install_success("added 1 package in 2s"));
+        assert!(!is_install_success("npm ERR! code E404"));
+        assert!(!is_install_success("up to date"));
     }
 }

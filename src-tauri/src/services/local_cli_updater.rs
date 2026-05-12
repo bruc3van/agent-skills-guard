@@ -19,9 +19,13 @@ pub(crate) fn is_cache_fresh(last_checked: Option<&str>) -> bool {
 
 pub(crate) fn is_outdated(current: Option<&str>, latest: Option<&str>) -> bool {
     match (current, latest) {
-        (Some(c), Some(l)) => c != l,
+        (Some(c), Some(l)) => normalize_version(c) != normalize_version(l),
         _ => false,
     }
+}
+
+fn normalize_version(v: &str) -> &str {
+    v.strip_prefix('v').unwrap_or(v)
 }
 
 async fn http_get_json(url: &str) -> Result<serde_json::Value> {
@@ -116,6 +120,17 @@ impl LocalCliUpdater {
                     tool.current_version.as_deref(),
                     tool.latest_version.as_deref(),
                 );
+                let _ = self.db.upsert_local_cli_tool(
+                    &tool.id,
+                    &tool.detected_path,
+                    tool.manager.as_str(),
+                    tool.current_version.as_deref(),
+                    tool.latest_version.as_deref(),
+                    tool.update_available,
+                    tool.last_checked.as_deref(),
+                    tool.package_name.as_deref(),
+                    tool.description.as_deref(),
+                );
                 continue;
             }
 
@@ -135,6 +150,7 @@ impl LocalCliUpdater {
 
             match latest_result {
                 Ok(latest) => {
+                    let latest = latest.strip_prefix('v').unwrap_or(&latest).to_string();
                     tool.update_available =
                         is_outdated(tool.current_version.as_deref(), Some(&latest));
                     tool.latest_version = Some(latest.clone());
