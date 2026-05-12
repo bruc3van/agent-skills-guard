@@ -28,11 +28,27 @@ pub struct ClaudeCliResult {
 
 pub struct ClaudeCli {
     command: String,
+    env_remove_prefixes: Vec<String>,
+    env_vars: Vec<(String, String)>,
 }
 
 impl ClaudeCli {
     pub fn new(command: String) -> Self {
-        Self { command }
+        Self {
+            command,
+            env_remove_prefixes: Vec::new(),
+            env_vars: Vec::new(),
+        }
+    }
+
+    pub fn env_remove_prefix(mut self, prefix: &str) -> Self {
+        self.env_remove_prefixes.push(prefix.to_string());
+        self
+    }
+
+    pub fn env_var(mut self, key: &str, val: &str) -> Self {
+        self.env_vars.push((key.to_string(), val.to_string()));
+        self
     }
 
     pub fn run(&self, commands: &[ClaudeCommand]) -> Result<ClaudeCliResult> {
@@ -129,6 +145,15 @@ impl ClaudeCli {
     }
 
     fn build_command_builder(&self, command: &ClaudeCommand) -> CommandBuilder {
+        let mut cmd = self.build_base_command_builder(command);
+        apply_env_remove_prefixes(&mut cmd, &self.env_remove_prefixes);
+        for (key, val) in &self.env_vars {
+            cmd.env(key, val);
+        }
+        cmd
+    }
+
+    fn build_base_command_builder(&self, command: &ClaudeCommand) -> CommandBuilder {
         #[cfg(windows)]
         {
             let resolved = resolve_command_path(&self.command);
@@ -167,6 +192,17 @@ fn is_cmd_script(path: &Path) -> bool {
         .and_then(|ext| ext.to_str())
         .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "cmd" | "bat"))
         .unwrap_or(false)
+}
+
+fn apply_env_remove_prefixes(cmd: &mut CommandBuilder, prefixes: &[String]) {
+    if prefixes.is_empty() {
+        return;
+    }
+    for (key, _) in std::env::vars() {
+        if prefixes.iter().any(|prefix| key.starts_with(prefix.as_str())) {
+            cmd.env_remove(&key);
+        }
+    }
 }
 
 fn read_until_exit_with_prompts(

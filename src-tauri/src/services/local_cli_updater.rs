@@ -52,6 +52,54 @@ pub async fn fetch_pypi_latest(name: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("PyPI 响应无 version 字段"))
 }
 
+pub async fn fetch_brew_latest(name: &str) -> Result<String> {
+    let body =
+        http_get_json(&format!("https://formulae.brew.sh/api/formula/{}.json", name)).await?;
+    body["versions"]["stable"]
+        .as_str()
+        .map(String::from)
+        .ok_or_else(|| anyhow::anyhow!("Homebrew API 响应无 versions.stable 字段"))
+}
+
+pub async fn fetch_scoop_latest(name: &str) -> Result<String> {
+    const BUCKETS: &[&str] = &["Main", "Extras", "Versions"];
+    for bucket in BUCKETS {
+        let url = format!(
+            "https://raw.githubusercontent.com/ScoopInstaller/{bucket}/master/bucket/{name}.json"
+        );
+        if let Ok(body) = http_get_json(&url).await {
+            if let Some(version) = body["version"].as_str() {
+                return Ok(version.to_string());
+            }
+        }
+    }
+    anyhow::bail!("Scoop 未在常用 bucket 中找到 {}", name)
+}
+
+pub async fn fetch_choco_latest(name: &str) -> Result<String> {
+    let url = format!(
+        "https://community.chocolatey.org/api/v2/Packages()?$filter=Id%20eq%20%27{}%27&$orderby=Version%20desc&$top=1",
+        name
+    );
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent("agent-skills-guard/1.0")
+        .build()?;
+    let resp = client.get(&url).send().await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("Chocolatey API → HTTP {}", resp.status());
+    }
+    let xml = resp.text().await?;
+    extract_choco_version(&xml)
+        .ok_or_else(|| anyhow::anyhow!("Chocolatey 响应未找到版本号"))
+}
+
+fn extract_choco_version(xml: &str) -> Option<String> {
+    let start = xml.find("<d:Version>")? + "<d:Version>".len();
+    let end = xml[start..].find("</d:Version>")?;
+    Some(xml[start..start + end].to_string())
+}
+
 pub struct LocalCliUpdater {
     db: Arc<Database>,
 }
@@ -79,7 +127,10 @@ impl LocalCliUpdater {
             let latest_result = match tool.manager {
                 PackageManager::Npm | PackageManager::Pnpm => fetch_npm_latest(&pkg_name).await,
                 PackageManager::Pip => fetch_pypi_latest(&pkg_name).await,
-                _ => continue,
+                PackageManager::Brew => fetch_brew_latest(&pkg_name).await,
+                PackageManager::Scoop => fetch_scoop_latest(&pkg_name).await,
+                PackageManager::Choco => fetch_choco_latest(&pkg_name).await,
+                PackageManager::Unknown => continue,
             };
 
             match latest_result {

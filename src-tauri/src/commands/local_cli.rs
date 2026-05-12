@@ -505,7 +505,7 @@ pub async fn update_local_cli_tool(
         .set_local_cli_tool_update_status(&tool_path, "updating", None)
         .map_err(|e| e.to_string())?;
 
-    let cli = ClaudeCli::new(bin);
+    let cli = build_cli_for_manager(bin, &tool.manager);
     let command = ClaudeCommand {
         args,
         timeout: Duration::from_secs(120),
@@ -566,6 +566,20 @@ pub async fn update_local_cli_tool(
     }
 }
 
+fn build_cli_for_manager(bin: String, manager: &PackageManager) -> ClaudeCli {
+    let mut cli = ClaudeCli::new(bin);
+    match manager {
+        PackageManager::Npm | PackageManager::Pnpm => {
+            cli = cli.env_remove_prefix("npm_config_");
+        }
+        PackageManager::Brew => {
+            cli = cli.env_var("HOMEBREW_NO_AUTO_UPDATE", "1");
+        }
+        _ => {}
+    }
+    cli
+}
+
 #[tauri::command]
 pub async fn uninstall_local_cli_tool(
     state: State<'_, AppState>,
@@ -592,7 +606,7 @@ pub async fn uninstall_local_cli_tool(
         .set_local_cli_tool_update_status(&tool_path, "uninstalling", None)
         .map_err(|e| e.to_string())?;
 
-    let cli = ClaudeCli::new(bin);
+    let cli = build_cli_for_manager(bin, &tool.manager);
     let command = ClaudeCommand {
         args,
         timeout: Duration::from_secs(120),
