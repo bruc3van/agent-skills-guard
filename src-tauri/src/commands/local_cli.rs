@@ -700,13 +700,22 @@ pub async fn fetch_local_cli_descriptions(
 mod tests {
     use super::*;
     use crate::models::{LocalCliTool, PackageManager};
+    use std::path::Path;
+
+    fn command_name(path_or_name: &str) -> String {
+        Path::new(path_or_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(path_or_name)
+            .to_string()
+    }
 
     #[test]
     fn build_pty_args_for_npm() {
         let mut tool = LocalCliTool::new("mmdc", "/usr/bin/mmdc", PackageManager::Npm);
         tool.package_name = Some("@mermaid-js/mermaid-cli".to_string());
         let (bin, argv) = build_pty_update_args(&tool).unwrap();
-        assert_eq!(bin, "npm");
+        assert_eq!(command_name(&bin), "npm");
         assert_eq!(argv, vec!["install", "-g", "@mermaid-js/mermaid-cli"]);
     }
 
@@ -719,11 +728,11 @@ mod tests {
         );
         tool.package_name = Some("@mermaid-js/mermaid-cli".to_string());
         let (bin, argv) = build_pty_update_args(&tool).unwrap();
-        assert_eq!(bin, "pnpm");
+        assert_eq!(command_name(&bin), "pnpm");
         assert_eq!(argv, vec!["add", "-g", "@mermaid-js/mermaid-cli"]);
 
         let (bin, argv) = build_pty_uninstall_args(&tool).unwrap();
-        assert_eq!(bin, "pnpm");
+        assert_eq!(command_name(&bin), "pnpm");
         assert_eq!(argv, vec!["remove", "-g", "@mermaid-js/mermaid-cli"]);
     }
 
@@ -732,7 +741,7 @@ mod tests {
         let mut tool = LocalCliTool::new("bdc", "/home/u/.local/bin/bdc", PackageManager::Pip);
         tool.package_name = Some("bruce-doc-converter".to_string());
         let (bin, argv) = build_pty_update_args(&tool).unwrap();
-        assert_eq!(bin, "python3");
+        assert_eq!(command_name(&bin), "python3");
         assert_eq!(
             argv,
             vec!["-m", "pip", "install", "--upgrade", "bruce-doc-converter"]
@@ -858,7 +867,7 @@ mod tests {
             }
 
             let (bin, argv) = build_pty_uninstall_args(&tool).unwrap();
-            assert_eq!(bin, expected_bin);
+            assert_eq!(command_name(&bin), expected_bin);
             assert_eq!(argv, expected_args);
         }
     }

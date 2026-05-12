@@ -3,15 +3,17 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useUpdateLocalCliTool } from "./useLocalCli";
+import { LOCAL_CLI_QUERY_KEY, useRescanLocalCliTools, useUpdateLocalCliTool } from "./useLocalCli";
 
 const mocks = vi.hoisted(() => ({
+  listLocalCliTools: vi.fn(),
   updateLocalCliTool: vi.fn(),
   toastError: vi.fn(),
 }));
 
 vi.mock("../lib/api", () => ({
   api: {
+    listLocalCliTools: mocks.listLocalCliTools,
     updateLocalCliTool: mocks.updateLocalCliTool,
   },
 }));
@@ -23,11 +25,16 @@ vi.mock("../lib/toast", () => ({
   },
 }));
 
-const wrapper = ({ children }: { children: React.ReactNode }) => (
-  <QueryClientProvider client={new QueryClient()}>{children}</QueryClientProvider>
-);
+function createWrapper(queryClient = new QueryClient()) {
+  return ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+}
+
+const wrapper = createWrapper();
 
 afterEach(() => {
+  mocks.listLocalCliTools.mockReset();
   mocks.updateLocalCliTool.mockReset();
   mocks.toastError.mockReset();
 });
@@ -55,6 +62,33 @@ describe("useUpdateLocalCliTool", () => {
 
     await waitFor(() => {
       expect(mocks.toastError).toHaveBeenCalledWith("pnpm 更新失败: pnpm install failed");
+    });
+  });
+});
+
+describe("useRescanLocalCliTools", () => {
+  it("calls backend scan and writes fresh data to query cache", async () => {
+    const queryClient = new QueryClient();
+    const tools = [
+      {
+        id: "ffmpeg",
+        detected_path: "/opt/homebrew/bin/ffmpeg",
+        manager: "brew",
+        current_version: "8.1_1",
+        update_available: false,
+      },
+    ];
+    mocks.listLocalCliTools.mockResolvedValue(tools);
+    const { result } = renderHook(() => useRescanLocalCliTools(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    act(() => {
+      result.current.mutate();
+    });
+
+    await waitFor(() => {
+      expect(queryClient.getQueryData(LOCAL_CLI_QUERY_KEY)).toEqual(tools);
     });
   });
 });

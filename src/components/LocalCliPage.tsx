@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import {
   useLocalCliTools,
+  useRescanLocalCliTools,
   useCheckLocalCliUpdates,
   useUpdateLocalCliTool,
   useUninstallLocalCliTool,
@@ -31,6 +32,7 @@ const VISIBLE_MANAGERS = ["npm", "pnpm", "pip", "brew", "scoop", "choco", "unkno
 export function LocalCliPage() {
   const { t } = useTranslation();
   const { data: tools = [], isLoading, refetch } = useLocalCliTools();
+  const { mutate: rescanTools, isPending: isRescanning } = useRescanLocalCliTools();
   const { mutate: checkUpdates, isPending: isChecking } = useCheckLocalCliUpdates();
   const {
     mutate: updateTool,
@@ -57,6 +59,7 @@ export function LocalCliPage() {
     done: number;
     total: number;
   } | null>(null);
+  const [descriptionRetryToken, setDescriptionRetryToken] = useState(0);
   const attemptedDescriptionIdsRef = useRef<Set<string>>(new Set());
 
   // Lazily fetch descriptions for tools missing one — one by one with progress
@@ -103,7 +106,7 @@ export function LocalCliPage() {
     return () => {
       cancelled = true;
     };
-  }, [tools, isLoading, refetch]);
+  }, [tools, isLoading, refetch, descriptionRetryToken]);
 
   const getToolDescription = (tool: LocalCliTool): string | undefined => {
     const raw = tool.description || descriptionMap[tool.id];
@@ -185,6 +188,15 @@ export function LocalCliPage() {
     });
   };
 
+  const handleRescan = () => {
+    setDescriptionMap({});
+    attemptedDescriptionIdsRef.current.clear();
+    setFetchProgress(null);
+    setIsFetchingDesc(false);
+    setDescriptionRetryToken((value) => value + 1);
+    rescanTools();
+  };
+
   const handleUpdateTool = (tool: LocalCliTool) => {
     updateTool(tool);
   };
@@ -230,11 +242,11 @@ export function LocalCliPage() {
                 <h1 className="text-headline text-foreground">{t("localCli.title")}</h1>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => void refetch()}
-                    disabled={isLoading}
+                    onClick={handleRescan}
+                    disabled={isLoading || isRescanning}
                     className="apple-button-secondary h-10 px-4 flex items-center gap-2 disabled:opacity-50 text-sm"
                   >
-                    {isLoading ? (
+                    {isLoading || isRescanning ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
                       <RefreshCw className="w-4 h-4" />
@@ -383,7 +395,9 @@ export function LocalCliPage() {
                   isUpdating={isUpdating && updatingTool?.detected_path === tool.detected_path}
                   onOpenFolder={handleOpenFolder}
                   onRequestUninstall={setPendingUninstall}
-                  isUninstalling={isUninstalling && uninstallingTool?.detected_path === tool.detected_path}
+                  isUninstalling={
+                    isUninstalling && uninstallingTool?.detected_path === tool.detected_path
+                  }
                   isAnyOperationPending={isUpdating || isChecking || isUninstalling}
                 />
               ))}
@@ -435,7 +449,9 @@ export function LocalCliPage() {
         operationCount={1}
         pathCount={1}
         isConfirming={
-          pendingUninstall ? isUninstalling && uninstallingTool?.detected_path === pendingUninstall.detected_path : false
+          pendingUninstall
+            ? isUninstalling && uninstallingTool?.detected_path === pendingUninstall.detected_path
+            : false
         }
         labels={{
           title: t("localCli.uninstallDialog.title"),
@@ -529,9 +545,7 @@ function CliToolCard({
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2.5 mb-1 flex-wrap">
-            <h3 className="font-semibold text-foreground font-mono text-sm truncate">
-              {tool.id}
-            </h3>
+            <h3 className="font-semibold text-foreground font-mono text-sm truncate">{tool.id}</h3>
             <span className="text-[10px] uppercase tracking-normal bg-secondary text-muted-foreground px-1.5 py-0.5 rounded-md font-medium">
               {managerLabel(tool.manager)}
             </span>
@@ -646,7 +660,6 @@ function CliToolCard({
           </p>
         </div>
       </div>
-
     </div>
   );
 }

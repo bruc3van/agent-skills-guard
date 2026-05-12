@@ -38,6 +38,14 @@ export function useCheckLocalCliUpdates() {
   });
 }
 
+export function useRescanLocalCliTools() {
+  const qc = useQueryClient();
+  return useMutation<LocalCliTool[], Error, void>({
+    mutationFn: () => api.listLocalCliTools(),
+    onSuccess: (data) => qc.setQueryData(LOCAL_CLI_QUERY_KEY, data),
+  });
+}
+
 export function useUpdateLocalCliTool() {
   const qc = useQueryClient();
   return useMutation<string, unknown, LocalCliTool>({

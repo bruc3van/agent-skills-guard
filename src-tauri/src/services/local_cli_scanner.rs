@@ -121,8 +121,26 @@ fn dedupe_supported_executables(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 }
 
 fn brew_installed_on_request_formulae() -> Option<HashSet<String>> {
-    let output = Command::new("brew")
-        .args(["list", "--formula", "--installed-on-request"])
+    let brew = find_brew_command()?;
+    brew_formula_list(&brew, &["list", "--formula", "--installed-on-request"])
+        .or_else(|| brew_formula_list(&brew, &["leaves"]))
+}
+
+fn find_brew_command() -> Option<PathBuf> {
+    which::which("brew").ok().or_else(|| {
+        ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+            .into_iter()
+            .map(PathBuf::from)
+            .find(|path| path.is_file())
+    })
+}
+
+fn brew_formula_list(brew: &Path, args: &[&str]) -> Option<HashSet<String>> {
+    let output = Command::new(brew)
+        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
+        .env("HOMEBREW_NO_INSTALL_CLEANUP", "1")
+        .env("HOMEBREW_NO_ANALYTICS", "1")
+        .args(args)
         .output()
         .ok()?;
 
@@ -141,6 +159,23 @@ fn brew_installed_on_request_formulae() -> Option<HashSet<String>> {
     )
 }
 
+fn run_brew(args: &[&str]) -> Option<String> {
+    let brew = find_brew_command()?;
+    let output = Command::new(brew)
+        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
+        .env("HOMEBREW_NO_INSTALL_CLEANUP", "1")
+        .env("HOMEBREW_NO_ANALYTICS", "1")
+        .args(args)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8(output.stdout).ok()
+}
+
 fn filter_brew_executables_to_installed_on_request(
     paths: Vec<PathBuf>,
     installed_on_request: Option<&HashSet<String>>,
@@ -157,8 +192,7 @@ fn filter_brew_executables_to_installed_on_request(
             }
 
             brew_formula_name_from_path(path)
-                .map(|formula| installed_on_request.contains(&formula))
-                .unwrap_or(true)
+                .is_some_and(|formula| installed_on_request.contains(&formula))
         })
         .collect()
 }
@@ -235,10 +269,8 @@ pub fn detect_version(path: &Path) -> Option<String> {
         PackageManager::Npm => detect_npm_version(path),
         PackageManager::Pnpm => detect_pnpm_version(path),
         PackageManager::Pip => detect_pip_version(path),
-        PackageManager::Brew
-        | PackageManager::Scoop
-        | PackageManager::Choco
-        | PackageManager::Unknown => None,
+        PackageManager::Brew => detect_brew_version(path),
+        PackageManager::Scoop | PackageManager::Choco | PackageManager::Unknown => None,
     }
 }
 
@@ -279,6 +311,7 @@ fn resolve_description(path: &Path, manager: &PackageManager) -> Option<String> 
         PackageManager::Npm => resolve_npm_description(path),
         PackageManager::Pnpm => resolve_pnpm_description(path),
         PackageManager::Pip => resolve_pip_description(path),
+        PackageManager::Brew => resolve_brew_description(path),
         _ => None,
     }
 }
@@ -372,6 +405,35 @@ fn detect_npm_version(path: &Path) -> Option<String> {
         &npm_package_json_path(&npm_global, &package_name),
         "version",
     )
+}
+
+fn detect_brew_version(path: &Path) -> Option<String> {
+    let formula = brew_formula_name_from_path(path)?;
+    let output = run_brew(&["list", "--versions", &formula])?;
+    parse_brew_list_versions_output(&output)
+}
+
+fn resolve_brew_description(path: &Path) -> Option<String> {
+    let formula = brew_formula_name_from_path(path)?;
+    let output = run_brew(&["desc", "--formula", &formula])?;
+    parse_brew_desc_output(&output)
+}
+
+fn parse_brew_list_versions_output(output: &str) -> Option<String> {
+    output
+        .split_whitespace()
+        .skip(1)
+        .last()
+        .map(ToOwned::to_owned)
+        .filter(|version| !version.is_empty())
+}
+
+fn parse_brew_desc_output(output: &str) -> Option<String> {
+    output
+        .trim()
+        .split_once(':')
+        .map(|(_, desc)| desc.trim().to_string())
+        .filter(|desc| !desc.is_empty())
 }
 
 fn resolve_pnpm_package_name(path: &Path) -> Option<String> {
@@ -674,16 +736,20 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn write_executable(path: &Path, content: &[u8]) {
+        fs::write(path, content).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
     #[test]
     fn scan_dir_finds_executables() {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("my-tool");
-        fs::write(&bin, b"#!/bin/sh\necho hello").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        write_executable(&bin, b"#!/bin/sh\necho hello");
         let found = scan_dir_for_executables(dir.path());
         #[cfg(unix)]
         assert!(found.iter().any(|p| p.file_name().unwrap() == "my-tool"));
@@ -700,6 +766,44 @@ mod tests {
         assert_eq!(parse_version("1.2.3\n"), Some("1.2.3".to_string()));
         assert_eq!(parse_version("v2.0.0-beta.1"), Some("2.0.0".to_string()));
         assert_eq!(parse_version("usage: tool [options]"), None);
+    }
+
+    #[test]
+    fn parse_brew_list_versions_output_reads_installed_version() {
+        assert_eq!(
+            parse_brew_list_versions_output("ripgrep 14.1.1\n"),
+            Some("14.1.1".to_string())
+        );
+        assert_eq!(
+            parse_brew_list_versions_output("python@3.13 3.13.7 3.13.8\n"),
+            Some("3.13.8".to_string())
+        );
+        assert_eq!(parse_brew_list_versions_output("ripgrep\n"), None);
+    }
+
+    #[test]
+    fn parse_brew_desc_output_reads_description() {
+        assert_eq!(
+            parse_brew_desc_output("ripgrep: Search tool like grep and The Silver Searcher\n"),
+            Some("Search tool like grep and The Silver Searcher".to_string())
+        );
+        assert_eq!(parse_brew_desc_output("ripgrep:"), None);
+        assert_eq!(parse_brew_desc_output(""), None);
+    }
+
+    #[test]
+    fn brew_metadata_parsers_match_homebrew_commands_used_by_scanner() {
+        let version_output = "ffmpeg 8.1_1\n";
+        let desc_output = "ffmpeg: Play, record, convert, and stream audio and video\n";
+
+        assert_eq!(
+            parse_brew_list_versions_output(version_output),
+            Some("8.1_1".to_string())
+        );
+        assert_eq!(
+            parse_brew_desc_output(desc_output),
+            Some("Play, record, convert, and stream audio and video".to_string())
+        );
     }
 
     #[test]
@@ -725,7 +829,7 @@ mod tests {
     fn scan_path_only_returns_supported_cli_locations() {
         let dir = tempfile::tempdir().unwrap();
         let unsupported = dir.path().join("WerFault.exe");
-        fs::write(&unsupported, b"").unwrap();
+        write_executable(&unsupported, b"");
 
         let supported_dir = tempfile::tempdir().unwrap();
         let supported_root = supported_dir
@@ -735,7 +839,7 @@ mod tests {
             .join("npm");
         fs::create_dir_all(&supported_root).unwrap();
         let supported = supported_root.join("bruce-doc-converter.cmd");
-        fs::write(&supported, b"@echo off\r\necho 1.0.0\r\n").unwrap();
+        write_executable(&supported, b"@echo off\r\necho 1.0.0\r\n");
 
         let found = scan_path_dirs_for_supported_executables(vec![
             dir.path().to_path_buf(),
@@ -754,10 +858,10 @@ mod tests {
         fs::create_dir_all(&py313_scripts).unwrap();
 
         for name in ["pip.exe", "pip3.exe", "pip3.14.exe"] {
-            fs::write(py314_scripts.join(name), b"").unwrap();
+            write_executable(&py314_scripts.join(name), b"");
         }
         for name in ["pip3.exe", "pip3.13.exe"] {
-            fs::write(py313_scripts.join(name), b"").unwrap();
+            write_executable(&py313_scripts.join(name), b"");
         }
 
         let found = scan_path_dirs_for_supported_executables(vec![
@@ -793,6 +897,47 @@ mod tests {
                 PathBuf::from("/opt/homebrew/Cellar/ripgrep/14.1.1/bin/rg"),
                 PathBuf::from("/Users/example/.local/bin/bdc"),
             ]
+        );
+    }
+
+    #[test]
+    fn filter_brew_executables_drops_unresolved_brew_paths_when_filter_available() {
+        let paths = vec![
+            PathBuf::from("/opt/homebrew/bin/not-a-cellar-link"),
+            PathBuf::from("/Users/example/.local/bin/bdc"),
+        ];
+        let installed_on_request = ["ripgrep".to_string()].into_iter().collect();
+
+        let found =
+            filter_brew_executables_to_installed_on_request(paths, Some(&installed_on_request));
+
+        assert_eq!(found, vec![PathBuf::from("/Users/example/.local/bin/bdc")]);
+    }
+
+    #[test]
+    fn brew_formula_name_from_path_resolves_opt_homebrew_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let homebrew = dir.path().join("opt").join("homebrew");
+        let bin = homebrew.join("bin");
+        let cellar_bin = homebrew
+            .join("Cellar")
+            .join("ripgrep")
+            .join("14.1.1")
+            .join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&cellar_bin).unwrap();
+        let target = cellar_bin.join("rg");
+        write_executable(&target, b"#!/bin/sh\n");
+        let link = bin.join("rg");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&target, &link).unwrap();
+
+        assert_eq!(
+            brew_formula_name_from_path(&link),
+            Some("ripgrep".to_string())
         );
     }
 

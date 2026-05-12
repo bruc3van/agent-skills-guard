@@ -21,12 +21,18 @@ const openLocalCliFolder = vi.fn();
 const uninstallLocalCliTool = vi.fn();
 const uninstallMutation = vi.fn();
 const refetchLocalCliTools = vi.fn();
+const rescanLocalCliTools = vi.fn();
+let isRescanning = false;
 
 vi.mock("../hooks/useLocalCli", () => ({
   useLocalCliTools: () => ({
     data: mockTools,
     isLoading: false,
     refetch: refetchLocalCliTools,
+  }),
+  useRescanLocalCliTools: () => ({
+    mutate: rescanLocalCliTools,
+    isPending: isRescanning,
   }),
   useCheckLocalCliUpdates: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateLocalCliTool: () => ({
@@ -69,6 +75,8 @@ afterEach(() => {
   uninstallLocalCliTool.mockReset();
   uninstallMutation.mockReset();
   refetchLocalCliTools.mockReset();
+  rescanLocalCliTools.mockReset();
+  isRescanning = false;
 });
 
 describe("LocalCliPage", () => {
@@ -129,6 +137,26 @@ describe("LocalCliPage", () => {
 
     await waitFor(() => {
       expect(refetchLocalCliTools).toHaveBeenCalled();
+    });
+  });
+
+  it("点击重新扫描会触发强制刷新并允许重试说明获取", async () => {
+    fetchLocalCliDescriptions.mockResolvedValue([]);
+    const user = userEvent.setup();
+    const { LocalCliPage } = await import("./LocalCliPage");
+    const { rerender } = render(<LocalCliPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(fetchLocalCliDescriptions).toHaveBeenCalledTimes(1);
+    });
+
+    await user.click(screen.getByRole("button", { name: "localCli.rescan" }));
+    expect(rescanLocalCliTools).toHaveBeenCalledTimes(1);
+
+    rerender(<LocalCliPage />);
+
+    await waitFor(() => {
+      expect(fetchLocalCliDescriptions).toHaveBeenCalledTimes(2);
     });
   });
 
