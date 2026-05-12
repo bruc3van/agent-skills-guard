@@ -193,16 +193,23 @@ fn brew_executable_paths_for_formula_with<F>(formula: &str, run: &mut F) -> Vec<
 where
     F: FnMut(&[&str]) -> Option<String>,
 {
-    let list_args = ["list", "--formula", formula];
-    let mut paths = run(&list_args)
-        .map(|stdout| parse_brew_formula_executable_paths(&stdout))
-        .unwrap_or_default();
-
-    if paths.is_empty() {
-        let prefix_args = ["--prefix", formula];
-        if let Some(prefix) = run(&prefix_args) {
-            paths = scan_dir_for_executables(&PathBuf::from(prefix.trim()).join("bin"));
+    // Use --prefix to find the formula root, then scan standard bin directories.
+    // This only captures user-facing executables — it avoids deeply nested
+    // node_modules/.bin/ entries and internal dev scripts scattered elsewhere.
+    let mut paths = Vec::new();
+    if let Some(prefix) = run(&["--prefix", formula]) {
+        let prefix = PathBuf::from(prefix.trim());
+        for subdir in &["bin", "sbin", "libexec/bin", "libexec/gnubin"] {
+            paths.extend(scan_dir_for_executables(&prefix.join(subdir)));
         }
+    }
+
+    // Fallback: use brew list --formula output with strict bin-directory filtering.
+    if paths.is_empty() {
+        let list_args = ["list", "--formula", formula];
+        paths = run(&list_args)
+            .map(|stdout| parse_brew_formula_executable_paths(&stdout))
+            .unwrap_or_default();
     }
 
     dedupe_paths(&mut paths);
@@ -228,12 +235,13 @@ where
             run(&args).and_then(|output| parse_brew_desc_output(&output))
         };
 
+        let mut seen_ids: HashSet<String> = HashSet::new();
         for path in brew_executable_paths_for_formula_with(&formula, &mut run) {
-            let mut tool = LocalCliTool::new(
-                &tool_id_from_path(&path),
-                &path.to_string_lossy(),
-                PackageManager::Brew,
-            );
+            let id = tool_id_from_path(&path);
+            if !seen_ids.insert(id.clone()) {
+                continue;
+            }
+            let mut tool = LocalCliTool::new(&id, &path.to_string_lossy(), PackageManager::Brew);
             tool.package_name = Some(formula.clone());
             tool.current_version = version.clone();
             tool.description = description.clone();
@@ -850,12 +858,18 @@ fn discover_pip_tools() -> Vec<LocalCliTool> {
     let mut all_tools: Vec<LocalCliTool> = Vec::new();
     let mut seen_ids: HashSet<String> = HashSet::new();
 
-    for site_packages in find_pip_site_packages() {
-        let mut script_roots = pip_script_roots_from_location(&site_packages);
+    let site_packages_dirs = find_pip_site_packages();
+    let leaf_names = pip_leaf_package_names(&site_packages_dirs);
+
+    for site_packages in &site_packages_dirs {
+        let mut script_roots = pip_script_roots_from_location(site_packages);
         script_roots.extend(common_pip_script_roots(dirs::home_dir()));
         dedupe_paths(&mut script_roots);
 
-        for tool in pip_tools_from_dist_info(&site_packages, &script_roots) {
+        for tool in pip_tools_from_dist_info(site_packages, &script_roots) {
+            if !is_pip_tool_visible(&tool, &leaf_names) {
+                continue;
+            }
             if seen_ids.insert(tool.id.clone()) {
                 all_tools.push(tool);
             }
@@ -864,6 +878,18 @@ fn discover_pip_tools() -> Vec<LocalCliTool> {
 
     all_tools.sort_by(|a, b| a.id.cmp(&b.id));
     all_tools
+}
+
+fn is_pip_tool_visible(tool: &LocalCliTool, leaf_names: &HashSet<String>) -> bool {
+    let Some(ref pkg_name) = tool.package_name else {
+        return true;
+    };
+    if leaf_names.contains(&pkg_name.to_lowercase()) {
+        return true;
+    }
+    // Always show when the tool id matches the package name (e.g. pip package → pip tool).
+    // These are typically primary CLI tools even if depended on by other packages.
+    tool.id == pkg_name.to_lowercase()
 }
 
 fn discover_brew_tools() -> Vec<LocalCliTool> {
@@ -1307,6 +1333,10 @@ fn entry_point_line_references_script(line: &str, id: &str) -> bool {
 
 fn read_metadata_field(metadata_path: &Path, field: &str) -> Option<String> {
     let meta = std::fs::read_to_string(metadata_path).ok()?;
+    read_metadata_field_from_str(&meta, field)
+}
+
+fn read_metadata_field_from_str(meta: &str, field: &str) -> Option<String> {
     let prefix = format!("{}: ", field);
     meta.lines().find_map(|line| {
         line.strip_prefix(&prefix).and_then(|value| {
@@ -1314,6 +1344,55 @@ fn read_metadata_field(metadata_path: &Path, field: &str) -> Option<String> {
             (!value.is_empty()).then(|| value.to_string())
         })
     })
+}
+
+fn pip_leaf_package_names(site_packages_dirs: &[PathBuf]) -> HashSet<String> {
+    let mut required: HashSet<String> = HashSet::new();
+    let mut all_names: HashSet<String> = HashSet::new();
+
+    for sp in site_packages_dirs {
+        let Ok(entries) = std::fs::read_dir(sp) else { continue; };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let dir_name = entry.file_name().to_string_lossy().to_lowercase();
+            if !dir_name.ends_with(".dist-info") && !dir_name.ends_with(".egg-info") {
+                continue;
+            }
+            let Ok(meta) = std::fs::read_to_string(path.join("METADATA")) else { continue; };
+
+            if let Some(name) = read_metadata_field_from_str(&meta, "Name") {
+                all_names.insert(name.to_lowercase());
+            }
+
+            for line in meta.lines() {
+                if let Some(dep) = line.strip_prefix("Requires-Dist: ") {
+                    let dep_name = pip_dep_name(dep);
+                    if !dep_name.is_empty() {
+                        required.insert(dep_name);
+                    }
+                }
+            }
+        }
+    }
+
+    all_names.retain(|name| !required.contains(name));
+    all_names
+}
+
+fn pip_dep_name(requires_dist: &str) -> String {
+    requires_dist
+        .split(|c: char| {
+            c == ' ' || c == ';' || c == '(' || c == ')' || c == '>' || c == '<' || c == '='
+                || c == '~' || c == '!'
+        })
+        .next()
+        .unwrap_or("")
+        .trim()
+        .split('[')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase()
 }
 
 fn pip_dist_name_from_dir(dist_info: &Path) -> Option<String> {
@@ -2271,5 +2350,88 @@ mod tests {
             extract_npm_package_from_shim(content),
             Some("@anthropic-ai/claude-code".to_string())
         );
+    }
+
+    #[test]
+    fn pip_dep_name_extracts_package_from_requires_dist() {
+        assert_eq!(pip_dep_name("numpy>=1.20"), "numpy");
+        assert_eq!(
+            pip_dep_name("requests [security] >=2.25"),
+            "requests"
+        );
+        assert_eq!(pip_dep_name("packaging"), "packaging");
+        assert_eq!(
+            pip_dep_name("typing_extensions; python_version < '3.10'"),
+            "typing_extensions"
+        );
+        assert_eq!(
+            pip_dep_name("importlib_metadata>=3.6; python_version < '3.10'"),
+            "importlib_metadata"
+        );
+        assert_eq!(pip_dep_name(""), "");
+    }
+
+    #[test]
+    fn pip_leaf_package_names_finds_top_level_packages() {
+        let dir = tempfile::tempdir().unwrap();
+        let sp = dir.path().join("site-packages");
+        fs::create_dir_all(&sp).unwrap();
+
+        // torch depends on numpy
+        let torch = sp.join("torch-2.0.0.dist-info");
+        fs::create_dir_all(&torch).unwrap();
+        fs::write(
+            torch.join("METADATA"),
+            "Name: torch\nVersion: 2.0.0\nRequires-Dist: numpy>=1.20\n",
+        )
+        .unwrap();
+
+        // numpy depends on nothing
+        let numpy = sp.join("numpy-1.24.0.dist-info");
+        fs::create_dir_all(&numpy).unwrap();
+        fs::write(
+            numpy.join("METADATA"),
+            "Name: numpy\nVersion: 1.24.0\n",
+        )
+        .unwrap();
+
+        // pip depends on nothing (but often depended on by others — test isolation ensures it's a leaf here)
+        let pip = sp.join("pip-23.0.0.dist-info");
+        fs::create_dir_all(&pip).unwrap();
+        fs::write(pip.join("METADATA"), "Name: pip\nVersion: 23.0.0\n").unwrap();
+
+        let leaves = pip_leaf_package_names(&[sp]);
+
+        // numpy is required by torch → not a leaf
+        assert!(!leaves.contains("numpy"));
+        // torch is not required by anyone → leaf
+        assert!(leaves.contains("torch"));
+        // pip is not required by anyone (in this isolated test) → leaf
+        assert!(leaves.contains("pip"));
+    }
+
+    #[test]
+    fn is_pip_tool_visible_shows_leaf_and_self_named_tools() {
+        let leaf_names = ["twine".to_string(), "numpy".to_string()]
+            .into_iter()
+            .collect::<HashSet<_>>();
+
+        let tool = |id: &str, pkg: &str| LocalCliTool {
+            id: id.to_string(),
+            package_name: Some(pkg.to_string()),
+            ..LocalCliTool::new(id, "", crate::models::PackageManager::Pip)
+        };
+
+        // twine is a leaf → visible
+        assert!(is_pip_tool_visible(&tool("twine", "twine"), &leaf_names));
+        // numpy is a leaf → its f2py tool is visible
+        assert!(is_pip_tool_visible(&tool("f2py", "numpy"), &leaf_names));
+        // pip is NOT a leaf, but id "pip" == package name "pip" → visible
+        assert!(is_pip_tool_visible(&tool("pip", "pip"), &leaf_names));
+        // bruce-doc-converter is not a leaf and id "bdc" ≠ "bruce-doc-converter" → hidden
+        assert!(!is_pip_tool_visible(
+            &tool("bdc", "bruce-doc-converter"),
+            &leaf_names
+        ));
     }
 }
