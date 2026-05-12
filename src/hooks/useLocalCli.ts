@@ -51,6 +51,14 @@ export function useUpdateLocalCliTool() {
   return useMutation<string, unknown, LocalCliTool>({
     mutationFn: (tool) => api.updateLocalCliTool(tool.detected_path),
     onSuccess: (_log, tool) => {
+      qc.setQueryData(LOCAL_CLI_QUERY_KEY, (old: LocalCliTool[] | undefined) => {
+        if (!old) return old;
+        return old.map((t) =>
+          t.detected_path === tool.detected_path
+            ? { ...t, update_available: false, update_status: "success" }
+            : t
+        );
+      });
       qc.invalidateQueries({ queryKey: LOCAL_CLI_QUERY_KEY });
       appToast.success(`${tool.id} 更新完成`);
     },
