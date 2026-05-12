@@ -189,13 +189,14 @@ fn is_likely_cli_binary(path: &Path) -> bool {
         || normalized.contains("/libexec/gnubin/")
 }
 
-fn brew_executable_paths_for_formula_with<F>(formula: &str, run: &mut F) -> Vec<PathBuf>
+fn brew_executable_paths_for_formula_with<F>(
+    formula: &str,
+    run: &mut F,
+    linked_names: Option<&HashSet<String>>,
+) -> Vec<PathBuf>
 where
     F: FnMut(&[&str]) -> Option<String>,
 {
-    // Use --prefix to find the formula root, then scan standard bin directories.
-    // This only captures user-facing executables — it avoids deeply nested
-    // node_modules/.bin/ entries and internal dev scripts scattered elsewhere.
     let mut paths = Vec::new();
     if let Some(prefix) = run(&["--prefix", formula]) {
         let prefix = PathBuf::from(prefix.trim());
@@ -204,7 +205,6 @@ where
         }
     }
 
-    // Fallback: use brew list --formula output with strict bin-directory filtering.
     if paths.is_empty() {
         let list_args = ["list", "--formula", formula];
         paths = run(&list_args)
@@ -213,6 +213,18 @@ where
     }
 
     dedupe_paths(&mut paths);
+
+    // Only include binaries that Homebrew actually links into <prefix>/bin/.
+    // This filters out internal test/development scripts (e.g. ffmpeg's 40+ test tools,
+    // imagemagick's *-config helpers, pipx's bundled python wrappers).
+    if let Some(allowed) = linked_names {
+        paths.retain(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|name| allowed.contains(name))
+        });
+    }
+
     paths.sort();
     paths
 }
@@ -221,6 +233,13 @@ fn brew_tools_from_formulae_with<F>(formulae: &HashSet<String>, mut run: F) -> V
 where
     F: FnMut(&[&str]) -> Option<String>,
 {
+    let brew_prefix = run(&["--prefix"])
+        .map(|stdout| PathBuf::from(stdout.trim()));
+    let linked_binaries = brew_prefix
+        .as_ref()
+        .map(|prefix| brew_linked_binary_names(prefix))
+        .unwrap_or_default();
+
     let mut formulae = formulae.iter().cloned().collect::<Vec<_>>();
     formulae.sort();
 
@@ -235,8 +254,10 @@ where
             run(&args).and_then(|output| parse_brew_desc_output(&output))
         };
 
+        let linked_names = linked_binaries.get(&formula);
+
         let mut seen_ids: HashSet<String> = HashSet::new();
-        for path in brew_executable_paths_for_formula_with(&formula, &mut run) {
+        for path in brew_executable_paths_for_formula_with(&formula, &mut run, linked_names) {
             let id = tool_id_from_path(&path);
             if !seen_ids.insert(id.clone()) {
                 continue;
@@ -288,6 +309,33 @@ fn brew_formula_name_from_cellar_path(path: &Path) -> Option<String> {
         .and_then(|(_, rest)| rest.split('/').next())
         .filter(|name| !name.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn brew_linked_binary_names(brew_prefix: &Path) -> HashMap<String, HashSet<String>> {
+    let bin_dir = brew_prefix.join("bin");
+    let Ok(entries) = std::fs::read_dir(&bin_dir) else {
+        return HashMap::new();
+    };
+    let mut result: HashMap<String, HashSet<String>> = HashMap::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_symlink() {
+            continue;
+        }
+        let Ok(real) = std::fs::canonicalize(&path) else {
+            continue;
+        };
+        let Some(formula) = brew_formula_name_from_cellar_path(&real) else {
+            continue;
+        };
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            result
+                .entry(formula)
+                .or_default()
+                .insert(name.to_string());
+        }
+    }
+    result
 }
 
 fn executable_dedupe_key(path: &Path) -> String {
