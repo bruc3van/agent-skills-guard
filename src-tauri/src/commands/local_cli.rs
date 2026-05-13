@@ -229,14 +229,68 @@ fn sanitize_terminal_log(raw: &str) -> String {
     let stripped = strip_ansi_sequences(raw);
     let rendered = render_terminal_line_controls(&stripped);
 
-    rendered
+    let lines: Vec<String> = rendered
         .lines()
         .map(str::trim_end)
-        .filter(|line| !line.trim().is_empty())
-        .filter(|line| !is_progress_noise_line(line.trim()))
-        .filter(|line| !is_ascii_art_line(line.trim()))
+        .map(|line| strip_spinner_prefix(line).to_string())
+        .filter(|line| !line.is_empty())
+        .filter(|line| !is_progress_noise_line(line))
+        .filter(|line| !is_ascii_art_line(line))
+        .collect();
+
+    let mut result: Vec<(String, String)> = Vec::new();
+    for line in lines {
+        let key = progress_dedup_key(&line);
+        if let Some((prev_key, prev_line)) = result.last_mut() {
+            if *prev_line == line {
+                continue;
+            }
+            if *prev_key == key {
+                *prev_line = line;
+                continue;
+            }
+        }
+        result.push((key, line));
+    }
+
+    result
+        .into_iter()
+        .map(|(_, line)| line)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn strip_spinner_prefix(line: &str) -> &str {
+    let s = line.trim_start_matches(|c: char| (0x2800..=0x28ff).contains(&(c as u32)));
+    let s = s.trim_start_matches(|c: char| {
+        matches!(
+            c as u32,
+            0x2713 | 0x2714 | 0x2717 | 0x2718 | 0xfe0e | 0xfe0f
+        )
+    });
+    s.trim_start()
+}
+
+fn progress_dedup_key(line: &str) -> String {
+    let words: Vec<&str> = line
+        .split_whitespace()
+        .filter(|w| !w.chars().all(|c| c == '#'))
+        .collect();
+    let normalized = words.join(" ");
+    let mut key = String::with_capacity(normalized.len());
+    let mut in_number = false;
+    for c in normalized.chars() {
+        if c.is_ascii_digit() || c == '.' || c == ',' {
+            if !in_number {
+                key.push_str("<N>");
+                in_number = true;
+            }
+        } else {
+            in_number = false;
+            key.push(c);
+        }
+    }
+    key
 }
 
 fn non_empty_log_or_default(log: String, fallback: impl Into<String>) -> String {
@@ -522,7 +576,8 @@ pub async fn update_local_cli_tool(
             let raw_log = sanitize_terminal_log(&result.raw_log);
             let is_up_to_date = !result.exit_success && is_already_up_to_date(&raw_log);
             let install_ok = !result.exit_success && is_install_success(&raw_log);
-            if result.exit_success || is_up_to_date || install_ok {
+            let brew_ok = !result.exit_success && is_brew_upgrade_complete(&raw_log);
+            if result.exit_success || is_up_to_date || install_ok || brew_ok {
                 let log = non_empty_log_or_default(
                     raw_log,
                     format!("{} 更新命令执行完成，但没有返回可显示日志", display_id),
@@ -601,6 +656,11 @@ fn is_install_success(output: &str) -> bool {
     (text.contains("added") || text.contains("changed") || text.contains("removed"))
         && text.contains("package")
         && text.contains("in ")
+}
+
+fn is_brew_upgrade_complete(output: &str) -> bool {
+    let text = output.to_lowercase();
+    text.contains("upgraded") && text.contains("outdated package")
 }
 
 fn update_timeout_secs(manager: &PackageManager) -> u64 {

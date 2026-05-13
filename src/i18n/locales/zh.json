@@ -687,7 +687,7 @@
   "localCli": {
     "title": "CLI 管理",
     "subtitle": "已识别 {{total}} 个托管 CLI · {{updates}} 个可更新",
-    "loading": "正在扫描已知 CLI 目录...",
+    "loading": "正在发现本地 CLI 工具...",
     "rescan": "重新扫描",
     "checkUpdates": "检查更新",
     "checking": "检查中...",

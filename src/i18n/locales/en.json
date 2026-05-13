@@ -687,7 +687,7 @@
   "localCli": {
     "title": "CLI_MANAGEMENT",
     "subtitle": "{{total}} managed CLI tools · {{updates}} updates available",
-    "loading": "SCANNING_KNOWN_CLI_DIRS...",
+    "loading": "Discovering local CLI tools...",
     "rescan": "RESCAN",
     "checkUpdates": "CHECK_UPDATES",
     "checking": "CHECKING...",
