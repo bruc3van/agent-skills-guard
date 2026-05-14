@@ -47,6 +47,34 @@ pub fn build_pty_update_args(tool: &LocalCliTool) -> Option<(String, Vec<String>
     Some((bin.to_string(), args))
 }
 
+fn local_cli_cache_needs_refresh(
+    tool: &LocalCliTool,
+    row: &crate::services::database::LocalCliToolRow,
+) -> bool {
+    tool.id != row.id
+        || tool.manager.as_str() != row.manager
+        || tool.current_version.as_deref() != row.current_version.as_deref()
+        || tool.package_name.as_deref() != row.package_name.as_deref()
+        || tool.description.as_deref() != row.description.as_deref()
+}
+
+fn successful_update_cache_values(
+    tool: &LocalCliTool,
+    new_version: Option<String>,
+) -> (Option<String>, Option<String>, bool, Option<String>) {
+    if let Some(version) = new_version {
+        let now = chrono::Utc::now().to_rfc3339();
+        return (Some(version.clone()), Some(version), false, Some(now));
+    }
+
+    (
+        tool.current_version.clone(),
+        tool.latest_version.clone(),
+        tool.update_available,
+        tool.last_checked.clone(),
+    )
+}
+
 pub fn build_pty_uninstall_args(tool: &LocalCliTool) -> Option<(String, Vec<String>)> {
     let pkg = tool.package_name.as_deref()?;
     let (bin, args) = match tool.manager {
@@ -555,11 +583,8 @@ pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<Loca
                 tool.description = row.description.clone();
             }
 
-            // 只有 current_version 或 description 与缓存不同时才写入 DB
-            let version_changed =
-                tool.current_version.as_deref() != row.current_version.as_deref();
-            let desc_changed = tool.description.as_deref() != row.description.as_deref();
-            if !version_changed && !desc_changed {
+            // 只有扫描结果与缓存不同时才写入 DB
+            if !local_cli_cache_needs_refresh(tool, row) {
                 continue;
             }
         }
@@ -611,6 +636,9 @@ pub async fn update_local_cli_tool(
     let manager = PackageManager::from_str(&manager_str);
     let mut tool = LocalCliTool::new(&display_id, &detected_path, manager);
     tool.current_version = row.current_version;
+    tool.latest_version = row.latest_version;
+    tool.update_available = row.update_available;
+    tool.last_checked = row.last_checked;
     tool.package_name = pkg_name.clone();
     tool.description = desc.clone();
 
@@ -648,15 +676,16 @@ pub async fn update_local_cli_tool(
                 let new_version = crate::services::local_cli_scanner::detect_version(
                     std::path::Path::new(&detected_path_clone),
                 );
-                let now = chrono::Utc::now().to_rfc3339();
+                let (current_version, latest_version, update_available, last_checked) =
+                    successful_update_cache_values(&tool, new_version);
                 let _ = state.db.upsert_local_cli_tool(
                     &display_id_clone,
                     &detected_path_clone,
                     &manager_str_clone,
-                    new_version.as_deref(),
-                    new_version.as_deref(), // latest_version = 当前版本，无需再次检查更新
-                    false,
-                    Some(&now), // last_checked = 现在，避免下次 list 立即触发网络检查
+                    current_version.as_deref(),
+                    latest_version.as_deref(),
+                    update_available,
+                    last_checked.as_deref(),
                     tool.package_name.as_deref(),
                     tool.description.as_deref(),
                 );
@@ -897,6 +926,7 @@ pub async fn fetch_local_cli_descriptions(
 mod tests {
     use super::*;
     use crate::models::{LocalCliTool, PackageManager};
+    use crate::services::database::LocalCliToolRow;
     use std::path::Path;
 
     fn command_name(path_or_name: &str) -> String {
@@ -914,6 +944,66 @@ mod tests {
         let (bin, argv) = build_pty_update_args(&tool).unwrap();
         assert_eq!(command_name(&bin), "npm");
         assert_eq!(argv, vec!["install", "-g", "@mermaid-js/mermaid-cli"]);
+    }
+
+    #[test]
+    fn local_cli_cache_needs_refresh_when_package_metadata_changes() {
+        let row = LocalCliToolRow {
+            id: "old-id".to_string(),
+            detected_path: "/usr/bin/tool".to_string(),
+            manager: "npm".to_string(),
+            current_version: Some("1.0.0".to_string()),
+            latest_version: Some("1.1.0".to_string()),
+            update_available: true,
+            last_checked: Some("2026-01-01T00:00:00Z".to_string()),
+            update_status: None,
+            update_log: None,
+            package_name: Some("old-package".to_string()),
+            description: Some("Old description".to_string()),
+        };
+
+        let mut tool = LocalCliTool::new("new-id", "/usr/bin/tool", PackageManager::Pnpm);
+        tool.current_version = Some("1.0.0".to_string());
+        tool.latest_version = Some("1.1.0".to_string());
+        tool.package_name = Some("new-package".to_string());
+        tool.description = Some("Old description".to_string());
+
+        assert!(local_cli_cache_needs_refresh(&tool, &row));
+    }
+
+    #[test]
+    fn successful_update_cache_values_preserve_existing_state_when_version_detection_fails() {
+        let mut tool = LocalCliTool::new("tool", "/usr/bin/tool", PackageManager::Npm);
+        tool.current_version = Some("1.0.0".to_string());
+        tool.latest_version = Some("1.2.0".to_string());
+        tool.update_available = true;
+        tool.last_checked = Some("2026-01-01T00:00:00Z".to_string());
+
+        let (current, latest, update_available, last_checked) =
+            successful_update_cache_values(&tool, None);
+
+        assert_eq!(current.as_deref(), Some("1.0.0"));
+        assert_eq!(latest.as_deref(), Some("1.2.0"));
+        assert!(update_available);
+        assert_eq!(last_checked.as_deref(), Some("2026-01-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn successful_update_cache_values_mark_clean_when_new_version_is_detected() {
+        let mut tool = LocalCliTool::new("tool", "/usr/bin/tool", PackageManager::Npm);
+        tool.current_version = Some("1.0.0".to_string());
+        tool.latest_version = Some("1.2.0".to_string());
+        tool.update_available = true;
+        tool.last_checked = Some("2026-01-01T00:00:00Z".to_string());
+
+        let (current, latest, update_available, last_checked) =
+            successful_update_cache_values(&tool, Some("1.2.0".to_string()));
+
+        assert_eq!(current.as_deref(), Some("1.2.0"));
+        assert_eq!(latest.as_deref(), Some("1.2.0"));
+        assert!(!update_available);
+        assert!(last_checked.is_some());
+        assert_ne!(last_checked.as_deref(), Some("2026-01-01T00:00:00Z"));
     }
 
     #[test]

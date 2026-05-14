@@ -190,5 +190,4 @@ mod tests {
         let path = std::path::Path::new("/usr/bin/git");
         assert_eq!(detect_manager_from_path(path), PackageManager::Unknown);
     }
-
 }

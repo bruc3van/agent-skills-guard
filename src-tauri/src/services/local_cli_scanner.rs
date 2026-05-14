@@ -4,8 +4,9 @@ use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    process::Command,
-    sync::{mpsc, LazyLock},
+    process::{Command, Output, Stdio},
+    sync::LazyLock,
+    thread,
     time::Duration,
 };
 
@@ -146,19 +147,13 @@ fn find_brew_command() -> Option<PathBuf> {
 }
 
 fn brew_stdout(brew: &Path, args: &[&str]) -> Option<String> {
-    let brew = brew.to_path_buf();
-    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let result = Command::new(&brew)
-            .env("HOMEBREW_NO_AUTO_UPDATE", "1")
-            .env("HOMEBREW_NO_INSTALL_CLEANUP", "1")
-            .env("HOMEBREW_NO_ANALYTICS", "1")
-            .args(&args)
-            .output();
-        let _ = tx.send(result);
-    });
-    let output = rx.recv_timeout(SUBPROCESS_TIMEOUT).ok()?.ok()?;
+    let mut command = Command::new(brew);
+    command
+        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
+        .env("HOMEBREW_NO_INSTALL_CLEANUP", "1")
+        .env("HOMEBREW_NO_ANALYTICS", "1")
+        .args(args);
+    let output = command_output_timeout(command, SUBPROCESS_TIMEOUT).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -477,15 +472,7 @@ struct PipShowOutput {
 const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn run_command_stdout_timeout(command: &str, args: &[&str], timeout: Duration) -> Option<String> {
-    let command = command.to_string();
-    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let result =
-            spawn_command(&command, &args.iter().map(|s| s.as_str()).collect::<Vec<_>>());
-        let _ = tx.send(result);
-    });
-    let output = rx.recv_timeout(timeout).ok()?.ok()?;
+    let output = spawn_command_timeout(command, args, timeout).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -496,7 +483,11 @@ fn run_command_stdout(command: &str, args: &[&str]) -> Option<String> {
     run_command_stdout_timeout(command, args, SUBPROCESS_TIMEOUT)
 }
 
-fn spawn_command(command: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
+fn spawn_command_timeout(
+    command: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> std::io::Result<Output> {
     // On Windows, .cmd/.bat scripts cannot be executed directly via CreateProcess — they require
     // cmd.exe. Resolve the command via `which` (which respects PATHEXT) so npm.cmd, pnpm.cmd, etc.
     // are detected and wrapped appropriately.
@@ -508,15 +499,39 @@ fn spawn_command(command: &str, args: &[&str]) -> std::io::Result<std::process::
             .unwrap_or("")
             .to_lowercase();
         if ext == "cmd" || ext == "bat" {
-            return Command::new("cmd")
-                .arg("/c")
-                .arg(&resolved)
-                .args(args)
-                .output();
+            let mut command = Command::new("cmd");
+            command.arg("/c").arg(&resolved).args(args);
+            return command_output_timeout(command, timeout);
         }
-        return Command::new(resolved).args(args).output();
+        let mut command = Command::new(resolved);
+        command.args(args);
+        return command_output_timeout(command, timeout);
     }
-    Command::new(command).args(args).output()
+    let mut command = Command::new(command);
+    command.args(args);
+    command_output_timeout(command, timeout)
+}
+
+fn command_output_timeout(mut command: Command, timeout: Duration) -> std::io::Result<Output> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let start = std::time::Instant::now();
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output();
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "command timed out",
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn command_global_node_modules(command: &str) -> Option<PathBuf> {
@@ -1419,8 +1434,12 @@ fn parse_brew_list_all_versions_output(stdout: &str) -> HashMap<String, String> 
     let mut map = HashMap::new();
     for line in stdout.lines() {
         let mut parts = line.split_whitespace();
-        let Some(formula) = parts.next() else { continue };
-        let Some(version) = parts.last() else { continue };
+        let Some(formula) = parts.next() else {
+            continue;
+        };
+        let Some(version) = parts.last() else {
+            continue;
+        };
         map.insert(formula.to_string(), version.to_string());
     }
     map
@@ -1429,7 +1448,9 @@ fn parse_brew_list_all_versions_output(stdout: &str) -> HashMap<String, String> 
 fn parse_brew_desc_all_output(stdout: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for line in stdout.lines() {
-        let Some((formula, desc)) = line.split_once(": ") else { continue };
+        let Some((formula, desc)) = line.split_once(": ") else {
+            continue;
+        };
         let desc = desc.trim();
         if !desc.is_empty() {
             map.insert(formula.trim().to_string(), desc.to_string());
@@ -1834,11 +1855,38 @@ mod tests {
     #[test]
     fn run_command_stdout_timeout_returns_none_on_timeout() {
         #[cfg(windows)]
-        let result =
-            run_command_stdout_timeout("ping", &["-n", "5", "127.0.0.1"], Duration::from_millis(50));
+        let result = run_command_stdout_timeout(
+            "ping",
+            &["-n", "5", "127.0.0.1"],
+            Duration::from_millis(50),
+        );
         #[cfg(not(windows))]
         let result = run_command_stdout_timeout("sleep", &["5"], Duration::from_millis(50));
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn run_command_stdout_timeout_kills_timed_out_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("marker.txt");
+        let marker_arg = marker.to_string_lossy().to_string();
+
+        #[cfg(windows)]
+        let command = format!("ping -n 3 127.0.0.1 > nul & echo done > \"{}\"", marker_arg);
+        #[cfg(windows)]
+        let result =
+            run_command_stdout_timeout("cmd", &["/c", &command], Duration::from_millis(50));
+
+        #[cfg(not(windows))]
+        let result = run_command_stdout_timeout(
+            "sh",
+            &["-c", "sleep 1; echo done > \"$1\"", "sh", &marker_arg],
+            Duration::from_millis(50),
+        );
+
+        assert!(result.is_none());
+        std::thread::sleep(Duration::from_secs(2));
+        assert!(!marker.exists());
     }
 
     #[test]
