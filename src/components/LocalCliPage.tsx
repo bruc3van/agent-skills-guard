@@ -146,7 +146,7 @@ export function LocalCliPage() {
           t.id.toLowerCase().includes(q) ||
           t.detected_path.toLowerCase().includes(q) ||
           (t.package_name && t.package_name.toLowerCase().includes(q)) ||
-          (getToolDescription(t) && getToolDescription(t)!.toLowerCase().includes(q))
+          (getToolDescription(t)?.toLowerCase().includes(q) ?? false)
       );
     }
 
