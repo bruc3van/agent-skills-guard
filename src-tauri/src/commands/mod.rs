@@ -1062,12 +1062,12 @@ pub async fn import_featured_repositories(
         category_ids.unwrap_or_else(|| vec!["official".to_string(), "community".to_string()]);
 
     let config = get_featured_repositories(app).await?;
-    let mut existing_urls: std::collections::HashSet<String> = state
+    let existing_repos: HashMap<String, Repository> = state
         .db
         .get_repositories()
         .map_err(|e| e.to_string())?
         .into_iter()
-        .map(|r| r.url)
+        .map(|r| (r.url.clone(), r))
         .collect();
 
     let mut total_count = 0usize;
@@ -1082,7 +1082,15 @@ pub async fn import_featured_repositories(
         for repo in category.repositories {
             total_count += 1;
 
-            if existing_urls.contains(&repo.url) {
+            if let Some(mut existing) = existing_repos.get(&repo.url).cloned() {
+                // 已存在：更新名称（如果精选配置的名称更新了）
+                if existing.name != repo.name {
+                    existing.name = repo.name;
+                    state
+                        .db
+                        .add_repository(&existing)
+                        .map_err(|e| e.to_string())?;
+                }
                 skipped_count += 1;
                 continue;
             }
@@ -1092,7 +1100,6 @@ pub async fn import_featured_repositories(
                 .db
                 .add_repository(&new_repo)
                 .map_err(|e| e.to_string())?;
-            existing_urls.insert(repo.url);
             added_count += 1;
         }
     }

@@ -533,167 +533,16 @@ impl SkillManager {
         Ok((content, report))
     }
 
-    /// 安装 skill 到本地
+    /// 安装 skill 到本地（旧入口，内部委托给 prepare + confirm）
     pub async fn install_skill(
         &self,
         skill_id: &str,
         install_path: Option<String>,
         allow_partial_scan: bool,
     ) -> Result<()> {
-        // 从数据库获取 skill
-        let mut skill = self
-            .db
-            .get_skills()?
-            .into_iter()
-            .find(|s| s.id == skill_id)
-            .context("未找到该技能，请检查技能是否存在")?;
-
-        // 获取对应的仓库记录以获取缓存路径
-        let repositories = self.db.get_repositories()?;
-        let repo = repositories
-            .iter()
-            .find(|r| r.url == skill.repository_url)
-            .context("未找到对应的仓库记录")?;
-
-        // 确定安装基础目录（使用自定义路径或默认路径）
-        let install_base_dir = if let Some(user_path) = install_path {
-            PathBuf::from(user_path)
-        } else {
-            self.skills_dir.clone()
-        };
-
-        // 确保目标目录存在
-        std::fs::create_dir_all(&install_base_dir).context("无法创建技能目录，请检查磁盘权限")?;
-
-        // 创建 skill 文件夹（使用 skill 的文件夹名）
-        // 如果 file_path 是 "."（位于仓库根目录），使用技能名称作为文件夹名
-        let skill_folder_name = if skill.file_path == "." {
-            log::info!(
-                "技能位于仓库根目录，使用技能名称作为文件夹名: {}",
-                skill.name
-            );
-            skill.name.clone()
-        } else {
-            PathBuf::from(&skill.file_path)
-                .file_name()
-                .context("技能路径格式无效")?
-                .to_str()
-                .context("技能文件夹名称包含无效字符")?
-                .to_string()
-        };
-
-        let skill_dir = install_base_dir.join(&skill_folder_name);
-        let prepared_dir = self.create_temp_install_dir(&install_base_dir, &skill_folder_name)?;
-
-        // 优先从本地缓存复制文件
-        if let Some(cache_path) = &repo.cache_path {
-            let cache_path_buf = PathBuf::from(cache_path);
-
-            // 在缓存中找到技能目录
-            // cache_path 指向 extracted 目录，需要进入仓库的第一层目录（GitHub 压缩包格式）
-            let cache_entries = std::fs::read_dir(&cache_path_buf).context("无法读取缓存目录")?;
-
-            let mut repo_root = None;
-            for entry in cache_entries {
-                if let Ok(entry) = entry {
-                    if entry.path().is_dir() {
-                        repo_root = Some(entry.path());
-                        break;
-                    }
-                }
-            }
-
-            if let Some(repo_root) = repo_root {
-                let cached_skill_dir = if skill.file_path == "." {
-                    repo_root.clone()
-                } else {
-                    repo_root.join(&skill.file_path)
-                };
-
-                if cached_skill_dir.exists() {
-                    log::info!("从本地缓存复制文件: {:?}", cached_skill_dir);
-
-                    // 复制整个目录
-                    self.copy_directory(&cached_skill_dir, &prepared_dir)
-                        .context("从缓存复制文件失败")?;
-
-                    log::info!("成功从本地缓存安装技能");
-                } else {
-                    log::warn!("缓存中未找到技能目录，降级使用网络下载");
-                    self.install_from_network(&skill, &prepared_dir).await?;
-                }
-            } else {
-                log::warn!("缓存目录格式异常，降级使用网络下载");
-                self.install_from_network(&skill, &prepared_dir).await?;
-            }
-        } else {
-            log::info!("仓库未缓存，使用网络下载");
-            self.install_from_network(&skill, &prepared_dir).await?;
-        }
-
-        // 从缓存读取 SKILL.md 进行元数据提取
-        let skill_md_path = prepared_dir.join("SKILL.md");
-        if skill_md_path.exists() {
-            let skill_md_content =
-                std::fs::read_to_string(&skill_md_path).context("读取 SKILL.md 失败")?;
-
-            // 解析 frontmatter
-            if let Ok((name, description)) = self.github.parse_skill_frontmatter(&skill_md_content)
-            {
-                skill.name = name;
-                skill.description = description;
-            }
-        }
-
-        // 扫描整个技能目录
         let locale = rust_i18n::locale();
-        let scan_report = self.scanner.scan_directory_with_options(
-            prepared_dir.to_str().context("技能目录路径无效")?,
-            &skill.id,
-            &locale,
-            ScanOptions { skip_readme: true },
-            None,
-        )?;
-
-        log::info!(
-            "Security scan completed: score={}, scanned {} files",
-            scan_report.score,
-            scan_report.scanned_files.len()
-        );
-
-        if let Err(error) =
-            self.enforce_installable_report(&scan_report, "安装技能", allow_partial_scan)
-        {
-            if prepared_dir.exists() {
-                std::fs::remove_dir_all(&prepared_dir)?;
-            }
-            return Err(error);
-        }
-
-        self.replace_installation_directory(&prepared_dir, &skill_dir)?;
-
-        // 更新 skill 安全信息
-        Self::apply_scan_report(&mut skill, &scan_report);
-
-        // 更新数据库
-        let new_path = skill_dir.to_string_lossy().to_string();
-
-        // 将新路径添加到 local_paths 数组中
-        let mut paths = skill.local_paths.clone().unwrap_or_default();
-        if !paths.contains(&new_path) {
-            paths.push(new_path.clone());
-        }
-        skill.local_paths = Some(paths);
-
-        // 更新 installed 状态和时间
-        skill.installed = true;
-        skill.installed_at = Some(Utc::now());
-        skill.local_path = Some(new_path); // 保持向后兼容,存储最新的路径
-
-        self.db.save_skill(&skill)?;
-
-        log::info!("Skill installed successfully: {}", skill.name);
-        Ok(())
+        self.prepare_skill_installation(skill_id, &locale).await?;
+        self.confirm_skill_installation(skill_id, install_path, allow_partial_scan, Vec::new())
     }
 
     /// 准备安装技能：扫描缓存中的技能，但不复制文件，不标记为已安装
@@ -981,6 +830,27 @@ impl SkillManager {
         for tool in &non_agent_tools {
             if let Some(tool_dir) = tool.default_skills_dir() {
                 let link_path = tool_dir.join(skill_dir_name.as_str());
+
+                // 兼容性检查：如果目标已存在且内容不同，不覆盖（与 sync_skill_to_tools 一致）
+                if link_path.exists() || link_fs::is_dir_link(&link_path) {
+                    if tool_skill_path_is_compatible_with_source(
+                        &final_install_dir,
+                        &link_path,
+                        None,
+                    ) {
+                        log::info!("复用已存在的兼容工具路径 [{:?}]", link_path);
+                        linked_tool_ids.push(tool.id().to_string());
+                        continue;
+                    } else {
+                        log::warn!(
+                            "工具 '{}' 下已存在同名但内容不同的技能，不覆盖: {:?}",
+                            tool.id(),
+                            link_path
+                        );
+                        continue;
+                    }
+                }
+
                 match link_fs::create_dir_link(&final_install_dir, &link_path) {
                     Ok(()) => {
                         log::info!("链接创建成功 [{:?}]: {:?}", tool.id(), link_path);
@@ -991,6 +861,14 @@ impl SkillManager {
                     }
                 }
             }
+        }
+
+        // 如果用户选择了非 agents 工具但全部失败，返回错误让前端提示
+        if !non_agent_tools.is_empty() && linked_tool_ids.is_empty() {
+            anyhow::bail!(
+                "所有目标工具的链接创建均失败（{:?}），技能已安装到源目录但未同步到任何工具",
+                non_agent_tools.iter().map(|t| t.id()).collect::<Vec<_>>()
+            );
         }
 
         // 更新 local_path（向后兼容）
@@ -1052,6 +930,54 @@ impl SkillManager {
         Ok(())
     }
 
+    /// 清理 DB 中残留的 __cache__: / __staging__: 临时路径
+    /// 在 prepare 后用户未 confirm/cancel 就关闭 App 时，这些路径会残留
+    pub fn cleanup_stale_prepare_paths(&self) -> Result<usize> {
+        let skills = self.db.get_skills()?;
+        let mut cleaned = 0usize;
+
+        for skill in &skills {
+            if let Some(local_path) = &skill.local_path {
+                let is_temp = local_path.starts_with("__cache__:")
+                    || local_path.starts_with("__staging__:");
+                if !is_temp {
+                    continue;
+                }
+
+                // 如果实际路径已不存在，清除临时标记
+                let actual_path = local_path
+                    .strip_prefix("__cache__:")
+                    .or_else(|| local_path.strip_prefix("__staging__:"))
+                    .unwrap_or(local_path);
+
+                if !PathBuf::from(actual_path).exists() {
+                    let mut updated = skill.clone();
+                    if !skill.installed {
+                        updated.local_path = None;
+                        updated.security_score = None;
+                        updated.security_level = None;
+                        updated.security_issues = None;
+                        updated.security_report = None;
+                        updated.scanned_at = None;
+                    } else {
+                        // 已安装但有残留临时路径，只清除 local_path
+                        updated.local_path = skill.local_paths.as_ref()
+                            .and_then(|paths| paths.last().cloned());
+                    }
+                    self.db.save_skill(&updated)?;
+                    cleaned += 1;
+                    log::info!(
+                        "清理残留临时路径: skill={}, path={}",
+                        skill.name,
+                        local_path
+                    );
+                }
+            }
+        }
+
+        Ok(cleaned)
+    }
+
     /// 卸载 skill
     pub fn uninstall_skill(&self, skill_id: &str) -> Result<()> {
         // 从数据库获取 skill
@@ -1062,22 +988,41 @@ impl SkillManager {
             .find(|s| s.id == skill_id)
             .context("未找到该技能")?;
 
-        // 删除所有安装路径的文件
-        // 链接路径（Junction/symlink）用 remove_dir_link 删除，避免 remove_dir_all 跟随链接删除源内容
+        let mut errors: Vec<String> = Vec::new();
+
+        // 分离链接和源：先删所有链接（避免源先删后链接变成悬空 Junction）
+        // 第一遍：删除链接（Junction/symlink）
         if let Some(local_paths) = &skill.local_paths {
             for local_path in local_paths {
                 let path = PathBuf::from(local_path);
                 if link_fs::is_dir_link(&path) {
                     if let Err(e) = link_fs::remove_dir_link(&path) {
-                        log::warn!("删除技能链接失败: {:?}, 错误: {}", path, e);
+                        let msg = format!("删除技能链接失败: {:?}, 错误: {}", path, e);
+                        log::warn!("{}", msg);
+                        errors.push(msg);
                     }
-                } else if path.exists() {
+                }
+            }
+        }
+
+        // 第二遍：删除真实目录/文件（source 及降级拷贝）
+        if let Some(local_paths) = &skill.local_paths {
+            for local_path in local_paths {
+                let path = PathBuf::from(local_path);
+                if link_fs::is_dir_link(&path) {
+                    continue; // 已在第一遍处理
+                }
+                if path.exists() {
                     if path.is_dir() {
                         if let Err(e) = std::fs::remove_dir_all(&path) {
-                            log::warn!("删除技能目录失败: {:?}, 错误: {}", path, e);
+                            let msg = format!("删除技能目录失败: {:?}, 错误: {}", path, e);
+                            log::warn!("{}", msg);
+                            errors.push(msg);
                         }
                     } else if let Err(e) = std::fs::remove_file(&path) {
-                        log::warn!("删除技能文件失败: {:?}, 错误: {}", path, e);
+                        let msg = format!("删除技能文件失败: {:?}, 错误: {}", path, e);
+                        log::warn!("{}", msg);
+                        errors.push(msg);
                     }
                 }
             }
@@ -1088,15 +1033,16 @@ impl SkillManager {
             if let Some(local_path) = &skill.local_path {
                 let path = PathBuf::from(local_path);
                 if link_fs::is_dir_link(&path) {
-                    link_fs::remove_dir_link(&path)
-                        .context("无法删除技能链接，请检查文件是否被占用")?;
+                    if let Err(e) = link_fs::remove_dir_link(&path) {
+                        errors.push(format!("无法删除技能链接: {}", e));
+                    }
                 } else if path.exists() {
                     if path.is_dir() {
-                        std::fs::remove_dir_all(&path)
-                            .context("无法删除技能目录，请检查文件是否被占用")?;
-                    } else {
-                        std::fs::remove_file(&path)
-                            .context("无法删除技能文件，请检查文件是否被占用")?;
+                        if let Err(e) = std::fs::remove_dir_all(&path) {
+                            errors.push(format!("无法删除技能目录: {}", e));
+                        }
+                    } else if let Err(e) = std::fs::remove_file(&path) {
+                        errors.push(format!("无法删除技能文件: {}", e));
                     }
                 }
             }
@@ -1113,8 +1059,13 @@ impl SkillManager {
 
         self.db.save_skill(&skill).context("更新数据库失败")?;
 
-        log::info!("Skill uninstalled successfully: {}", skill.name);
-        Ok(())
+        if errors.is_empty() {
+            log::info!("Skill uninstalled successfully: {}", skill.name);
+            Ok(())
+        } else {
+            log::warn!("Skill uninstall completed with errors: {}", skill.name);
+            anyhow::bail!("卸载完成但存在残留: {}", errors.join("; "))
+        }
     }
 
     /// 卸载特定路径的技能
@@ -1139,12 +1090,20 @@ impl SkillManager {
             }
         }
 
-        // 从 local_paths 中移除该路径
+        // 从 local_paths 中移除该路径（使用规范化比较，兼容 Windows 大小写/分隔符差异）
+        let normalized_remove = normalize_path_for_compare(&path);
         if let Some(mut paths) = skill.local_paths.clone() {
-            paths.retain(|p| p != path_to_remove);
+            paths.retain(|p| normalize_path_for_compare(&PathBuf::from(p)) != normalized_remove);
 
             if paths.is_empty() {
-                // 如果没有剩余路径,标记为未安装
+                // 如果没有剩余路径
+                if skill.is_local_only && skill.repository_url == LOCAL_REPOSITORY_URL {
+                    // 本地技能：直接删除 DB 记录（与 reconcile_stale_skills 行为一致）
+                    self.db.delete_skill(&skill.id).context("删除技能记录失败")?;
+                    log::info!("已删除本地技能记录: {}", skill.name);
+                    return Ok(());
+                }
+                // 市场技能：标记为未安装
                 skill.installed = false;
                 skill.installed_at = None;
                 skill.local_path = None;
@@ -1176,6 +1135,12 @@ impl SkillManager {
         // This intentionally checks the filesystem on demand instead of using a long-lived
         // backend cache: external tools or previous app versions may create/remove links while
         // the app is open. DB writes are still gated by installed_tool_state_changed.
+
+        // 清理残留的 __cache__: / __staging__: 临时路径（用户 prepare 后未 confirm 就关闭 App）
+        if let Err(e) = self.cleanup_stale_prepare_paths() {
+            log::warn!("清理残留临时路径时出错（忽略）: {}", e);
+        }
+
         let tool_dirs = default_tool_dirs();
         let skills = self.db.get_skills()?;
         let mut installed = Vec::new();
@@ -1696,76 +1661,6 @@ impl SkillManager {
     /// 解析 SKILL.md 的 frontmatter（使用 serde_yaml，支持多行 block scalar 等 YAML 语法）
     fn parse_frontmatter(&self, content: &str) -> Result<(String, Option<String>)> {
         self.github.parse_skill_frontmatter(content)
-    }
-
-    /// 从网络下载并安装技能（降级方案，递归处理子目录）
-    async fn install_from_network(
-        &self,
-        skill: &crate::models::Skill,
-        skill_dir: &PathBuf,
-    ) -> Result<()> {
-        let (owner, repo) = crate::models::Repository::from_github_url(&skill.repository_url)?;
-        let api_path = if skill.file_path == "." {
-            "".to_string()
-        } else {
-            skill.file_path.clone()
-        };
-        self.download_directory_recursive(&owner, &repo, &api_path, skill_dir)
-            .await
-    }
-
-    /// 递归下载 GitHub 目录中的所有文件（包含子目录）
-    async fn download_directory_recursive(
-        &self,
-        owner: &str,
-        repo: &str,
-        api_path: &str,
-        local_dir: &PathBuf,
-    ) -> Result<()> {
-        std::fs::create_dir_all(local_dir)
-            .with_context(|| format!("无法创建目录: {:?}", local_dir))?;
-
-        let entries = self
-            .github
-            .get_directory_files(owner, repo, api_path)
-            .await
-            .with_context(|| format!("获取目录文件列表失败: {}", api_path))?;
-
-        log::info!(
-            "Found {} entries in '{}' (owner={}, repo={})",
-            entries.len(),
-            api_path,
-            owner,
-            repo
-        );
-
-        for entry in &entries {
-            if entry.content_type == "dir" {
-                let sub_local = local_dir.join(&entry.name);
-                Box::pin(self.download_directory_recursive(owner, repo, &entry.path, &sub_local))
-                    .await
-                    .with_context(|| format!("下载子目录失败: {}", entry.path))?;
-            } else if entry.content_type == "file" {
-                let download_url = entry
-                    .download_url
-                    .as_ref()
-                    .with_context(|| format!("文件 {} 缺少下载链接", entry.name))?;
-
-                let file_content = self
-                    .github
-                    .download_file(download_url)
-                    .await
-                    .with_context(|| format!("下载文件失败: {}", entry.name))?;
-
-                let local_file_path = local_dir.join(&entry.name);
-                std::fs::write(&local_file_path, file_content)
-                    .with_context(|| format!("无法写入文件: {}", entry.name))?;
-
-                log::info!("Saved file: {}/{}", api_path, entry.name);
-            }
-        }
-
-        Ok(())
     }
 
     /// 检测本地文件是否被修改（与缓存中的版本比较）
@@ -2453,22 +2348,7 @@ impl SkillManager {
             .to_string_lossy()
             .to_string();
 
-        // 删除旧链接
-        for old_tool_id in &skill.linked_tools {
-            if let Some(tool) = AgentTool::from_id(old_tool_id) {
-                if let Some(tool_dir) = tool.default_skills_dir() {
-                    let link = tool_dir.join(&skill_dir_name);
-                    if link_fs::is_dir_link(&link) {
-                        if let Err(e) = link_fs::remove_dir_link(&link) {
-                            log::warn!("删除旧链接失败 [{:?}]: {}", link, e);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Create or adopt requested target paths first; final DB state is reconciled with
-        // the same filesystem scan used by get_installed_skills to avoid path-state drift.
+        // 先创建新链接，再删除不再需要的旧链接（原子性：新链接创建失败不影响已有链接）
         let mut sync_errors: Vec<String> = Vec::new();
         for tool_id in &target_tools {
             let tool = match AgentTool::from_id(tool_id) {
@@ -2499,6 +2379,33 @@ impl SkillManager {
                         let msg = format!("创建链接到工具 '{}' 失败: {}", tool.id(), e);
                         log::warn!("{}", msg);
                         sync_errors.push(msg);
+                    }
+                }
+            }
+        }
+
+        // 删除旧链接（仅删除不在新 target_tools 中且确实指向自身源的链接）
+        for old_tool_id in &skill.linked_tools {
+            if target_tools.iter().any(|t| t == old_tool_id) {
+                continue; // 仍在目标工具列表中，保留
+            }
+            if let Some(tool) = AgentTool::from_id(old_tool_id) {
+                if let Some(tool_dir) = tool.default_skills_dir() {
+                    let link = tool_dir.join(&skill_dir_name);
+                    if link_fs::is_dir_link(&link) {
+                        let targets_source = link_fs::read_dir_link_target(&link)
+                            .map(|target| paths_point_to_same_location(&source, &target))
+                            .unwrap_or(false);
+                        if targets_source {
+                            if let Err(e) = link_fs::remove_dir_link(&link) {
+                                log::warn!("删除旧链接失败 [{:?}]: {}", link, e);
+                            }
+                        } else {
+                            log::warn!(
+                                "跳过删除旧链接 [{:?}]：链接目标不指向源目录，可能为第三方工具建立",
+                                link
+                            );
+                        }
                     }
                 }
             }
@@ -2546,8 +2453,7 @@ fn is_retryable_rename_error(err: &std::io::Error) -> bool {
 
 fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
     let mut last_err: Option<std::io::Error> = None;
-    let attempts = 6usize;
-    let delay = std::time::Duration::from_millis(250);
+    let attempts = 8usize;
 
     for attempt in 0..attempts {
         match std::fs::rename(from, to) {
@@ -2557,7 +2463,10 @@ fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
                 let is_last = attempt + 1 >= attempts;
                 last_err = Some(err);
                 if retryable && !is_last {
-                    std::thread::sleep(delay);
+                    // 指数退避：250ms, 500ms, 750ms, 1000ms, 1250ms, 1500ms, 1750ms
+                    // Windows 病毒扫描可能持有句柄 > 2 秒
+                    let delay_ms = 250u64 * (attempt as u64 + 1);
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     continue;
                 }
                 break;

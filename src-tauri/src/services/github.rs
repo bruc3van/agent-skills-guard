@@ -376,6 +376,11 @@ impl GitHubService {
 
     /// 解析 SKILL.md 的 frontmatter
     pub fn parse_skill_frontmatter(&self, content: &str) -> Result<(String, Option<String>)> {
+        // 兼容 BOM 和前导空白（Windows 克隆常见）
+        let content = content
+            .trim_start_matches('\u{feff}')
+            .trim_start();
+
         // 查找 frontmatter 的边界（--- ... ---）
         let lines: Vec<&str> = content.lines().collect();
 

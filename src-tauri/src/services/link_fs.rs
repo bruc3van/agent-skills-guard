@@ -78,9 +78,14 @@ pub fn read_dir_link_target(link: &Path) -> Result<std::path::PathBuf> {
 pub fn remove_dir_link(link: &Path) -> Result<()> {
     #[cfg(windows)]
     {
-        // Junction 和普通目录都用 remove_dir；如果是 symlink 也用 remove_dir
-        if link.exists() || is_dir_link(link) {
+        // Junction / symlink 用 remove_dir（不跟随删除源）；
+        // 降级拷贝是普通目录，需要用 remove_dir_all 清理内容
+        if is_dir_link(link) {
             std::fs::remove_dir(link).context(format!("无法删除目录链接: {:?}", link))?;
+        } else if link.exists() {
+            // 非 reparse-point 的已存在目录 → 降级拷贝，递归删除
+            std::fs::remove_dir_all(link)
+                .context(format!("无法删除降级拷贝目录: {:?}", link))?;
         }
     }
     #[cfg(not(windows))]
