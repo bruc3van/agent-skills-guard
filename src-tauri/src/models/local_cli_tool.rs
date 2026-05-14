@@ -40,6 +40,8 @@ impl PackageManager {
 }
 
 pub fn detect_manager_from_path(path: &Path) -> PackageManager {
+    // s is lowercased, so patterns below use lowercase even for mixed-case real paths
+    // (e.g. "/usr/local/Cellar/" is matched as "/usr/local/cellar/")
     let s = path.to_string_lossy().to_lowercase();
     let s = s.replace('\\', "/");
 
