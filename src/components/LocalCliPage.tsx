@@ -23,7 +23,6 @@ import type { LocalCliTool } from "../types";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
 import { SkillUninstallConfirmDialog } from "./SkillUninstallConfirmDialog";
-import { sanitizeTerminalText } from "../lib/terminal-log";
 
 type ManagerTab = "all" | string;
 
@@ -109,8 +108,7 @@ export function LocalCliPage() {
   }, [tools, isLoading, refetch, descriptionRetryToken]);
 
   const getToolDescription = (tool: LocalCliTool): string | undefined => {
-    const raw = tool.description || descriptionMap[tool.id];
-    return raw ? sanitizeTerminalText(raw) : undefined;
+    return tool.description || descriptionMap[tool.id] || undefined;
   };
 
   const updateCount = tools.filter((tool) => tool.update_available).length;
