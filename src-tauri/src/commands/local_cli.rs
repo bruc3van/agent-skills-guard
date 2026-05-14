@@ -58,21 +58,35 @@ fn local_cli_cache_needs_refresh(
         || tool.description.as_deref() != row.description.as_deref()
 }
 
+fn apply_cached_update_state(
+    tool: &mut LocalCliTool,
+    row: &crate::services::database::LocalCliToolRow,
+) {
+    let package_changed = tool.package_name.as_deref() != row.package_name.as_deref();
+    if package_changed {
+        tool.latest_version = None;
+        tool.update_available = false;
+        tool.last_checked = None;
+    } else {
+        tool.latest_version = row
+            .latest_version
+            .as_deref()
+            .map(|v| v.strip_prefix('v').unwrap_or(v).to_string());
+        tool.update_available = is_outdated(
+            tool.current_version.as_deref(),
+            tool.latest_version.as_deref(),
+        );
+        tool.last_checked = row.last_checked.clone();
+    }
+}
+
 fn successful_update_cache_values(
     tool: &LocalCliTool,
     new_version: Option<String>,
 ) -> (Option<String>, Option<String>, bool, Option<String>) {
-    if let Some(version) = new_version {
-        let now = chrono::Utc::now().to_rfc3339();
-        return (Some(version.clone()), Some(version), false, Some(now));
-    }
-
-    (
-        tool.current_version.clone(),
-        tool.latest_version.clone(),
-        tool.update_available,
-        tool.last_checked.clone(),
-    )
+    let version = new_version.or_else(|| tool.current_version.clone());
+    let now = chrono::Utc::now().to_rfc3339();
+    (version.clone(), version, false, Some(now))
 }
 
 pub fn build_pty_uninstall_args(tool: &LocalCliTool) -> Option<(String, Vec<String>)> {
@@ -568,15 +582,7 @@ pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<Loca
     for tool in tools.iter_mut() {
         let cached = cache_map.get(&tool.detected_path);
         if let Some(row) = cached {
-            tool.latest_version = row
-                .latest_version
-                .as_deref()
-                .map(|v| v.strip_prefix('v').unwrap_or(v).to_string());
-            tool.update_available = is_outdated(
-                tool.current_version.as_deref(),
-                tool.latest_version.as_deref(),
-            );
-            tool.last_checked = row.last_checked.clone();
+            apply_cached_update_state(tool, row);
             tool.update_status = row.update_status.clone();
             tool.update_log = row.update_log.clone();
             if tool.description.is_none() {
@@ -972,7 +978,38 @@ mod tests {
     }
 
     #[test]
-    fn successful_update_cache_values_preserve_existing_state_when_version_detection_fails() {
+    fn cached_update_state_ignores_latest_version_when_package_name_changes() {
+        let row = LocalCliToolRow {
+            id: "wheel".to_string(),
+            detected_path: r"C:\Python314\Scripts\wheel.exe".to_string(),
+            manager: "pip".to_string(),
+            current_version: Some("0.47.0".to_string()),
+            latest_version: Some("3.6.3".to_string()),
+            update_available: true,
+            last_checked: Some("2026-01-01T00:00:00Z".to_string()),
+            update_status: None,
+            update_log: None,
+            package_name: Some("wrong-package".to_string()),
+            description: None,
+        };
+
+        let mut tool = LocalCliTool::new(
+            "wheel",
+            r"C:\Python314\Scripts\wheel.exe",
+            PackageManager::Pip,
+        );
+        tool.current_version = Some("0.47.0".to_string());
+        tool.package_name = Some("wheel".to_string());
+
+        apply_cached_update_state(&mut tool, &row);
+
+        assert_eq!(tool.latest_version, None);
+        assert!(!tool.update_available);
+        assert_eq!(tool.last_checked, None);
+    }
+
+    #[test]
+    fn successful_update_cache_values_clears_update_when_version_detection_fails() {
         let mut tool = LocalCliTool::new("tool", "/usr/bin/tool", PackageManager::Npm);
         tool.current_version = Some("1.0.0".to_string());
         tool.latest_version = Some("1.2.0".to_string());
@@ -983,9 +1020,10 @@ mod tests {
             successful_update_cache_values(&tool, None);
 
         assert_eq!(current.as_deref(), Some("1.0.0"));
-        assert_eq!(latest.as_deref(), Some("1.2.0"));
-        assert!(update_available);
-        assert_eq!(last_checked.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert_eq!(latest.as_deref(), Some("1.0.0"));
+        assert!(!update_available);
+        assert_ne!(last_checked.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert!(last_checked.is_some());
     }
 
     #[test]

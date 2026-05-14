@@ -2,6 +2,7 @@ use crate::models::{Skill, LOCAL_REPOSITORY_URL};
 use crate::services::{AgentTool, Database};
 use anyhow::{Context, Result};
 use chrono::Utc;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -113,6 +114,21 @@ impl MigrationManager {
                     changed = true;
                 }
 
+                if skill.repository_url == LOCAL_REPOSITORY_URL {
+                    if skill.name != group.name {
+                        skill.name = group.name.clone();
+                        changed = true;
+                    }
+                    if skill.description != group.description {
+                        skill.description = group.description.clone();
+                        changed = true;
+                    }
+                    if skill.checksum.as_deref() != Some(group.checksum.as_str()) {
+                        skill.checksum = Some(group.checksum.clone());
+                        changed = true;
+                    }
+                }
+
                 if changed {
                     self.db.save_skill(&skill)?;
                     summary.updated += 1;
@@ -161,6 +177,12 @@ struct InventoryEntry {
     display_path: String,
     tool_id: String,
     checksum: String,
+    name: String,
+    description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillFrontmatter {
     name: String,
     description: Option<String>,
 }
@@ -327,47 +349,47 @@ fn build_local_skill_id(checksum: &str, canonical_path: &str) -> String {
 }
 
 fn parse_skill_frontmatter(content: &str) -> Option<(String, Option<String>)> {
-    if !content.starts_with("---") {
+    let mut lines = content.lines();
+    if lines.next()? != "---" {
         return None;
     }
 
-    // This migration only needs best-effort name/description extraction. It intentionally
-    // uses a small parser and may stop at an embedded YAML document separator.
-    let end = content[3..].find("---")? + 3;
-    let frontmatter = &content[3..end];
-    let mut name = None;
-    let mut description = None;
-
-    for line in frontmatter.lines() {
-        let line = line.trim();
-        if let Some(value) = line.strip_prefix("name:") {
-            name = Some(
-                value
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'')
-                    .to_string(),
-            );
-        } else if let Some(value) = line.strip_prefix("description:") {
-            description = Some(
-                value
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'')
-                    .to_string(),
-            );
+    let mut frontmatter_lines = Vec::new();
+    for line in lines {
+        if line == "---" {
+            let frontmatter: SkillFrontmatter =
+                serde_yaml::from_str(&frontmatter_lines.join("\n")).ok()?;
+            return Some((frontmatter.name, frontmatter.description));
         }
+        frontmatter_lines.push(line);
     }
 
-    name.map(|name| (name, description))
+    None
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{MigrationManager, ToolSkillDir};
-    use crate::models::Skill;
+    use super::{parse_skill_frontmatter, MigrationManager, ToolSkillDir};
+    use crate::models::{Skill, LOCAL_REPOSITORY_URL};
     use crate::services::{link_fs, Database};
     use std::sync::Arc;
+
+    #[test]
+    fn parse_skill_frontmatter_reads_yaml_block_scalar_description() {
+        let content = r#"---
+name: dbs-content
+description: |
+  First line.
+  Second line.
+---
+
+# Body
+"#;
+
+        let (_, description) = parse_skill_frontmatter(content).unwrap();
+
+        assert_eq!(description.as_deref(), Some("First line.\nSecond line."));
+    }
 
     #[test]
     fn adoption_marks_linked_claude_directory_skill_as_claude_code_without_moving_files() {
@@ -406,6 +428,54 @@ mod tests {
         assert!(
             skill_dir.exists(),
             "adoption must not move the real skill directory"
+        );
+    }
+
+    #[test]
+    fn adoption_refreshes_existing_local_skill_block_scalar_description() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let agents_skills = temp.path().join("home").join(".agents").join("skills");
+        let skill_dir = agents_skills.join("dbs-content");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: dbs-content
+description: |
+  First line.
+  Second line.
+---
+"#,
+        )
+        .unwrap();
+
+        let mut existing = Skill::new(
+            "dbs-content".to_string(),
+            LOCAL_REPOSITORY_URL.to_string(),
+            skill_dir.to_string_lossy().to_string(),
+        );
+        existing.id = "local::existing".to_string();
+        existing.description = Some("|".to_string());
+        existing.installed = true;
+        existing.local_path = Some(skill_dir.to_string_lossy().to_string());
+        existing.local_paths = Some(vec![skill_dir.to_string_lossy().to_string()]);
+        existing.is_local_only = true;
+        db.save_skill(&existing).unwrap();
+
+        let manager = MigrationManager::new(Arc::clone(&db));
+        let summary = manager
+            .adopt_existing_skills_from_dirs(&[ToolSkillDir {
+                tool_id: "agents".to_string(),
+                path: agents_skills,
+            }])
+            .unwrap();
+
+        let skills = db.get_skills().unwrap();
+        assert_eq!(summary.updated, 1);
+        assert_eq!(
+            skills[0].description.as_deref(),
+            Some("First line.\nSecond line.")
         );
     }
 

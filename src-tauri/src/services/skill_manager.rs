@@ -1275,24 +1275,38 @@ impl SkillManager {
 
                     // 通过 realpath 去重：同一技能出现在多个工具目录时，关联所有工具
                     let real_path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+                    let path_str = path.to_string_lossy().to_string();
                     if let Some(&idx) = seen_real_paths.get(&real_path) {
                         // 同一技能已在本次扫描中处理过，将当前目录的工具关联上去
+                        let existing: &mut Skill = &mut scanned_skills[idx];
                         if let Some(ref tool_id) = scan_dir_tool {
-                            let existing: &mut Skill = &mut scanned_skills[idx];
-                            if !existing.linked_tools.contains(tool_id) {
-                                existing.linked_tools.push(tool_id.clone());
-                                log::info!(
-                                    "关联工具 '{}' 到技能 '{}'（来自 {:?}）",
-                                    tool_id,
-                                    existing.name,
-                                    path
-                                );
+                            push_unique_value(&mut existing.linked_tools, tool_id.clone());
+                            log::info!(
+                                "关联工具 '{}' 到技能 '{}'（来自 {:?}）",
+                                tool_id,
+                                existing.name,
+                                path
+                            );
+                        }
+                        let paths = existing.local_paths.get_or_insert_with(Vec::new);
+                        if !paths.contains(&path_str) {
+                            paths.push(path_str.clone());
+                        }
+                        let mut should_save = true;
+                        if let Ok(content) = std::fs::read_to_string(&skill_md_path) {
+                            let (skill_name, skill_description) =
+                                self.parse_frontmatter(&content).unwrap_or_else(|_| {
+                                    (existing.name.clone(), existing.description.clone())
+                                });
+                            if existing.repository_url == LOCAL_REPOSITORY_URL {
+                                existing.name = skill_name;
+                                existing.description = skill_description;
+                                existing.file_path = path_str.clone();
                             }
-                            let path_str = path.to_string_lossy().to_string();
-                            let paths = existing.local_paths.get_or_insert_with(Vec::new);
-                            if !paths.contains(&path_str) {
-                                paths.push(path_str);
-                            }
+                        } else if scan_dir_tool.is_none() {
+                            should_save = false;
+                        }
+                        if should_save {
                             let _ = self.db.save_skill(existing);
                         }
                         continue;
@@ -1300,7 +1314,6 @@ impl SkillManager {
                     // 也检查 DB 中已有记录（前次扫描导入的）
                     // 找到匹配后必须 continue 'entry，否则会继续走新 skill 创建逻辑
                     if let Some(ref tool_id) = scan_dir_tool {
-                        let path_str = path.to_string_lossy().to_string();
                         for db_skill in &existing_skills {
                             if !db_skill.installed {
                                 continue;
@@ -1311,23 +1324,44 @@ impl SkillManager {
                                 .and_then(|p| std::fs::canonicalize(p).ok());
                             if db_real.as_deref() == Some(&real_path) {
                                 let mut updated = db_skill.clone();
-                                if !updated.linked_tools.contains(tool_id) {
-                                    updated.linked_tools.push(tool_id.clone());
-                                    log::info!(
-                                        "关联工具 '{}' 到已有技能 '{}'（来自 {:?}）",
-                                        tool_id,
-                                        updated.name,
-                                        path
-                                    );
-                                }
+                                push_unique_value(&mut updated.linked_tools, tool_id.clone());
+                                log::info!(
+                                    "关联工具 '{}' 到已有技能 '{}'（来自 {:?}）",
+                                    tool_id,
+                                    updated.name,
+                                    path
+                                );
                                 if let Some(ref mut paths) = updated.local_paths {
                                     if !paths.contains(&path_str) {
-                                        paths.push(path_str);
+                                        paths.push(path_str.clone());
                                     }
                                 } else {
-                                    updated.local_paths = Some(vec![path_str]);
+                                    updated.local_paths = Some(vec![path_str.clone()]);
+                                }
+                                if let Ok(content) = std::fs::read_to_string(&skill_md_path) {
+                                    let (skill_name, skill_description) =
+                                        self.parse_frontmatter(&content).unwrap_or_else(|_| {
+                                            (updated.name.clone(), updated.description.clone())
+                                        });
+                                    if updated.repository_url == LOCAL_REPOSITORY_URL {
+                                        updated.name = skill_name;
+                                        updated.description = skill_description;
+                                        updated.file_path = path_str.clone();
+                                    }
+                                    let checksum =
+                                        self.scanner.calculate_checksum(content.as_bytes());
+                                    if updated.checksum.as_deref() != Some(checksum.as_str()) {
+                                        updated.checksum = Some(checksum);
+                                    }
+                                    log::info!(
+                                        "刷新已有本地技能 '{}' 的元数据（来自 {:?}）",
+                                        updated.name,
+                                        skill_md_path
+                                    );
                                 }
                                 let _ = self.db.save_skill(&updated);
+                                scanned_skills.push(updated);
+                                seen_real_paths.insert(real_path, scanned_skills.len() - 1);
                                 // 跳过新 skill 创建逻辑，该路径已在 DB 中记录
                                 continue 'entry;
                             }
