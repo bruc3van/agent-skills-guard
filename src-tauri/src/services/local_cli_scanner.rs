@@ -244,19 +244,26 @@ where
         .map(|prefix| brew_linked_binary_names(prefix))
         .unwrap_or_default();
 
-    let mut formulae = formulae.iter().cloned().collect::<Vec<_>>();
-    formulae.sort();
+    // 批量获取所有版本（一次子进程代替 N 次）
+    let all_versions = run(&["list", "--versions"])
+        .map(|stdout| parse_brew_list_all_versions_output(&stdout))
+        .unwrap_or_default();
+
+    // 批量获取所有描述（一次子进程代替 N 次）
+    let formula_refs: Vec<&str> = formulae.iter().map(|s| s.as_str()).collect();
+    let mut desc_args = vec!["desc", "--formula"];
+    desc_args.extend(formula_refs.iter().copied());
+    let all_descriptions = run(&desc_args)
+        .map(|stdout| parse_brew_desc_all_output(&stdout))
+        .unwrap_or_default();
+
+    let mut formulae_sorted = formulae.iter().cloned().collect::<Vec<_>>();
+    formulae_sorted.sort();
 
     let mut tools = Vec::new();
-    for formula in formulae {
-        let version = {
-            let args = ["list", "--versions", formula.as_str()];
-            run(&args).and_then(|output| parse_brew_list_versions_output(&output))
-        };
-        let description = {
-            let args = ["desc", "--formula", formula.as_str()];
-            run(&args).and_then(|output| parse_brew_desc_output(&output))
-        };
+    for formula in formulae_sorted {
+        let version = all_versions.get(&formula).cloned();
+        let description = all_descriptions.get(&formula).cloned();
 
         let linked_names = linked_binaries.get(&formula);
 
@@ -1408,6 +1415,29 @@ fn parse_brew_desc_output(output: &str) -> Option<String> {
         .filter(|desc| !desc.is_empty())
 }
 
+fn parse_brew_list_all_versions_output(stdout: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for line in stdout.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(formula) = parts.next() else { continue };
+        let Some(version) = parts.last() else { continue };
+        map.insert(formula.to_string(), version.to_string());
+    }
+    map
+}
+
+fn parse_brew_desc_all_output(stdout: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for line in stdout.lines() {
+        let Some((formula, desc)) = line.split_once(": ") else { continue };
+        let desc = desc.trim();
+        if !desc.is_empty() {
+            map.insert(formula.trim().to_string(), desc.to_string());
+        }
+    }
+    map
+}
+
 fn resolve_pnpm_package_name(path: &Path) -> Option<String> {
     let pkg_json_path = pnpm_package_json_path(path)?;
     read_package_json_field(&pkg_json_path, "name").or_else(|| Some(tool_id_from_path(path)))
@@ -1765,6 +1795,29 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::Duration;
+
+    #[test]
+    fn parse_brew_list_all_versions_output_builds_map() {
+        let output = "ripgrep 14.1.1\npython@3.13 3.13.7 3.13.8\ngit 2.47.0\n";
+        let map = parse_brew_list_all_versions_output(output);
+        assert_eq!(map.get("ripgrep").map(|s| s.as_str()), Some("14.1.1"));
+        assert_eq!(map.get("python@3.13").map(|s| s.as_str()), Some("3.13.8"));
+        assert_eq!(map.get("git").map(|s| s.as_str()), Some("2.47.0"));
+    }
+
+    #[test]
+    fn parse_brew_desc_all_output_builds_map() {
+        let output = "ripgrep: Recursively search directories for a regex pattern\ngit: Distributed revision control system\n";
+        let map = parse_brew_desc_all_output(output);
+        assert_eq!(
+            map.get("ripgrep").map(|s| s.as_str()),
+            Some("Recursively search directories for a regex pattern")
+        );
+        assert_eq!(
+            map.get("git").map(|s| s.as_str()),
+            Some("Distributed revision control system")
+        );
+    }
 
     #[test]
     fn build_scoop_binary_app_map_returns_hashmap() {
@@ -2167,10 +2220,12 @@ mod tests {
                 rg.parent().unwrap().parent().unwrap().to_string_lossy()
             )),
             ["list", "--formula", "fd"] => Some(fd.to_string_lossy().to_string()),
-            ["list", "--versions", "ripgrep"] => Some("ripgrep 14.1.1\n".to_string()),
-            ["list", "--versions", "fd"] => Some("fd 10.0.0\n".to_string()),
-            ["desc", "--formula", "ripgrep"] => Some("ripgrep: Search tool\n".to_string()),
-            ["desc", "--formula", "fd"] => Some("fd: Find entries\n".to_string()),
+            // batch versions call (no formula name)
+            ["list", "--versions"] => Some("ripgrep 14.1.1\nfd 10.0.0\n".to_string()),
+            // batch desc call (all formulas in one call)
+            ["desc", "--formula", ..] => {
+                Some("ripgrep: Search tool\nfd: Find entries\n".to_string())
+            }
             _ => None,
         });
 
