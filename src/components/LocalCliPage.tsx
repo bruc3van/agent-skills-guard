@@ -189,6 +189,7 @@ export function LocalCliPage() {
   };
 
   const handleRescan = () => {
+    if (isChecking || isUpdating || isUninstalling) return;
     setDescriptionMap({});
     attemptedDescriptionIdsRef.current.clear();
     setFetchProgress(null);
@@ -198,6 +199,7 @@ export function LocalCliPage() {
   };
 
   const handleUpdateTool = (tool: LocalCliTool) => {
+    if (isChecking || isRescanning || isUninstalling) return;
     updateTool(tool);
   };
 
@@ -243,7 +245,9 @@ export function LocalCliPage() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleRescan}
-                    disabled={isLoading || isRescanning}
+                    disabled={
+                      isLoading || isRescanning || isChecking || isUpdating || isUninstalling
+                    }
                     className="apple-button-secondary h-10 px-4 flex items-center gap-2 disabled:opacity-50 text-sm"
                   >
                     {isLoading || isRescanning ? (
@@ -255,7 +259,7 @@ export function LocalCliPage() {
                   </button>
                   <button
                     onClick={handleCheckUpdates}
-                    disabled={isChecking}
+                    disabled={isChecking || isRescanning || isUpdating || isUninstalling}
                     className="apple-button-primary h-10 px-5 flex items-center gap-2 disabled:opacity-50"
                   >
                     {isChecking ? (

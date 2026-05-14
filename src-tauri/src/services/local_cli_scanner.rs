@@ -233,8 +233,7 @@ fn brew_tools_from_formulae_with<F>(formulae: &HashSet<String>, mut run: F) -> V
 where
     F: FnMut(&[&str]) -> Option<String>,
 {
-    let brew_prefix = run(&["--prefix"])
-        .map(|stdout| PathBuf::from(stdout.trim()));
+    let brew_prefix = run(&["--prefix"]).map(|stdout| PathBuf::from(stdout.trim()));
     let linked_binaries = brew_prefix
         .as_ref()
         .map(|prefix| brew_linked_binary_names(prefix))
@@ -313,11 +312,7 @@ fn merge_package_tools(mut tools: Vec<LocalCliTool>, manager: &PackageManager) -
         bundled.remove(pos);
     }
 
-    let mut merged = LocalCliTool::new(
-        &pkg_name,
-        &representative.detected_path,
-        manager.clone(),
-    );
+    let mut merged = LocalCliTool::new(&pkg_name, &representative.detected_path, manager.clone());
     merged.package_name = Some(pkg_name);
     merged.current_version = representative.current_version;
     merged.description = representative.description;
@@ -380,10 +375,7 @@ fn brew_linked_binary_names(brew_prefix: &Path) -> HashMap<String, HashSet<Strin
             continue;
         };
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            result
-                .entry(formula)
-                .or_default()
-                .insert(name.to_string());
+            result.entry(formula).or_default().insert(name.to_string());
         }
     }
     result
@@ -478,7 +470,6 @@ fn run_command_stdout(command: &str, args: &[&str]) -> Option<String> {
     String::from_utf8(output.stdout).ok()
 }
 
-
 fn spawn_command(command: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
     // On Windows, .cmd/.bat scripts cannot be executed directly via CreateProcess — they require
     // cmd.exe. Resolve the command via `which` (which respects PATHEXT) so npm.cmd, pnpm.cmd, etc.
@@ -528,14 +519,12 @@ fn node_package_json_path(node_modules_root: &Path, package_name: &str) -> PathB
 
 fn node_package_bin_names(package_name: &str, bin: &NodeBinField) -> Vec<String> {
     match bin {
-        NodeBinField::String(_) => {
-            package_name
-                .rsplit('/')
-                .next()
-                .filter(|name| !name.is_empty())
-                .map(|name| vec![name.to_string()])
-                .unwrap_or_default()
-        }
+        NodeBinField::String(_) => package_name
+            .rsplit('/')
+            .next()
+            .filter(|name| !name.is_empty())
+            .map(|name| vec![name.to_string()])
+            .unwrap_or_default(),
         NodeBinField::Object(entries) => entries.keys().cloned().collect(),
     }
 }
@@ -723,7 +712,6 @@ fn common_pip_script_roots(home: Option<PathBuf>) -> Vec<PathBuf> {
     roots
 }
 
-
 pub fn parse_version(output: &str) -> Option<String> {
     // Optional "v" prefix then semver triple — use a capture group to exclude the "v"
     let re = Regex::new(r"v?(\d+\.\d+\.\d+)").ok()?;
@@ -738,7 +726,9 @@ pub fn detect_version(path: &Path) -> Option<String> {
         PackageManager::Pnpm => detect_pnpm_version(path),
         PackageManager::Pip => detect_pip_version(path),
         PackageManager::Brew => detect_brew_version(path),
-        PackageManager::Scoop | PackageManager::Choco | PackageManager::Unknown => None,
+        PackageManager::Scoop => detect_scoop_version(path),
+        PackageManager::Choco => detect_choco_version(path),
+        PackageManager::Unknown => None,
     }
 }
 
@@ -811,11 +801,7 @@ fn fallback_pip_site_packages(out: &mut Vec<PathBuf>) {
         }
         // pip install --user packages: %APPDATA%\Python\Python3XX\site-packages
         if let Some(appdata) = std::env::var_os("APPDATA").map(PathBuf::from) {
-            collect_python_site_packages_under(
-                &appdata.join("Python"),
-                &["site-packages"],
-                out,
-            );
+            collect_python_site_packages_under(&appdata.join("Python"), &["site-packages"], out);
         }
     }
 
@@ -1090,13 +1076,16 @@ fn scoop_binary_app_map() -> &'static HashMap<String, String> {
                     subdir_path = current.join(subdir);
                     &subdir_path
                 };
-                let Ok(dir_entries) = std::fs::read_dir(dir) else { continue };
+                let Ok(dir_entries) = std::fs::read_dir(dir) else {
+                    continue;
+                };
                 for bin_entry in dir_entries.flatten() {
                     if !is_executable(&bin_entry.path()) {
                         continue;
                     }
                     if let Some(name) = bin_entry.path().file_stem().and_then(|n| n.to_str()) {
-                        map.entry(name.to_lowercase()).or_insert_with(|| app_name.clone());
+                        map.entry(name.to_lowercase())
+                            .or_insert_with(|| app_name.clone());
                     }
                 }
             }
@@ -1107,10 +1096,13 @@ fn scoop_binary_app_map() -> &'static HashMap<String, String> {
 }
 
 fn choco_lib_dir() -> Option<PathBuf> {
-    ["C:\\ProgramData\\chocolatey\\lib", "C:\\ProgramData\\choco\\lib"]
-        .iter()
-        .map(PathBuf::from)
-        .find(|p| p.is_dir())
+    [
+        "C:\\ProgramData\\chocolatey\\lib",
+        "C:\\ProgramData\\choco\\lib",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .find(|p| p.is_dir())
 }
 
 fn choco_binary_package_map() -> &'static HashMap<String, String> {
@@ -1125,19 +1117,129 @@ fn choco_binary_package_map() -> &'static HashMap<String, String> {
         for entry in entries.flatten() {
             let pkg_name = entry.file_name().to_string_lossy().to_lowercase();
             let tools_dir = entry.path().join("tools");
-            let Ok(tool_entries) = std::fs::read_dir(&tools_dir) else { continue };
+            let Ok(tool_entries) = std::fs::read_dir(&tools_dir) else {
+                continue;
+            };
             for tool_entry in tool_entries.flatten() {
                 if !is_executable(&tool_entry.path()) {
                     continue;
                 }
                 if let Some(name) = tool_entry.path().file_stem().and_then(|n| n.to_str()) {
-                    map.entry(name.to_lowercase()).or_insert_with(|| pkg_name.clone());
+                    map.entry(name.to_lowercase())
+                        .or_insert_with(|| pkg_name.clone());
                 }
             }
         }
         map
     });
     &MAP
+}
+
+fn scoop_app_current_dir_from_path(path: &Path) -> Option<PathBuf> {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let parts = normalized.split('/').collect::<Vec<_>>();
+    let apps_idx = parts
+        .iter()
+        .position(|part| part.eq_ignore_ascii_case("apps"))?;
+    if parts.len() <= apps_idx + 2 || !parts[apps_idx + 2].eq_ignore_ascii_case("current") {
+        return None;
+    }
+
+    let current = parts[..=apps_idx + 2].join("/");
+    Some(PathBuf::from(current))
+}
+
+fn detect_scoop_version(path: &Path) -> Option<String> {
+    let current = scoop_app_current_dir_from_path(path)?;
+    for manifest_name in ["manifest.json", "install.json"] {
+        let manifest = current.join(manifest_name);
+        if let Some(version) = read_package_json_field(&manifest, "version") {
+            return Some(version);
+        }
+    }
+    None
+}
+
+fn choco_package_dir_from_path(path: &Path) -> Option<PathBuf> {
+    for ancestor in path.ancestors() {
+        if ancestor
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("lib"))
+        {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+    None
+}
+
+fn detect_choco_version(path: &Path) -> Option<String> {
+    let package_dir =
+        choco_package_dir_from_path(path).or_else(|| choco_package_dir_for_binary(path))?;
+    let package_name = package_dir.file_name()?.to_str()?;
+    let nuspec = package_dir.join(format!("{package_name}.nuspec"));
+    let content = std::fs::read_to_string(nuspec).ok()?;
+    extract_xml_tag_text(&content, "version")
+}
+
+fn choco_lib_dirs_for_binary(path: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let parts = normalized.split('/').collect::<Vec<_>>();
+    if let Some(bin_idx) = parts
+        .iter()
+        .position(|part| part.eq_ignore_ascii_case("bin"))
+    {
+        if bin_idx > 0
+            && (parts[bin_idx - 1].eq_ignore_ascii_case("chocolatey")
+                || parts[bin_idx - 1].eq_ignore_ascii_case("choco"))
+        {
+            let root = parts[..bin_idx].join("/");
+            dirs.push(PathBuf::from(root).join("lib"));
+        }
+    }
+    if let Some(dir) = choco_lib_dir() {
+        dirs.push(dir);
+    }
+    dedupe_paths(&mut dirs);
+    dirs
+}
+
+fn choco_package_dir_for_binary(path: &Path) -> Option<PathBuf> {
+    let binary_name = path.file_stem()?.to_str()?.to_lowercase();
+    for lib_dir in choco_lib_dirs_for_binary(path) {
+        let Ok(entries) = std::fs::read_dir(&lib_dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let package_dir = entry.path();
+            let tools_dir = package_dir.join("tools");
+            let Ok(tool_entries) = std::fs::read_dir(&tools_dir) else {
+                continue;
+            };
+            for tool_entry in tool_entries.flatten() {
+                if tool_entry
+                    .path()
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case(&binary_name))
+                {
+                    return Some(package_dir);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_xml_tag_text(xml: &str, tag: &str) -> Option<String> {
+    let start_tag = format!("<{tag}>");
+    let end_tag = format!("</{tag}>");
+    let start = xml.find(&start_tag)? + start_tag.len();
+    let end = xml[start..].find(&end_tag)?;
+    let value = xml[start..start + end].trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn resolve_scoop_app_name(path: &Path) -> Option<String> {
@@ -1566,14 +1668,18 @@ fn pip_leaf_package_names(site_packages_dirs: &[PathBuf]) -> HashSet<String> {
     let mut all_names: HashSet<String> = HashSet::new();
 
     for sp in site_packages_dirs {
-        let Ok(entries) = std::fs::read_dir(sp) else { continue; };
+        let Ok(entries) = std::fs::read_dir(sp) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let dir_name = entry.file_name().to_string_lossy().to_lowercase();
             if !dir_name.ends_with(".dist-info") && !dir_name.ends_with(".egg-info") {
                 continue;
             }
-            let Ok(meta) = std::fs::read_to_string(path.join("METADATA")) else { continue; };
+            let Ok(meta) = std::fs::read_to_string(path.join("METADATA")) else {
+                continue;
+            };
 
             if let Some(name) = read_metadata_field_from_str(&meta, "Name") {
                 all_names.insert(name.to_lowercase());
@@ -1597,8 +1703,15 @@ fn pip_leaf_package_names(site_packages_dirs: &[PathBuf]) -> HashSet<String> {
 fn pip_dep_name(requires_dist: &str) -> String {
     requires_dist
         .split(|c: char| {
-            c == ' ' || c == ';' || c == '(' || c == ')' || c == '>' || c == '<' || c == '='
-                || c == '~' || c == '!'
+            c == ' '
+                || c == ';'
+                || c == '('
+                || c == ')'
+                || c == '>'
+                || c == '<'
+                || c == '='
+                || c == '~'
+                || c == '!'
         })
         .next()
         .unwrap_or("")
@@ -1893,8 +2006,14 @@ mod tests {
     fn collect_python_site_packages_under_finds_python_version_dirs() {
         let dir = tempfile::tempdir().unwrap();
         let python_dir = dir.path().join("Python");
-        let py313_site = python_dir.join("Python313").join("Lib").join("site-packages");
-        let py314_site = python_dir.join("Python314").join("Lib").join("site-packages");
+        let py313_site = python_dir
+            .join("Python313")
+            .join("Lib")
+            .join("site-packages");
+        let py314_site = python_dir
+            .join("Python314")
+            .join("Lib")
+            .join("site-packages");
         let other_dir = python_dir.join("other").join("Lib").join("site-packages");
         fs::create_dir_all(&py313_site).unwrap();
         fs::create_dir_all(&py314_site).unwrap();
@@ -2580,6 +2699,45 @@ mod tests {
     }
 
     #[test]
+    fn detect_version_reads_scoop_current_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir
+            .path()
+            .join("scoop")
+            .join("apps")
+            .join("ripgrep")
+            .join("current");
+        fs::create_dir_all(&app).unwrap();
+        fs::write(app.join("manifest.json"), r#"{"version":"14.1.1"}"#).unwrap();
+
+        let exe = app.join("rg.exe");
+        fs::write(&exe, b"").unwrap();
+
+        assert_eq!(detect_version(&exe), Some("14.1.1".to_string()));
+    }
+
+    #[test]
+    fn detect_version_reads_choco_nuspec_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let choco_root = dir.path().join("chocolatey");
+        let bin_dir = choco_root.join("bin");
+        let package_dir = choco_root.join("lib").join("ripgrep");
+        let tools_dir = package_dir.join("tools");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::create_dir_all(&tools_dir).unwrap();
+        let shim = bin_dir.join("rg.exe");
+        fs::write(&shim, b"").unwrap();
+        fs::write(tools_dir.join("rg.exe"), b"").unwrap();
+        fs::write(
+            package_dir.join("ripgrep.nuspec"),
+            r#"<package><metadata><id>ripgrep</id><version>14.1.1</version></metadata></package>"#,
+        )
+        .unwrap();
+
+        assert_eq!(detect_version(&shim), Some("14.1.1".to_string()));
+    }
+
+    #[test]
     fn resolve_pip_package_name_reads_console_script_owner() {
         let dir = tempfile::tempdir().unwrap();
         let python_root = dir.path().join("Python314");
@@ -2640,10 +2798,7 @@ mod tests {
     #[test]
     fn pip_dep_name_extracts_package_from_requires_dist() {
         assert_eq!(pip_dep_name("numpy>=1.20"), "numpy");
-        assert_eq!(
-            pip_dep_name("requests [security] >=2.25"),
-            "requests"
-        );
+        assert_eq!(pip_dep_name("requests [security] >=2.25"), "requests");
         assert_eq!(pip_dep_name("packaging"), "packaging");
         assert_eq!(
             pip_dep_name("typing_extensions; python_version < '3.10'"),
@@ -2674,11 +2829,7 @@ mod tests {
         // numpy depends on nothing
         let numpy = sp.join("numpy-1.24.0.dist-info");
         fs::create_dir_all(&numpy).unwrap();
-        fs::write(
-            numpy.join("METADATA"),
-            "Name: numpy\nVersion: 1.24.0\n",
-        )
-        .unwrap();
+        fs::write(numpy.join("METADATA"), "Name: numpy\nVersion: 1.24.0\n").unwrap();
 
         // pip depends on nothing (but often depended on by others — test isolation ensures it's a leaf here)
         let pip = sp.join("pip-23.0.0.dist-info");

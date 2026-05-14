@@ -22,7 +22,9 @@ const uninstallLocalCliTool = vi.fn();
 const uninstallMutation = vi.fn();
 const refetchLocalCliTools = vi.fn();
 const rescanLocalCliTools = vi.fn();
+const checkLocalCliUpdates = vi.fn();
 let isRescanning = false;
+let isChecking = false;
 
 vi.mock("../hooks/useLocalCli", () => ({
   useLocalCliTools: () => ({
@@ -34,7 +36,7 @@ vi.mock("../hooks/useLocalCli", () => ({
     mutate: rescanLocalCliTools,
     isPending: isRescanning,
   }),
-  useCheckLocalCliUpdates: () => ({ mutate: vi.fn(), isPending: false }),
+  useCheckLocalCliUpdates: () => ({ mutate: checkLocalCliUpdates, isPending: isChecking }),
   useUpdateLocalCliTool: () => ({
     mutate: vi.fn(),
     isPending: false,
@@ -76,7 +78,9 @@ afterEach(() => {
   uninstallMutation.mockReset();
   refetchLocalCliTools.mockReset();
   rescanLocalCliTools.mockReset();
+  checkLocalCliUpdates.mockReset();
   isRescanning = false;
+  isChecking = false;
 });
 
 describe("LocalCliPage", () => {
@@ -180,5 +184,25 @@ describe("LocalCliPage", () => {
     );
 
     expect(screen.getByText("localCli.uninstallDialog.title")).not.toBeNull();
+  });
+
+  it("检查更新时禁用重新扫描，重新扫描时禁用检查更新", async () => {
+    fetchLocalCliDescriptions.mockResolvedValue([]);
+    isChecking = true;
+    const { LocalCliPage } = await import("./LocalCliPage");
+    render(<LocalCliPage />, { wrapper });
+
+    expect(
+      (screen.getByRole("button", { name: "localCli.rescan" }) as HTMLButtonElement).disabled
+    ).toBe(true);
+
+    cleanup();
+    isChecking = false;
+    isRescanning = true;
+    render(<LocalCliPage />, { wrapper });
+
+    expect(
+      (screen.getByRole("button", { name: "localCli.checkUpdates" }) as HTMLButtonElement).disabled
+    ).toBe(true);
   });
 });

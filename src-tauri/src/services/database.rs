@@ -1365,7 +1365,9 @@ mod tests {
         )
         .unwrap();
 
-        let tool = db.get_local_cli_tool("/home/user/.local/bin/bruce-doc-converter").unwrap();
+        let tool = db
+            .get_local_cli_tool("/home/user/.local/bin/bruce-doc-converter")
+            .unwrap();
         assert!(tool.is_some());
         let t = tool.unwrap();
         assert_eq!(t.0, "bruce-doc-converter");

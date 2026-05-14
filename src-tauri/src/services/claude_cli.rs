@@ -199,7 +199,10 @@ fn apply_env_remove_prefixes(cmd: &mut CommandBuilder, prefixes: &[String]) {
         return;
     }
     for (key, _) in std::env::vars() {
-        if prefixes.iter().any(|prefix| key.starts_with(prefix.as_str())) {
+        if prefixes
+            .iter()
+            .any(|prefix| key.starts_with(prefix.as_str()))
+        {
             cmd.env_remove(&key);
         }
     }

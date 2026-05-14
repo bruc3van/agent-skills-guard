@@ -1,7 +1,10 @@
 use crate::commands::AppState;
 use crate::models::{LocalCliTool, PackageManager};
 use crate::services::claude_cli::{ClaudeCli, ClaudeCommand};
-use crate::services::{discover_local_cli_tools, local_cli_updater::is_outdated, resolve_description_for_path, LocalCliUpdater};
+use crate::services::{
+    discover_local_cli_tools, local_cli_updater::is_outdated, resolve_description_for_path,
+    LocalCliUpdater,
+};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -126,6 +129,12 @@ fn resolve_python_command(tool: &LocalCliTool) -> String {
         return path.to_string_lossy().to_string();
     }
 
+    for path in windows_user_python_candidates(detected_path) {
+        if path.is_file() {
+            return path.to_string_lossy().to_string();
+        }
+    }
+
     for path in common_python_paths() {
         if path.is_file() {
             return path.to_string_lossy().to_string();
@@ -177,6 +186,46 @@ fn find_python_next_to_scripts_dir(detected_path: &Path) -> Option<PathBuf> {
         .iter()
         .map(|name| root.join(name))
         .find(|candidate| candidate.is_file())
+}
+
+fn windows_user_python_candidates(detected_path: &Path) -> Vec<PathBuf> {
+    windows_user_python_candidates_from_scripts_path(
+        detected_path,
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+    )
+}
+
+fn windows_user_python_candidates_from_scripts_path(
+    detected_path: &Path,
+    local_appdata: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let normalized = detected_path.to_string_lossy().replace('\\', "/");
+    let parts = normalized.split('/').collect::<Vec<_>>();
+    let Some(scripts_idx) = parts
+        .iter()
+        .position(|part| part.eq_ignore_ascii_case("Scripts"))
+    else {
+        return vec![];
+    };
+    if scripts_idx == 0 {
+        return vec![];
+    }
+    let python_dir = parts[scripts_idx - 1];
+    if !python_dir.to_ascii_lowercase().starts_with("python") {
+        return vec![];
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(local_appdata) = local_appdata {
+        candidates.push(
+            local_appdata
+                .join("Programs")
+                .join("Python")
+                .join(python_dir)
+                .join("python.exe"),
+        );
+    }
+    candidates
 }
 
 fn python_names() -> Vec<String> {
@@ -495,8 +544,9 @@ pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<Loca
         if let Some((_, _, _, latest, _update_avail, checked, status, log, _pkg, desc)) =
             cache_map.get(&tool.detected_path)
         {
-            tool.latest_version =
-                latest.as_deref().map(|v| v.strip_prefix('v').unwrap_or(v).to_string());
+            tool.latest_version = latest
+                .as_deref()
+                .map(|v| v.strip_prefix('v').unwrap_or(v).to_string());
             tool.update_available = is_outdated(
                 tool.current_version.as_deref(),
                 tool.latest_version.as_deref(),
@@ -548,12 +598,13 @@ pub async fn update_local_cli_tool(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("工具 {} 未找到", tool_path))?;
 
-    let (display_id, detected_path, manager_str, current_version, _, _, _, _, _, pkg_name, _desc) =
+    let (display_id, detected_path, manager_str, current_version, _, _, _, _, _, pkg_name, desc) =
         row;
     let manager = PackageManager::from_str(&manager_str);
     let mut tool = LocalCliTool::new(&display_id, &detected_path, manager);
     tool.current_version = current_version;
-    tool.package_name = pkg_name;
+    tool.package_name = pkg_name.clone();
+    tool.description = desc.clone();
 
     let (bin, args) = build_pty_update_args(&tool)
         .ok_or_else(|| format!("工具 {} 的包管理器不支持自动更新", display_id))?;
@@ -597,8 +648,8 @@ pub async fn update_local_cli_tool(
                     None,
                     false,
                     None,
-                    None,
-                    None,
+                    tool.package_name.as_deref(),
+                    tool.description.as_deref(),
                 );
                 Ok(log)
             } else {
@@ -708,6 +759,17 @@ pub async fn uninstall_local_cli_tool(
                     raw_log,
                     format!("{} 卸载命令执行完成，但没有返回可显示日志", display_id),
                 );
+                if Path::new(&detected_path).exists() {
+                    let msg = format!(
+                        "{}\n\n卸载命令返回成功，但入口文件仍然存在: {}",
+                        log, detected_path
+                    );
+                    state
+                        .db
+                        .set_local_cli_tool_update_status(&tool_path, "failed", Some(&msg))
+                        .map_err(|e| e.to_string())?;
+                    return Err(msg);
+                }
                 state
                     .db
                     .delete_local_cli_tool(&tool_path)
@@ -951,6 +1013,24 @@ mod tests {
     }
 
     #[test]
+    fn windows_user_python_candidates_map_roaming_scripts_to_local_programs_python() {
+        let detected =
+            Path::new(r"C:\Users\Bruce\AppData\Roaming\Python\Python314\Scripts\bdc.exe");
+        let candidates = windows_user_python_candidates_from_scripts_path(
+            detected,
+            Some(PathBuf::from(r"C:\Users\Bruce\AppData\Local")),
+        );
+
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .collect::<Vec<_>>(),
+            vec!["C:/Users/Bruce/AppData/Local/Programs/Python/Python314/python.exe"]
+        );
+    }
+
+    #[test]
     fn build_pty_args_prefers_package_manager_next_to_detected_cli() {
         let dir = tempfile::tempdir().unwrap();
         let bin_dir = dir.path().join("bin");
@@ -1103,7 +1183,9 @@ mod tests {
         assert!(is_install_success(
             "added 2 packages, removed 24 packages, and changed 295 packages in 7s"
         ));
-        assert!(is_install_success("removed 2 packages, and changed 28 packages in 1s"));
+        assert!(is_install_success(
+            "removed 2 packages, and changed 28 packages in 1s"
+        ));
         assert!(is_install_success("added 1 package in 2s"));
         assert!(!is_install_success("npm ERR! code E404"));
         assert!(!is_install_success("up to date"));
