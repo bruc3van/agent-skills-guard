@@ -125,30 +125,8 @@ impl LocalCliTool {
         self.package_name.as_deref().or(Some(self.id.as_str()))
     }
 
-    pub fn update_command(&self) -> Option<String> {
-        let name = self.package_name.as_deref()?;
-        match self.manager {
-            PackageManager::Npm => Some(format!("npm install -g {}", name)),
-            PackageManager::Pnpm => Some(format!("pnpm add -g {}", name)),
-            PackageManager::Pip => Some(format!("pip install --upgrade {}", name)),
-            PackageManager::Brew => Some(format!("brew upgrade {}", name)),
-            PackageManager::Scoop => Some(format!("scoop update {}", name)),
-            PackageManager::Choco => Some(format!("choco upgrade {}", name)),
-            PackageManager::Unknown => None,
-        }
-    }
-
     pub fn can_auto_update(&self) -> bool {
         self.manager != PackageManager::Unknown && self.package_name.is_some()
-    }
-
-    pub fn update_pty_args(&self) -> Option<(String, Vec<String>)> {
-        let cmd = self.update_command()?;
-        let parts: Vec<String> = cmd.split_whitespace().map(String::from).collect();
-        if parts.is_empty() {
-            return None;
-        }
-        Some((parts[0].clone(), parts[1..].to_vec()))
     }
 }
 
@@ -211,40 +189,4 @@ mod tests {
         assert_eq!(detect_manager_from_path(path), PackageManager::Unknown);
     }
 
-    #[test]
-    fn update_command_for_npm() {
-        let mut tool = LocalCliTool::new("mmdc", "/opt/homebrew/bin/mmdc", PackageManager::Npm);
-        tool.package_name = Some("@mermaid-js/mermaid-cli".to_string());
-        assert_eq!(
-            tool.update_command(),
-            Some("npm install -g @mermaid-js/mermaid-cli".to_string())
-        );
-    }
-
-    #[test]
-    fn update_command_for_pnpm() {
-        let mut tool = LocalCliTool::new(
-            "mmdc",
-            "/Users/u/Library/pnpm/bin/mmdc",
-            PackageManager::Pnpm,
-        );
-        tool.package_name = Some("@mermaid-js/mermaid-cli".to_string());
-        assert_eq!(
-            tool.update_command(),
-            Some("pnpm add -g @mermaid-js/mermaid-cli".to_string())
-        );
-    }
-
-    #[test]
-    fn update_command_none_without_package_name() {
-        let tool = LocalCliTool::new("mmdc", "/opt/homebrew/bin/mmdc", PackageManager::Npm);
-        assert_eq!(tool.update_command(), None);
-    }
-
-    #[test]
-    fn update_command_is_none_for_unknown() {
-        let mut tool = LocalCliTool::new("git", "/usr/bin/git", PackageManager::Unknown);
-        tool.package_name = Some("git".to_string());
-        assert_eq!(tool.update_command(), None);
-    }
 }
