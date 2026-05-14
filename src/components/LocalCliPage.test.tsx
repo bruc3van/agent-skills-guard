@@ -144,6 +144,30 @@ describe("LocalCliPage", () => {
     });
   });
 
+  it("列表刷新后没有缺失说明时清理正在获取说明的进度提示", async () => {
+    fetchLocalCliDescriptions.mockImplementation(() => new Promise(() => {}));
+    const { LocalCliPage } = await import("./LocalCliPage");
+    const { rerender } = render(<LocalCliPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("localCli.busy.fetchingDesc")).not.toBeNull();
+    });
+
+    mockTools = [
+      {
+        id: "bruce-doc-converter",
+        detected_path: "/home/u/.local/bin/bdc",
+        manager: "pip",
+        current_version: "0.3.1",
+        update_available: false,
+        description: "Bruce doc converter CLI",
+      },
+    ];
+    rerender(<LocalCliPage />);
+
+    expect(screen.queryByText("localCli.busy.fetchingDesc")).toBeNull();
+  });
+
   it("点击重新扫描会触发强制刷新并允许重试说明获取", async () => {
     fetchLocalCliDescriptions.mockResolvedValue([]);
     const user = userEvent.setup();

@@ -595,6 +595,7 @@ fn node_tools_from_dependencies(
         let package_name = package_json.name.as_deref().unwrap_or(&listed_name);
         let version = package_json.version.or(listed_entry.version);
         let description = package_json.description;
+        let mut package_tools = Vec::new();
 
         for bin_name in node_package_bin_names(package_name, bin_field) {
             let detected_path = shim_path(bin_dir, &bin_name);
@@ -606,7 +607,13 @@ fn node_tools_from_dependencies(
             tool.current_version = version.clone();
             tool.package_name = Some(package_name.to_string());
             tool.description = description.clone();
-            tools.push(tool);
+            package_tools.push(tool);
+        }
+
+        match package_tools.len() {
+            0 => {}
+            1 => tools.push(package_tools.remove(0)),
+            _ => tools.push(merge_package_tools(package_tools, &manager)),
         }
     }
 
@@ -1984,14 +1991,15 @@ mod tests {
             r#"{"dependencies":{"typescript":{"version":"5.4.0"},"@scope/pkg":{"version":"1.0.0"}}}"#,
         );
 
-        assert_eq!(tools.len(), 3);
+        assert_eq!(tools.len(), 2);
         assert!(tools.iter().any(|tool| {
-            tool.id == "tsc"
+            tool.id == "typescript"
                 && tool.manager == PackageManager::Npm
                 && tool.package_name.as_deref() == Some("typescript")
                 && tool.current_version.as_deref() == Some("5.4.0")
                 && tool.description.as_deref() == Some("TypeScript")
                 && tool.detected_path == shim_path(&bin, "tsc").to_string_lossy().as_ref()
+                && tool.bundled_tool_ids == vec!["tsserver".to_string()]
         }));
         assert!(tools.iter().any(|tool| {
             tool.id == "pkg"
@@ -2000,6 +2008,42 @@ mod tests {
                 && tool.description.as_deref() == Some("Scoped CLI")
                 && tool.detected_path == shim_path(&bin, "pkg").to_string_lossy().as_ref()
         }));
+    }
+
+    #[test]
+    fn npm_list_output_merges_npm_and_npx_from_same_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let node_modules = dir.path().join("node_modules");
+        let bin = dir.path().join("bin");
+        let npm = node_modules.join("npm");
+        fs::create_dir_all(&npm).unwrap();
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(
+            npm.join("package.json"),
+            r#"{"name":"npm","version":"11.14.1","description":"a package manager for JavaScript","bin":{"npm":"./bin/npm-cli.js","npx":"./bin/npx-cli.js"}}"#,
+        )
+        .unwrap();
+
+        let tools = npm_tools_from_list_output(
+            &node_modules,
+            &bin,
+            r#"{"dependencies":{"npm":{"version":"11.14.1"}}}"#,
+        );
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].id, "npm");
+        assert_eq!(tools[0].manager, PackageManager::Npm);
+        assert_eq!(tools[0].package_name.as_deref(), Some("npm"));
+        assert_eq!(tools[0].current_version.as_deref(), Some("11.14.1"));
+        assert_eq!(
+            tools[0].description.as_deref(),
+            Some("a package manager for JavaScript")
+        );
+        assert_eq!(
+            tools[0].detected_path,
+            shim_path(&bin, "npm").to_string_lossy().as_ref()
+        );
+        assert_eq!(tools[0].bundled_tool_ids, vec!["npx".to_string()]);
     }
 
     #[test]
@@ -2342,8 +2386,8 @@ mod tests {
             ["--prefix", "ffmpeg"] => {
                 Some(cellar_bin.parent().unwrap().to_string_lossy().to_string())
             }
-            ["list", "--versions", "ffmpeg"] => Some("ffmpeg 8.1_1\n".to_string()),
-            ["desc", "--formula", "ffmpeg"] => {
+            ["list", "--versions"] => Some("ffmpeg 8.1_1\n".to_string()),
+            ["desc", "--formula", ..] => {
                 Some("ffmpeg: Play, record, convert, and stream audio and video\n".to_string())
             }
             _ => None,

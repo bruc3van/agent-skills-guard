@@ -84,7 +84,9 @@ fn successful_update_cache_values(
     tool: &LocalCliTool,
     new_version: Option<String>,
 ) -> (Option<String>, Option<String>, bool, Option<String>) {
-    let version = new_version.or_else(|| tool.current_version.clone());
+    let version = new_version
+        .or_else(|| tool.latest_version.clone())
+        .or_else(|| tool.current_version.clone());
     let now = chrono::Utc::now().to_rfc3339();
     (version.clone(), version, false, Some(now))
 }
@@ -1012,7 +1014,6 @@ mod tests {
     fn successful_update_cache_values_clears_update_when_version_detection_fails() {
         let mut tool = LocalCliTool::new("tool", "/usr/bin/tool", PackageManager::Npm);
         tool.current_version = Some("1.0.0".to_string());
-        tool.latest_version = Some("1.2.0".to_string());
         tool.update_available = true;
         tool.last_checked = Some("2026-01-01T00:00:00Z".to_string());
 
@@ -1021,6 +1022,24 @@ mod tests {
 
         assert_eq!(current.as_deref(), Some("1.0.0"));
         assert_eq!(latest.as_deref(), Some("1.0.0"));
+        assert!(!update_available);
+        assert_ne!(last_checked.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert!(last_checked.is_some());
+    }
+
+    #[test]
+    fn successful_update_cache_values_uses_known_latest_when_version_detection_fails() {
+        let mut tool = LocalCliTool::new("npx", "/opt/homebrew/bin/npx", PackageManager::Npm);
+        tool.current_version = Some("10.9.2".to_string());
+        tool.latest_version = Some("11.5.1".to_string());
+        tool.update_available = true;
+        tool.last_checked = Some("2026-01-01T00:00:00Z".to_string());
+
+        let (current, latest, update_available, last_checked) =
+            successful_update_cache_values(&tool, None);
+
+        assert_eq!(current.as_deref(), Some("11.5.1"));
+        assert_eq!(latest.as_deref(), Some("11.5.1"));
         assert!(!update_available);
         assert_ne!(last_checked.as_deref(), Some("2026-01-01T00:00:00Z"));
         assert!(last_checked.is_some());

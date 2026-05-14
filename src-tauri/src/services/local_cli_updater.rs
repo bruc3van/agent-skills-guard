@@ -2,6 +2,7 @@ use crate::models::{LocalCliTool, PackageManager};
 use crate::services::Database;
 use anyhow::Result;
 use chrono::Utc;
+use std::cmp::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -21,13 +22,27 @@ pub(crate) fn is_cache_fresh(last_checked: Option<&str>) -> bool {
 
 pub(crate) fn is_outdated(current: Option<&str>, latest: Option<&str>) -> bool {
     match (current, latest) {
-        (Some(c), Some(l)) => normalize_version(c) != normalize_version(l),
+        (Some(c), Some(l)) => {
+            let current = normalize_version(c);
+            let latest = normalize_version(l);
+            if current == latest {
+                return false;
+            }
+
+            compare_version_like(&current, &latest)
+                .map(|ordering| ordering == Ordering::Less)
+                .unwrap_or(true)
+        }
         _ => false,
     }
 }
 
 fn normalize_version(v: &str) -> String {
-    let v = v.strip_prefix('v').unwrap_or(v);
+    let v = v.trim();
+    let v = v
+        .strip_prefix('v')
+        .or_else(|| v.strip_prefix('V'))
+        .unwrap_or(v);
     // Strip Homebrew revision suffix: "3.13.8_1" → "3.13.8"
     if let Some(idx) = v.rfind('_') {
         let suffix = &v[idx + 1..];
@@ -36,6 +51,83 @@ fn normalize_version(v: &str) -> String {
         }
     }
     v.to_string()
+}
+
+#[derive(Debug)]
+struct VersionKey {
+    parts: Vec<u64>,
+    prerelease: Option<String>,
+}
+
+fn compare_version_like(current: &str, latest: &str) -> Option<Ordering> {
+    let current = parse_version_key(current)?;
+    let latest = parse_version_key(latest)?;
+
+    let max_len = current.parts.len().max(latest.parts.len());
+    for idx in 0..max_len {
+        let current_part = current.parts.get(idx).copied().unwrap_or(0);
+        let latest_part = latest.parts.get(idx).copied().unwrap_or(0);
+        match current_part.cmp(&latest_part) {
+            Ordering::Equal => {}
+            ordering => return Some(ordering),
+        }
+    }
+
+    Some(
+        match (current.prerelease.as_deref(), latest.prerelease.as_deref()) {
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (Some(current_pre), Some(latest_pre)) => compare_prerelease(current_pre, latest_pre),
+        },
+    )
+}
+
+fn parse_version_key(version: &str) -> Option<VersionKey> {
+    let without_build = version.split('+').next().unwrap_or(version);
+    let (core, prerelease) = without_build
+        .split_once('-')
+        .map(|(core, prerelease)| (core, Some(prerelease.to_string())))
+        .unwrap_or((without_build, None));
+
+    let mut parts = Vec::new();
+    for part in core.split('.') {
+        if part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        parts.push(part.parse::<u64>().ok()?);
+    }
+
+    (!parts.is_empty()).then_some(VersionKey { parts, prerelease })
+}
+
+fn compare_prerelease(current: &str, latest: &str) -> Ordering {
+    let current_parts = current.split('.').collect::<Vec<_>>();
+    let latest_parts = latest.split('.').collect::<Vec<_>>();
+    let max_len = current_parts.len().max(latest_parts.len());
+
+    for idx in 0..max_len {
+        match (current_parts.get(idx), latest_parts.get(idx)) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(current_part), Some(latest_part)) => {
+                let current_num = current_part.parse::<u64>();
+                let latest_num = latest_part.parse::<u64>();
+                let ordering = match (current_num, latest_num) {
+                    (Ok(current_num), Ok(latest_num)) => current_num.cmp(&latest_num),
+                    (Ok(_), Err(_)) => Ordering::Less,
+                    (Err(_), Ok(_)) => Ordering::Greater,
+                    (Err(_), Err(_)) => current_part.cmp(latest_part),
+                };
+                if ordering != Ordering::Equal {
+                    return ordering;
+                }
+            }
+        }
+    }
+
+    Ordering::Equal
 }
 
 fn build_http_client() -> Result<reqwest::Client> {
@@ -270,6 +362,15 @@ mod tests {
     }
 
     #[test]
+    fn version_is_not_outdated_when_current_is_newer_than_latest() {
+        assert!(!is_outdated(Some("11.14.1"), Some("11.12.1")));
+        assert!(!is_outdated(Some("v11.14.1"), Some("11.12.1")));
+        assert!(!is_outdated(Some("1.0.0"), Some("1.0.0-beta.1")));
+        assert!(is_outdated(Some("11.12.1"), Some("11.14.1")));
+        assert!(is_outdated(Some("1.0.0-beta.1"), Some("1.0.0")));
+    }
+
+    #[test]
     fn brew_revision_suffix_not_treated_as_outdated() {
         assert!(!is_outdated(Some("3.13.8_1"), Some("3.13.8")));
         assert!(!is_outdated(Some("3.13.8"), Some("3.13.8_1")));
@@ -296,5 +397,24 @@ mod tests {
         updater.check_updates(&mut tools).await.unwrap();
 
         assert!(tools[0].update_available);
+    }
+
+    #[tokio::test]
+    async fn fresh_cache_keeps_tool_clean_when_current_is_newer_than_latest() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(dir.path().join("test.db")).unwrap());
+        let updater = LocalCliUpdater::new(Arc::clone(&db));
+        let mut tool = LocalCliTool::new("npm", "/opt/homebrew/lib/npm", PackageManager::Npm);
+        tool.current_version = Some("11.14.1".to_string());
+        tool.latest_version = Some("11.12.1".to_string());
+        tool.update_available = true;
+        tool.last_checked = Some(Utc::now().to_rfc3339());
+        tool.package_name = Some("npm".to_string());
+
+        let mut tools = vec![tool];
+
+        updater.check_updates(&mut tools).await.unwrap();
+
+        assert!(!tools[0].update_available);
     }
 }

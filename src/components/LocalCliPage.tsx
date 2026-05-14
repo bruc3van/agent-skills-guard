@@ -68,7 +68,11 @@ export function LocalCliPage() {
       (t) =>
         !t.description && !descriptionMap[t.id] && !attemptedDescriptionIdsRef.current.has(t.id)
     );
-    if (missing.length === 0) return;
+    if (missing.length === 0) {
+      setIsFetchingDesc(false);
+      setFetchProgress(null);
+      return;
+    }
 
     for (const tool of missing) {
       attemptedDescriptionIdsRef.current.add(tool.id);
@@ -104,6 +108,8 @@ export function LocalCliPage() {
     void fetchNext(0);
     return () => {
       cancelled = true;
+      setIsFetchingDesc(false);
+      setFetchProgress(null);
     };
   }, [tools, isLoading, refetch, descriptionRetryToken]);
 
