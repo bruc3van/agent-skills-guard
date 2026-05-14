@@ -150,7 +150,7 @@ impl LocalCliUpdater {
         let semaphore = Arc::new(Semaphore::new(UPDATE_CHECK_CONCURRENCY));
         let mut tasks = Vec::new();
 
-        for (index, tool) in tools.iter_mut().enumerate() {
+        for tool in tools.iter_mut() {
             if is_cache_fresh(tool.last_checked.as_deref()) {
                 tool.update_available = is_outdated(
                     tool.current_version.as_deref(),
@@ -182,16 +182,17 @@ impl LocalCliUpdater {
             let client = client.clone();
             let semaphore = Arc::clone(&semaphore);
             let id = tool.id.clone();
+            let detected_path = tool.detected_path.clone();
             tasks.push(tokio::spawn(async move {
                 let _permit = semaphore.acquire_owned().await.ok();
                 let result = fetch_latest_for_manager(&client, &manager, &pkg_name).await;
-                (index, id, result)
+                (detected_path, id, result)
             }));
         }
 
         for task in tasks {
-            let (index, id, latest_result) = task.await?;
-            let Some(tool) = tools.get_mut(index) else {
+            let (path, id, latest_result) = task.await?;
+            let Some(tool) = tools.iter_mut().find(|t| t.detected_path == path) else {
                 continue;
             };
             match latest_result {
