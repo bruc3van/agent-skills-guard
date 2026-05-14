@@ -5,7 +5,8 @@ use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     process::Command,
-    sync::LazyLock,
+    sync::{mpsc, LazyLock},
+    time::Duration,
 };
 
 static PNPM_SHIM_PACKAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -145,18 +146,22 @@ fn find_brew_command() -> Option<PathBuf> {
 }
 
 fn brew_stdout(brew: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new(brew)
-        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
-        .env("HOMEBREW_NO_INSTALL_CLEANUP", "1")
-        .env("HOMEBREW_NO_ANALYTICS", "1")
-        .args(args)
-        .output()
-        .ok()?;
-
+    let brew = brew.to_path_buf();
+    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = Command::new(&brew)
+            .env("HOMEBREW_NO_AUTO_UPDATE", "1")
+            .env("HOMEBREW_NO_INSTALL_CLEANUP", "1")
+            .env("HOMEBREW_NO_ANALYTICS", "1")
+            .args(&args)
+            .output();
+        let _ = tx.send(result);
+    });
+    let output = rx.recv_timeout(SUBPROCESS_TIMEOUT).ok()?.ok()?;
     if !output.status.success() {
         return None;
     }
-
     String::from_utf8(output.stdout).ok()
 }
 
@@ -462,12 +467,26 @@ struct PipShowOutput {
     files: Vec<String>,
 }
 
-fn run_command_stdout(command: &str, args: &[&str]) -> Option<String> {
-    let output = spawn_command(command, args).ok()?;
+const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn run_command_stdout_timeout(command: &str, args: &[&str], timeout: Duration) -> Option<String> {
+    let command = command.to_string();
+    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result =
+            spawn_command(&command, &args.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+        let _ = tx.send(result);
+    });
+    let output = rx.recv_timeout(timeout).ok()?.ok()?;
     if !output.status.success() {
         return None;
     }
     String::from_utf8(output.stdout).ok()
+}
+
+fn run_command_stdout(command: &str, args: &[&str]) -> Option<String> {
+    run_command_stdout_timeout(command, args, SUBPROCESS_TIMEOUT)
 }
 
 fn spawn_command(command: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
@@ -1751,6 +1770,27 @@ fn detect_pip_version(path: &Path) -> Option<String> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::time::Duration;
+
+    #[test]
+    fn run_command_stdout_timeout_returns_none_on_timeout() {
+        #[cfg(windows)]
+        let result =
+            run_command_stdout_timeout("ping", &["-n", "5", "127.0.0.1"], Duration::from_millis(50));
+        #[cfg(not(windows))]
+        let result = run_command_stdout_timeout("sleep", &["5"], Duration::from_millis(50));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn run_command_stdout_timeout_returns_output_when_fast() {
+        #[cfg(windows)]
+        let result =
+            run_command_stdout_timeout("cmd", &["/c", "echo hello"], Duration::from_secs(5));
+        #[cfg(not(windows))]
+        let result = run_command_stdout_timeout("echo", &["hello"], Duration::from_secs(5));
+        assert!(result.is_some());
+    }
 
     fn write_executable(path: &Path, content: &[u8]) {
         if let Some(parent) = path.parent() {
