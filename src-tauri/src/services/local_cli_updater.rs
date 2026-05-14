@@ -26,8 +26,16 @@ pub(crate) fn is_outdated(current: Option<&str>, latest: Option<&str>) -> bool {
     }
 }
 
-fn normalize_version(v: &str) -> &str {
-    v.strip_prefix('v').unwrap_or(v)
+fn normalize_version(v: &str) -> String {
+    let v = v.strip_prefix('v').unwrap_or(v);
+    // Strip Homebrew revision suffix: "3.13.8_1" → "3.13.8"
+    if let Some(idx) = v.rfind('_') {
+        let suffix = &v[idx + 1..];
+        if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
+            return v[..idx].to_string();
+        }
+    }
+    v.to_string()
 }
 
 fn build_http_client() -> Result<reqwest::Client> {
@@ -259,6 +267,16 @@ mod tests {
         assert!(is_outdated(Some("0.3.1"), Some("0.4.0")));
         assert!(!is_outdated(Some("0.4.0"), Some("0.4.0")));
         assert!(!is_outdated(None, Some("0.4.0")));
+    }
+
+    #[test]
+    fn brew_revision_suffix_not_treated_as_outdated() {
+        assert!(!is_outdated(Some("3.13.8_1"), Some("3.13.8")));
+        assert!(!is_outdated(Some("3.13.8"), Some("3.13.8_1")));
+        assert!(!is_outdated(Some("3.13.8_2"), Some("3.13.8_1")));
+        assert!(is_outdated(Some("3.13.7"), Some("3.13.8")));
+        // v 前缀 + revision 组合
+        assert!(!is_outdated(Some("v3.13.8_1"), Some("3.13.8")));
     }
 
     #[tokio::test]
