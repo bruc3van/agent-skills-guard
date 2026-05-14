@@ -879,6 +879,52 @@ marketplace:
             source: "./"
             tags: ["design", "frontend", "ui", "ux", "commands"]
             featured: true
+      - marketplace_name: "addy-agent-skills"
+        marketplace_repo: "addyosmani/agent-skills"
+        repository_url: "https://github.com/addyosmani/agent-skills"
+        marketplace_add_command: "claude plugin marketplace add addyosmani/agent-skills"
+        description:
+          en: "Addy Osmani's production-grade engineering skills for AI coding agents: 23 skills covering spec-driven development, TDD, debugging, code review, security, performance, CI/CD, and the full development lifecycle"
+          zh: "Addy Osmani 的生产级工程技能合集，面向 AI 编程代理：23 个技能，覆盖规格驱动开发、TDD、调试、代码审查、安全、性能优化与 CI/CD，贯穿完整开发生命周期"
+        owner:
+          name: "Addy Osmani"
+          url: "https://www.addyosmani.com"
+        tags: ["engineering", "tdd", "security", "performance", "claude-code"]
+        featured: true
+        plugins:
+          - name: "agent-skills"
+            install_command: "/plugin install agent-skills@addy-agent-skills"
+            description:
+              en: "Production-grade engineering skills bundle: spec-driven development, TDD, debugging, code review, security hardening, performance optimization, CI/CD, and 23 skills covering the full development lifecycle"
+              zh: "生产级工程技能合集：规格驱动开发、TDD、调试、代码审查、安全加固、性能优化与 CI/CD，包含 23 个覆盖完整开发生命周期的技能"
+            author:
+              name: "Addy Osmani"
+            source: "./"
+            tags: ["engineering", "tdd", "security", "performance", "claude-code"]
+            featured: true
+      - marketplace_name: "openai-codex"
+        marketplace_repo: "openai/codex-plugin-cc"
+        repository_url: "https://github.com/openai/codex-plugin-cc"
+        marketplace_add_command: "claude plugin marketplace add openai/codex-plugin-cc"
+        description:
+          en: "Use Codex from Claude Code to review code or delegate tasks"
+          zh: "在 Claude Code 中使用 Codex 进行代码审查或委派任务"
+        owner:
+          name: "OpenAI"
+          url: "https://openai.com"
+        tags: ["openai", "codex", "code-review", "subagent"]
+        featured: true
+        plugins:
+          - name: "codex"
+            install_command: "/plugin install codex@openai-codex"
+            description:
+              en: "Use Codex from Claude Code to review code or delegate tasks. Provides /codex:review, /codex:adversarial-review, /codex:rescue, /codex:status, /codex:result, /codex:cancel, and /codex:setup commands."
+              zh: "在 Claude Code 中使用 Codex 进行代码审查或委派任务，提供 /codex:review、/codex:adversarial-review、/codex:rescue、/codex:status、/codex:result、/codex:cancel 与 /codex:setup 命令"
+            author:
+              name: "OpenAI"
+            source: "./"
+            tags: ["openai", "codex", "code-review", "subagent"]
+            featured: true
 
 repositories:
   version: "1.0"
@@ -1004,10 +1050,38 @@ repositories:
             zh: "面向对抗环境中 AI 代理的综合安全审查框架。涵盖技能/MCP 安装安全检测、GitHub 仓库审计、URL/文档分析、链上地址 AML 风险评估和社会工程攻击检测。"
           tags: ["security", "audit", "blockchain", "aml"]
           featured: true
+        - url: "https://github.com/yaojingang/yao-open-skills"
+          name: "yaojingang"
+          description:
+            en: "YAO's open skill collection: decision-making, business analysis, learning, security auditing, and document generation workflows as reusable AI assets. Includes 12 skills covering Bayesian analysis, game theory, Kelly Criterion, web security (275+ checks), and tutorial generation."
+            zh: "YAO 的公开技能合集：把决策、商业分析、学习教程、研究取证和文档生成流程沉淀成可复用的 AI 资产。包含 12 个技能，涵盖贝叶斯分析、博弈论、Kelly 准则、Web 安全审计（275+ 检查项）与教程生成"
+          tags: ["business", "analysis", "learning", "security", "bayesian"]
+          featured: true
         - url: "https://github.com/MiniMax-AI/skills"
           name: "MiniMax-AI"
           description:
             en: "Official MiniMax development skills for AI coding agents. Covers frontend, fullstack, Android, iOS, React Native, Flutter, and shader development. Includes MiniMax API integration for multimodal content generation (image, video, audio, TTS)."
             zh: "MiniMax 官方开发技能集，面向 AI 编程代理。涵盖前端、全栈、Android、iOS、React Native、Flutter 和着色器开发。集成 MiniMax API 用于多模态内容生成（图像、视频、音频、语音合成）。"
           tags: ["minimax", "frontend", "mobile", "multimodal", "api"]
+          featured: true
+        - url: "https://github.com/op7418/guizang-ppt-skill"
+          name: "op7418"
+          description:
+            en: "A Claude Code Skill that turns prompts into horizontal-swipe magazine-style HTML decks — 10 layouts, 5 curated themes, WebGL hero backgrounds, single-file output"
+            zh: "将提示转化为横向滑动杂志风格 HTML 演示文稿的 Claude Code 技能，含 10 种布局、5 种主题、WebGL 主视觉背景，单文件输出"
+          tags: ["slides", "presentation", "html", "design"]
+          featured: true
+        - url: "https://github.com/yaojingang/yao-doctor-skill"
+          name: "yaojingang"
+          description:
+            en: "Security-first audit skill for local skill libraries and AI workbench surfaces. Detects privacy theft, credential theft, covert data leakage, insecure execution chains, deceptive instructions, and persistence behaviors."
+            zh: "针对本地 skill 库与 AI 工作台界面的安全优先审计技能，检测隐私窃取、凭据盗取、隐秘数据泄露、不安全执行链与欺骗性指令"
+          tags: ["security", "audit", "skill-safety"]
+          featured: true
+        - url: "https://github.com/op7418/logo-generator-skill"
+          name: "op7418"
+          description:
+            en: "Generate professional SVG logos and high-end presentation images with geometric patterns, dot-matrix designs, line systems, and hybrid compositions across 12 professional background styles"
+            zh: "生成专业 SVG Logo 与高端展示图片，支持几何图案、点阵设计、线条系统和混合构图，提供 12 种专业背景风格"
+          tags: ["logo", "svg", "design", "ai-generation"]
           featured: true
