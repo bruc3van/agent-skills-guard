@@ -746,6 +746,7 @@ fn node_tools_from_dependencies(
     tools
 }
 
+#[cfg(test)]
 fn npm_tools_from_list_output(
     node_modules_root: &Path,
     bin_dir: &Path,
