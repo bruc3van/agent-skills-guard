@@ -640,14 +640,15 @@ pub async fn update_local_cli_tool(
                 let new_version = crate::services::local_cli_scanner::detect_version(
                     std::path::Path::new(&detected_path_clone),
                 );
+                let now = chrono::Utc::now().to_rfc3339();
                 let _ = state.db.upsert_local_cli_tool(
                     &display_id_clone,
                     &detected_path_clone,
                     &manager_str_clone,
                     new_version.as_deref(),
-                    None,
+                    new_version.as_deref(), // latest_version = 当前版本，无需再次检查更新
                     false,
-                    None,
+                    Some(&now), // last_checked = 现在，避免下次 list 立即触发网络检查
                     tool.package_name.as_deref(),
                     tool.description.as_deref(),
                 );
