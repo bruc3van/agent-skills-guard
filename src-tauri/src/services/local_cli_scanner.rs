@@ -1072,46 +1072,43 @@ fn scoop_apps_dir() -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
-fn scoop_binary_app_map() -> &'static HashMap<String, String> {
-    static MAP: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
-        let mut map = HashMap::new();
-        let Some(apps_dir) = scoop_apps_dir() else {
-            return map;
-        };
-        let Ok(entries) = std::fs::read_dir(&apps_dir) else {
-            return map;
-        };
-        for entry in entries.flatten() {
-            let app_name = entry.file_name().to_string_lossy().to_lowercase();
-            if app_name == "scoop" {
+fn build_scoop_binary_app_map() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let Some(apps_dir) = scoop_apps_dir() else {
+        return map;
+    };
+    let Ok(entries) = std::fs::read_dir(&apps_dir) else {
+        return map;
+    };
+    for entry in entries.flatten() {
+        let app_name = entry.file_name().to_string_lossy().to_lowercase();
+        if app_name == "scoop" {
+            continue;
+        }
+        let current = entry.path().join("current");
+        for subdir in &["bin", ""] {
+            let subdir_path;
+            let dir = if subdir.is_empty() {
+                &current
+            } else {
+                subdir_path = current.join(subdir);
+                &subdir_path
+            };
+            let Ok(dir_entries) = std::fs::read_dir(dir) else {
                 continue;
-            }
-            let current = entry.path().join("current");
-            for subdir in &["bin", ""] {
-                let subdir_path;
-                let dir = if subdir.is_empty() {
-                    &current
-                } else {
-                    subdir_path = current.join(subdir);
-                    &subdir_path
-                };
-                let Ok(dir_entries) = std::fs::read_dir(dir) else {
+            };
+            for bin_entry in dir_entries.flatten() {
+                if !is_executable(&bin_entry.path()) {
                     continue;
-                };
-                for bin_entry in dir_entries.flatten() {
-                    if !is_executable(&bin_entry.path()) {
-                        continue;
-                    }
-                    if let Some(name) = bin_entry.path().file_stem().and_then(|n| n.to_str()) {
-                        map.entry(name.to_lowercase())
-                            .or_insert_with(|| app_name.clone());
-                    }
+                }
+                if let Some(name) = bin_entry.path().file_stem().and_then(|n| n.to_str()) {
+                    map.entry(name.to_lowercase())
+                        .or_insert_with(|| app_name.clone());
                 }
             }
         }
-        map
-    });
-    &MAP
+    }
+    map
 }
 
 fn choco_lib_dir() -> Option<PathBuf> {
@@ -1124,34 +1121,31 @@ fn choco_lib_dir() -> Option<PathBuf> {
     .find(|p| p.is_dir())
 }
 
-fn choco_binary_package_map() -> &'static HashMap<String, String> {
-    static MAP: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
-        let mut map = HashMap::new();
-        let Some(lib_dir) = choco_lib_dir() else {
-            return map;
+fn build_choco_binary_package_map() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let Some(lib_dir) = choco_lib_dir() else {
+        return map;
+    };
+    let Ok(entries) = std::fs::read_dir(&lib_dir) else {
+        return map;
+    };
+    for entry in entries.flatten() {
+        let pkg_name = entry.file_name().to_string_lossy().to_lowercase();
+        let tools_dir = entry.path().join("tools");
+        let Ok(tool_entries) = std::fs::read_dir(&tools_dir) else {
+            continue;
         };
-        let Ok(entries) = std::fs::read_dir(&lib_dir) else {
-            return map;
-        };
-        for entry in entries.flatten() {
-            let pkg_name = entry.file_name().to_string_lossy().to_lowercase();
-            let tools_dir = entry.path().join("tools");
-            let Ok(tool_entries) = std::fs::read_dir(&tools_dir) else {
+        for tool_entry in tool_entries.flatten() {
+            if !is_executable(&tool_entry.path()) {
                 continue;
-            };
-            for tool_entry in tool_entries.flatten() {
-                if !is_executable(&tool_entry.path()) {
-                    continue;
-                }
-                if let Some(name) = tool_entry.path().file_stem().and_then(|n| n.to_str()) {
-                    map.entry(name.to_lowercase())
-                        .or_insert_with(|| pkg_name.clone());
-                }
+            }
+            if let Some(name) = tool_entry.path().file_stem().and_then(|n| n.to_str()) {
+                map.entry(name.to_lowercase())
+                    .or_insert_with(|| pkg_name.clone());
             }
         }
-        map
-    });
-    &MAP
+    }
+    map
 }
 
 fn scoop_app_current_dir_from_path(path: &Path) -> Option<PathBuf> {
@@ -1263,7 +1257,7 @@ fn extract_xml_tag_text(xml: &str, tag: &str) -> Option<String> {
 
 fn resolve_scoop_app_name(path: &Path) -> Option<String> {
     let binary_name = path.file_stem()?.to_str()?.to_lowercase();
-    scoop_binary_app_map()
+    build_scoop_binary_app_map()
         .get(&binary_name)
         .cloned()
         .or_else(|| Some(tool_id_from_path(path)))
@@ -1271,7 +1265,7 @@ fn resolve_scoop_app_name(path: &Path) -> Option<String> {
 
 fn resolve_choco_package_name(path: &Path) -> Option<String> {
     let binary_name = path.file_stem()?.to_str()?.to_lowercase();
-    choco_binary_package_map()
+    build_choco_binary_package_map()
         .get(&binary_name)
         .cloned()
         .or_else(|| Some(tool_id_from_path(path)))
@@ -1771,6 +1765,18 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::Duration;
+
+    #[test]
+    fn build_scoop_binary_app_map_returns_hashmap() {
+        let map = build_scoop_binary_app_map();
+        let _ = map.len(); // 环境中可能无 scoop，空 map 也是正确的
+    }
+
+    #[test]
+    fn build_choco_binary_package_map_returns_hashmap() {
+        let map = build_choco_binary_package_map();
+        let _ = map.len();
+    }
 
     #[test]
     fn run_command_stdout_timeout_returns_none_on_timeout() {
