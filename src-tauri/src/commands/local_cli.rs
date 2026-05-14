@@ -541,8 +541,9 @@ pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<Loca
         .collect();
 
     for tool in tools.iter_mut() {
-        if let Some((_, _, _, latest, _update_avail, checked, status, log, _pkg, desc)) =
-            cache_map.get(&tool.detected_path)
+        let cached = cache_map.get(&tool.detected_path);
+        if let Some((_, _, cached_cur, latest, _update_avail, checked, status, log, _pkg, desc)) =
+            cached
         {
             tool.latest_version = latest
                 .as_deref()
@@ -556,6 +557,13 @@ pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<Loca
             tool.update_log = log.clone();
             if tool.description.is_none() {
                 tool.description = desc.clone();
+            }
+
+            // 只有 current_version 或 description 与缓存不同时才写入 DB
+            let version_changed = tool.current_version.as_deref() != cached_cur.as_deref();
+            let desc_changed = tool.description.as_deref() != desc.as_deref();
+            if !version_changed && !desc_changed {
+                continue;
             }
         }
         let _ = state.db.upsert_local_cli_tool(
