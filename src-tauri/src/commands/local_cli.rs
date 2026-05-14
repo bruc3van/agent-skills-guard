@@ -531,37 +531,34 @@ pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<Loca
         .db
         .get_all_local_cli_tools()
         .map_err(|e| e.to_string())?;
-    let cache_map: std::collections::HashMap<String, _> = cached
-        .into_iter()
-        .map(
-            |(id, path, mgr, cur, lat, upd, chk, status, log, pkg, desc)| {
-                (path, (id, mgr, cur, lat, upd, chk, status, log, pkg, desc))
-            },
-        )
-        .collect();
+    let cache_map: std::collections::HashMap<String, crate::services::database::LocalCliToolRow> =
+        cached
+            .into_iter()
+            .map(|row| (row.detected_path.clone(), row))
+            .collect();
 
     for tool in tools.iter_mut() {
         let cached = cache_map.get(&tool.detected_path);
-        if let Some((_, _, cached_cur, latest, _update_avail, checked, status, log, _pkg, desc)) =
-            cached
-        {
-            tool.latest_version = latest
+        if let Some(row) = cached {
+            tool.latest_version = row
+                .latest_version
                 .as_deref()
                 .map(|v| v.strip_prefix('v').unwrap_or(v).to_string());
             tool.update_available = is_outdated(
                 tool.current_version.as_deref(),
                 tool.latest_version.as_deref(),
             );
-            tool.last_checked = checked.clone();
-            tool.update_status = status.clone();
-            tool.update_log = log.clone();
+            tool.last_checked = row.last_checked.clone();
+            tool.update_status = row.update_status.clone();
+            tool.update_log = row.update_log.clone();
             if tool.description.is_none() {
-                tool.description = desc.clone();
+                tool.description = row.description.clone();
             }
 
             // 只有 current_version 或 description 与缓存不同时才写入 DB
-            let version_changed = tool.current_version.as_deref() != cached_cur.as_deref();
-            let desc_changed = tool.description.as_deref() != desc.as_deref();
+            let version_changed =
+                tool.current_version.as_deref() != row.current_version.as_deref();
+            let desc_changed = tool.description.as_deref() != row.description.as_deref();
             if !version_changed && !desc_changed {
                 continue;
             }
@@ -606,11 +603,14 @@ pub async fn update_local_cli_tool(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("工具 {} 未找到", tool_path))?;
 
-    let (display_id, detected_path, manager_str, current_version, _, _, _, _, _, pkg_name, desc) =
-        row;
+    let display_id = row.id;
+    let detected_path = row.detected_path;
+    let manager_str = row.manager;
+    let pkg_name = row.package_name;
+    let desc = row.description;
     let manager = PackageManager::from_str(&manager_str);
     let mut tool = LocalCliTool::new(&display_id, &detected_path, manager);
-    tool.current_version = current_version;
+    tool.current_version = row.current_version;
     tool.package_name = pkg_name.clone();
     tool.description = desc.clone();
 
@@ -741,12 +741,12 @@ pub async fn uninstall_local_cli_tool(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("工具 {} 未找到", tool_path))?;
 
-    let (display_id, detected_path, manager_str, current_version, _, _, _, _, _, pkg_name, _desc) =
-        row;
-    let manager = PackageManager::from_str(&manager_str);
+    let display_id = row.id;
+    let detected_path = row.detected_path;
+    let manager = PackageManager::from_str(&row.manager);
     let mut tool = LocalCliTool::new(&display_id, &detected_path, manager);
-    tool.current_version = current_version;
-    tool.package_name = pkg_name;
+    tool.current_version = row.current_version;
+    tool.package_name = row.package_name;
 
     let (bin, args) = build_pty_uninstall_args(&tool)
         .ok_or_else(|| format!("工具 {} 的包管理器不支持自动卸载", display_id))?;
@@ -819,7 +819,7 @@ pub async fn open_local_cli_folder(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("工具 {} 未找到", tool_path))?;
 
-    let detected_path = PathBuf::from(row.1);
+    let detected_path = PathBuf::from(row.detected_path);
     let folder = detected_path
         .parent()
         .ok_or_else(|| format!("无法获取工具 {} 的安装目录", tool_path))?;
@@ -867,11 +867,11 @@ pub async fn fetch_local_cli_descriptions(
 
     for tool_path in &tool_paths {
         let row = match state.db.get_local_cli_tool(tool_path) {
-            Ok(Some(r)) if r.10.is_some() => continue,
+            Ok(Some(r)) if r.description.is_some() => continue,
             Ok(Some(r)) => r,
             _ => continue,
         };
-        let detected_path = row.1.clone();
+        let detected_path = row.detected_path.clone();
         let path = tool_path.clone();
 
         let desc = tokio::time::timeout(

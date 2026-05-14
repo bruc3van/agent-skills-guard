@@ -113,6 +113,20 @@ pub struct Database {
     conn: Mutex<Connection>,
 }
 
+pub struct LocalCliToolRow {
+    pub id: String,
+    pub detected_path: String,
+    pub manager: String,
+    pub current_version: Option<String>,
+    pub latest_version: Option<String>,
+    pub update_available: bool,
+    pub last_checked: Option<String>,
+    pub update_status: Option<String>,
+    pub update_log: Option<String>,
+    pub package_name: Option<String>,
+    pub description: Option<String>,
+}
+
 impl Database {
     /// 获取数据库连接锁，自动恢复 Mutex 中毒状态
     /// 线程 panic 持锁时，SQLite 连接可能处于不一致事务状态，
@@ -1142,25 +1156,7 @@ impl Database {
         Ok(())
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn get_local_cli_tool(
-        &self,
-        path: &str,
-    ) -> Result<
-        Option<(
-            String,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            bool,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        )>,
-    > {
+    pub fn get_local_cli_tool(&self, path: &str) -> Result<Option<LocalCliToolRow>> {
         let conn = self.lock_conn();
         let row = conn
             .query_row(
@@ -1169,43 +1165,26 @@ impl Database {
                  FROM local_cli_tools WHERE detected_path = ?1",
                 params![path],
                 |r| {
-                    Ok((
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                        r.get::<_, i32>(5)? != 0,
-                        r.get(6)?,
-                        r.get(7)?,
-                        r.get(8)?,
-                        r.get(9)?,
-                        r.get(10)?,
-                    ))
+                    Ok(LocalCliToolRow {
+                        id: r.get(0)?,
+                        detected_path: r.get(1)?,
+                        manager: r.get(2)?,
+                        current_version: r.get(3)?,
+                        latest_version: r.get(4)?,
+                        update_available: r.get::<_, i32>(5)? != 0,
+                        last_checked: r.get(6)?,
+                        update_status: r.get(7)?,
+                        update_log: r.get(8)?,
+                        package_name: r.get(9)?,
+                        description: r.get(10)?,
+                    })
                 },
             )
             .optional()?;
         Ok(row)
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn get_all_local_cli_tools(
-        &self,
-    ) -> Result<
-        Vec<(
-            String,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            bool,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        )>,
-    > {
+    pub fn get_all_local_cli_tools(&self) -> Result<Vec<LocalCliToolRow>> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT id, detected_path, manager, current_version, latest_version,
@@ -1214,19 +1193,19 @@ impl Database {
         )?;
         let rows = stmt
             .query_map([], |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get::<_, i32>(5)? != 0,
-                    r.get(6)?,
-                    r.get(7)?,
-                    r.get(8)?,
-                    r.get(9)?,
-                    r.get(10)?,
-                ))
+                Ok(LocalCliToolRow {
+                    id: r.get(0)?,
+                    detected_path: r.get(1)?,
+                    manager: r.get(2)?,
+                    current_version: r.get(3)?,
+                    latest_version: r.get(4)?,
+                    update_available: r.get::<_, i32>(5)? != 0,
+                    last_checked: r.get(6)?,
+                    update_status: r.get(7)?,
+                    update_log: r.get(8)?,
+                    package_name: r.get(9)?,
+                    description: r.get(10)?,
+                })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
@@ -1370,11 +1349,11 @@ mod tests {
             .unwrap();
         assert!(tool.is_some());
         let t = tool.unwrap();
-        assert_eq!(t.0, "bruce-doc-converter");
-        assert_eq!(t.2, "pip");
-        assert_eq!(t.3.as_deref(), Some("0.3.1"));
-        assert_eq!(t.9.as_deref(), Some("bruce-doc-converter"));
-        assert_eq!(t.10.as_deref(), Some("A document converter tool"));
+        assert_eq!(t.id, "bruce-doc-converter");
+        assert_eq!(t.manager, "pip");
+        assert_eq!(t.current_version.as_deref(), Some("0.3.1"));
+        assert_eq!(t.package_name.as_deref(), Some("bruce-doc-converter"));
+        assert_eq!(t.description.as_deref(), Some("A document converter tool"));
 
         let all = db.get_all_local_cli_tools().unwrap();
         assert_eq!(all.len(), 1);
