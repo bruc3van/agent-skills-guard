@@ -132,6 +132,46 @@ describe("LocalCliPage", () => {
     });
   });
 
+  it("同名但路径不同的工具按 detected_path 分别缓存和重试说明", async () => {
+    mockTools = [
+      {
+        id: "claude",
+        detected_path: "/opt/homebrew/bin/claude",
+        manager: "npm",
+        current_version: "1.0.0",
+        update_available: false,
+      },
+    ];
+    fetchLocalCliDescriptions.mockImplementation(async ([path]: string[]) => [
+      [path, path.includes("pnpm") ? "pnpm claude description" : "npm claude description"],
+    ]);
+    const { LocalCliPage } = await import("./LocalCliPage");
+    const { rerender } = render(<LocalCliPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("npm claude description")).not.toBeNull();
+    });
+
+    mockTools = [
+      ...mockTools,
+      {
+        id: "claude",
+        detected_path: "/Users/u/Library/pnpm/bin/claude",
+        manager: "pnpm",
+        current_version: "1.0.0",
+        update_available: false,
+      },
+    ];
+    rerender(<LocalCliPage />);
+
+    await waitFor(() => {
+      expect(fetchLocalCliDescriptions).toHaveBeenCalledWith(["/Users/u/Library/pnpm/bin/claude"]);
+    });
+    await waitFor(() => {
+      expect(screen.getByText("pnpm claude description")).not.toBeNull();
+    });
+  });
+
   it("逐一获取说明信息完成后刷新 CLI 列表", async () => {
     fetchLocalCliDescriptions.mockResolvedValue([
       ["/home/u/.local/bin/bdc", "Bruce doc converter CLI"],

@@ -50,7 +50,7 @@ export function LocalCliPage() {
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const [pendingUninstall, setPendingUninstall] = useState<LocalCliTool | null>(null);
 
-  // Description cache: toolId -> description
+  // Description cache: detected_path -> description
   const [descriptionMap, setDescriptionMap] = useState<Record<string, string>>({});
   const [isFetchingDesc, setIsFetchingDesc] = useState(false);
   const [fetchProgress, setFetchProgress] = useState<{
@@ -59,14 +59,16 @@ export function LocalCliPage() {
     total: number;
   } | null>(null);
   const [descriptionRetryToken, setDescriptionRetryToken] = useState(0);
-  const attemptedDescriptionIdsRef = useRef<Set<string>>(new Set());
+  const attemptedDescriptionPathsRef = useRef<Set<string>>(new Set());
 
   // Lazily fetch descriptions for tools missing one — one by one with progress
   useEffect(() => {
     if (isLoading || tools.length === 0) return;
     const missing = tools.filter(
       (t) =>
-        !t.description && !descriptionMap[t.id] && !attemptedDescriptionIdsRef.current.has(t.id)
+        !t.description &&
+        !descriptionMap[t.detected_path] &&
+        !attemptedDescriptionPathsRef.current.has(t.detected_path)
     );
     if (missing.length === 0) {
       setIsFetchingDesc(false);
@@ -75,7 +77,7 @@ export function LocalCliPage() {
     }
 
     for (const tool of missing) {
-      attemptedDescriptionIdsRef.current.add(tool.id);
+      attemptedDescriptionPathsRef.current.add(tool.detected_path);
     }
 
     let cancelled = false;
@@ -97,7 +99,7 @@ export function LocalCliPage() {
         const results = await api.fetchLocalCliDescriptions([tool.detected_path]);
         if (results.length > 0) {
           const [, desc] = results[0];
-          setDescriptionMap((prev) => ({ ...prev, [tool.id]: desc }));
+          setDescriptionMap((prev) => ({ ...prev, [tool.detected_path]: desc }));
         }
       } catch {
         // skip failed tool
@@ -114,7 +116,7 @@ export function LocalCliPage() {
   }, [tools, isLoading, refetch, descriptionRetryToken]);
 
   const getToolDescription = (tool: LocalCliTool): string | undefined => {
-    return tool.description || descriptionMap[tool.id] || undefined;
+    return tool.description || descriptionMap[tool.detected_path] || undefined;
   };
 
   const updateCount = tools.filter((tool) => tool.update_available).length;
@@ -195,7 +197,7 @@ export function LocalCliPage() {
   const handleRescan = () => {
     if (isChecking || isUpdating || isUninstalling) return;
     setDescriptionMap({});
-    attemptedDescriptionIdsRef.current.clear();
+    attemptedDescriptionPathsRef.current.clear();
     setFetchProgress(null);
     setIsFetchingDesc(false);
     setDescriptionRetryToken((value) => value + 1);
@@ -398,7 +400,9 @@ export function LocalCliPage() {
                   key={tool.detected_path}
                   tool={tool}
                   description={getToolDescription(tool)}
-                  isFetchingDesc={isFetchingDesc && !tool.description && !descriptionMap[tool.id]}
+                  isFetchingDesc={
+                    isFetchingDesc && !tool.description && !descriptionMap[tool.detected_path]
+                  }
                   onUpdate={handleUpdateTool}
                   isUpdating={isUpdating && updatingTool?.detected_path === tool.detected_path}
                   onOpenFolder={handleOpenFolder}

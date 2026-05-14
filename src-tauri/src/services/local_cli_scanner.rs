@@ -538,6 +538,131 @@ fn command_global_node_modules(command: &str) -> Option<PathBuf> {
     run_command_stdout(command, &["root", "-g"]).map(|stdout| PathBuf::from(stdout.trim()))
 }
 
+fn command_global_bin_dir(command: &str) -> Option<PathBuf> {
+    run_command_stdout(command, &["bin", "-g"])
+        .map(|stdout| stdout.trim().to_string())
+        .filter(|stdout| !stdout.is_empty() && stdout != "undefined")
+        .map(PathBuf::from)
+}
+
+fn npm_global_bin_dir_for_packages(
+    node_modules_root: &Path,
+    dependencies: &HashMap<String, PackageListEntry>,
+) -> Option<PathBuf> {
+    command_global_bin_dir("npm")
+        .or_else(|| {
+            run_command_stdout("npm", &["prefix", "-g"])
+                .map(|stdout| stdout.trim().to_string())
+                .filter(|stdout| !stdout.is_empty() && stdout != "undefined")
+                .map(|prefix| {
+                    let expected_bins = expected_node_bin_names(node_modules_root, dependencies);
+                    npm_bin_dir_from_prefix(&PathBuf::from(prefix), &expected_bins)
+                })
+        })
+        .or_else(|| npm_bin_dir_from_node_modules_root(node_modules_root))
+}
+
+fn npm_bin_dir_from_prefix(prefix: &Path, expected_bins: &[String]) -> PathBuf {
+    let bin_dir = prefix.join("bin");
+
+    if contains_expected_shim(&bin_dir, expected_bins) {
+        return bin_dir;
+    }
+    if contains_expected_shim(prefix, expected_bins) {
+        return prefix.to_path_buf();
+    }
+    if bin_dir.is_dir() {
+        return bin_dir;
+    }
+
+    prefix.to_path_buf()
+}
+
+fn npm_bin_dir_from_node_modules_root(node_modules_root: &Path) -> Option<PathBuf> {
+    let parent = node_modules_root.parent()?;
+    if parent
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("lib"))
+    {
+        return parent.parent().map(|prefix| prefix.join("bin"));
+    }
+    Some(parent.to_path_buf())
+}
+
+fn pnpm_global_bin_dir_for_packages(
+    node_modules_root: &Path,
+    dependencies: &HashMap<String, PackageListEntry>,
+) -> Option<PathBuf> {
+    command_global_bin_dir("pnpm")
+        .or_else(|| {
+            run_command_stdout("pnpm", &["config", "get", "global-bin-dir"])
+                .map(|stdout| stdout.trim().to_string())
+                .filter(|stdout| !stdout.is_empty() && stdout != "undefined")
+                .map(PathBuf::from)
+        })
+        .or_else(|| {
+            let expected_bins = expected_node_bin_names(node_modules_root, dependencies);
+            pnpm_bin_dir_from_node_modules_root(node_modules_root, &expected_bins)
+        })
+}
+
+fn pnpm_bin_dir_from_node_modules_root(
+    node_modules_root: &Path,
+    expected_bins: &[String],
+) -> Option<PathBuf> {
+    let global_version_dir = node_modules_root.parent()?;
+    let global_dir = global_version_dir.parent()?;
+    if !global_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("global"))
+    {
+        return node_modules_root.parent().map(Path::to_path_buf);
+    }
+
+    let pnpm_home = global_dir.parent()?;
+    let bin_dir = pnpm_home.join("bin");
+
+    if contains_expected_shim(&bin_dir, expected_bins) {
+        return Some(bin_dir);
+    }
+    if contains_expected_shim(pnpm_home, expected_bins) {
+        return Some(pnpm_home.to_path_buf());
+    }
+
+    if bin_dir.is_dir() {
+        return Some(bin_dir);
+    }
+
+    Some(pnpm_home.to_path_buf())
+}
+
+fn expected_node_bin_names(
+    node_modules_root: &Path,
+    dependencies: &HashMap<String, PackageListEntry>,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    for listed_name in dependencies.keys() {
+        let Some(package_json) = read_node_package_json(node_modules_root, listed_name) else {
+            continue;
+        };
+        let Some(bin_field) = package_json.bin.as_ref() else {
+            continue;
+        };
+        let package_name = package_json.name.as_deref().unwrap_or(listed_name);
+        names.extend(node_package_bin_names(package_name, bin_field));
+    }
+    names
+}
+
+fn contains_expected_shim(bin_dir: &Path, expected_bins: &[String]) -> bool {
+    bin_dir.is_dir()
+        && expected_bins
+            .iter()
+            .any(|bin| shim_path(bin_dir, bin).is_file())
+}
+
 fn shim_path(bin_dir: &Path, binary_name: &str) -> PathBuf {
     // npm/pnpm create .cmd shims on Windows; .ps1 variants exist but are not on PATH by default.
     #[cfg(windows)]
@@ -641,6 +766,29 @@ fn npm_tools_from_list_output(
     )
 }
 
+fn npm_tools_from_list_output_with_bin_fallback(
+    node_modules_root: &Path,
+    output: &str,
+) -> Vec<LocalCliTool> {
+    let Ok(parsed) = serde_json::from_str::<NpmListOutput>(output) else {
+        return vec![];
+    };
+    let Some(dependencies) = parsed.dependencies else {
+        return vec![];
+    };
+    let Some(bin_dir) = npm_global_bin_dir_for_packages(node_modules_root, &dependencies) else {
+        return vec![];
+    };
+
+    node_tools_from_dependencies(
+        node_modules_root,
+        &bin_dir,
+        dependencies,
+        PackageManager::Npm,
+    )
+}
+
+#[cfg(test)]
 fn pnpm_tools_from_list_output(
     node_modules_root: &Path,
     bin_dir: &Path,
@@ -656,6 +804,28 @@ fn pnpm_tools_from_list_output(
     node_tools_from_dependencies(
         node_modules_root,
         bin_dir,
+        dependencies,
+        PackageManager::Pnpm,
+    )
+}
+
+fn pnpm_tools_from_list_output_with_bin_fallback(
+    node_modules_root: &Path,
+    output: &str,
+) -> Vec<LocalCliTool> {
+    let Ok(parsed) = serde_json::from_str::<Vec<PnpmListRoot>>(output) else {
+        return vec![];
+    };
+    let Some(dependencies) = parsed.into_iter().next().and_then(|root| root.dependencies) else {
+        return vec![];
+    };
+    let Some(bin_dir) = pnpm_global_bin_dir_for_packages(node_modules_root, &dependencies) else {
+        return vec![];
+    };
+
+    node_tools_from_dependencies(
+        node_modules_root,
+        &bin_dir,
         dependencies,
         PackageManager::Pnpm,
     )
@@ -794,28 +964,22 @@ fn discover_npm_tools() -> Vec<LocalCliTool> {
     let Some(node_modules_root) = command_global_node_modules("npm") else {
         return vec![];
     };
-    let Some(bin_dir) = node_modules_root.parent().map(Path::to_path_buf) else {
-        return vec![];
-    };
     let Some(output) = run_command_stdout("npm", &["ls", "-g", "--depth=0", "--json"]) else {
         return vec![];
     };
 
-    npm_tools_from_list_output(&node_modules_root, &bin_dir, &output)
+    npm_tools_from_list_output_with_bin_fallback(&node_modules_root, &output)
 }
 
 fn discover_pnpm_tools() -> Vec<LocalCliTool> {
     let Some(node_modules_root) = command_global_node_modules("pnpm") else {
         return vec![];
     };
-    let Some(bin_dir) = node_modules_root.parent().map(Path::to_path_buf) else {
-        return vec![];
-    };
     let Some(output) = run_command_stdout("pnpm", &["ls", "-g", "--depth=0", "--json"]) else {
         return vec![];
     };
 
-    pnpm_tools_from_list_output(&node_modules_root, &bin_dir, &output)
+    pnpm_tools_from_list_output_with_bin_fallback(&node_modules_root, &output)
 }
 
 fn find_pip_site_packages() -> Vec<PathBuf> {
@@ -1822,7 +1986,10 @@ fn detect_pip_version(path: &Path) -> Option<String> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::Mutex;
     use std::time::Duration;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn parse_brew_list_all_versions_output_builds_map() {
@@ -1918,6 +2085,36 @@ mod tests {
         }
     }
 
+    struct PathEnvGuard {
+        original_path: Option<std::ffi::OsString>,
+    }
+
+    impl PathEnvGuard {
+        fn prepend(bin_dir: &Path) -> Self {
+            let original_path = std::env::var_os("PATH");
+            let mut paths = vec![bin_dir.to_path_buf()];
+            paths.extend(
+                original_path
+                    .as_ref()
+                    .map(|value| std::env::split_paths(value).collect::<Vec<_>>())
+                    .unwrap_or_default(),
+            );
+            let joined = std::env::join_paths(paths).unwrap();
+            unsafe { std::env::set_var("PATH", joined) };
+            Self { original_path }
+        }
+    }
+
+    impl Drop for PathEnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.original_path.take() {
+                unsafe { std::env::set_var("PATH", value) };
+            } else {
+                unsafe { std::env::remove_var("PATH") };
+            }
+        }
+    }
+
     #[test]
     fn scan_dir_finds_executables() {
         let dir = tempfile::tempdir().unwrap();
@@ -2008,6 +2205,202 @@ mod tests {
                 && tool.description.as_deref() == Some("Scoped CLI")
                 && tool.detected_path == shim_path(&bin, "pkg").to_string_lossy().as_ref()
         }));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn discover_npm_tools_uses_global_bin_dir_not_node_modules_parent() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let command_dir = dir.path().join("commands");
+        let prefix = dir.path().join("homebrew");
+        let node_modules = prefix.join("lib").join("node_modules");
+        let bin = prefix.join("bin");
+        let package = node_modules.join("my-tool");
+        fs::create_dir_all(&command_dir).unwrap();
+        fs::create_dir_all(&package).unwrap();
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(
+            package.join("package.json"),
+            r#"{"name":"my-tool","version":"1.2.3","description":"My tool","bin":{"my-tool":"./cli.js"}}"#,
+        )
+        .unwrap();
+        write_executable(&bin.join("my-tool"), b"#!/bin/sh\n");
+
+        let script = format!(
+            r#"#!/bin/sh
+case "$1 $2" in
+  "root -g") printf '%s\n' '{}' ;;
+  "prefix -g") printf '%s\n' '{}' ;;
+  "ls -g")
+    cat <<'JSON'
+{{"dependencies":{{"my-tool":{{"version":"1.2.3"}}}}}}
+JSON
+    ;;
+  *) exit 1 ;;
+esac
+"#,
+            node_modules.display(),
+            prefix.display()
+        );
+        write_executable(&command_dir.join("npm"), script.as_bytes());
+        let _path = PathEnvGuard::prepend(&command_dir);
+
+        let tools = discover_npm_tools();
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools[0].detected_path,
+            bin.join("my-tool").to_string_lossy().as_ref()
+        );
+        assert_eq!(tools[0].manager, PackageManager::Npm);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn discover_npm_tools_falls_back_to_prefix_when_shim_is_not_in_bin_subdir() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let command_dir = dir.path().join("commands");
+        let prefix = dir.path().join("AppData").join("Roaming").join("npm");
+        let node_modules = prefix.join("node_modules");
+        let package = node_modules.join("my-tool");
+        fs::create_dir_all(&command_dir).unwrap();
+        fs::create_dir_all(&package).unwrap();
+        fs::create_dir_all(prefix.join("bin")).unwrap();
+        fs::write(
+            package.join("package.json"),
+            r#"{"name":"my-tool","version":"1.2.3","description":"My tool","bin":{"my-tool":"./cli.js"}}"#,
+        )
+        .unwrap();
+        write_executable(&prefix.join("my-tool"), b"#!/bin/sh\n");
+
+        let script = format!(
+            r#"#!/bin/sh
+case "$1 $2" in
+  "root -g") printf '%s\n' '{}' ;;
+  "bin -g") exit 1 ;;
+  "prefix -g") printf '%s\n' '{}' ;;
+  "ls -g")
+    cat <<'JSON'
+{{"dependencies":{{"my-tool":{{"version":"1.2.3"}}}}}}
+JSON
+    ;;
+  *) exit 1 ;;
+esac
+"#,
+            node_modules.display(),
+            prefix.display()
+        );
+        write_executable(&command_dir.join("npm"), script.as_bytes());
+        let _path = PathEnvGuard::prepend(&command_dir);
+
+        let tools = discover_npm_tools();
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools[0].detected_path,
+            prefix.join("my-tool").to_string_lossy().as_ref()
+        );
+        assert_eq!(tools[0].manager, PackageManager::Npm);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn discover_pnpm_tools_uses_global_bin_dir_not_node_modules_parent() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let command_dir = dir.path().join("commands");
+        let pnpm_home = dir.path().join("Library").join("pnpm");
+        let node_modules = pnpm_home.join("global").join("5").join("node_modules");
+        let bin = pnpm_home.join("bin");
+        let package = node_modules.join("@scope").join("my-tool");
+        fs::create_dir_all(&command_dir).unwrap();
+        fs::create_dir_all(&package).unwrap();
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(
+            package.join("package.json"),
+            r#"{"name":"@scope/my-tool","version":"2.3.4","description":"My pnpm tool","bin":{"my-tool":"./cli.js"}}"#,
+        )
+        .unwrap();
+        write_executable(&bin.join("my-tool"), b"#!/bin/sh\n");
+
+        let script = format!(
+            r#"#!/bin/sh
+case "$1 $2" in
+  "root -g") printf '%s\n' '{}' ;;
+  "bin -g") printf '%s\n' '{}' ;;
+  "ls -g")
+    cat <<'JSON'
+[{{"name":"global","version":"0.0.0","dependencies":{{"@scope/my-tool":{{"version":"2.3.4"}}}}}}]
+JSON
+    ;;
+  *) exit 1 ;;
+esac
+"#,
+            node_modules.display(),
+            bin.display()
+        );
+        write_executable(&command_dir.join("pnpm"), script.as_bytes());
+        let _path = PathEnvGuard::prepend(&command_dir);
+
+        let tools = discover_pnpm_tools();
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools[0].detected_path,
+            bin.join("my-tool").to_string_lossy().as_ref()
+        );
+        assert_eq!(tools[0].manager, PackageManager::Pnpm);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn discover_pnpm_tools_falls_back_to_pnpm_home_when_shim_is_not_in_bin_subdir() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let command_dir = dir.path().join("commands");
+        let pnpm_home = dir.path().join("Library").join("pnpm");
+        let node_modules = pnpm_home.join("global").join("5").join("node_modules");
+        let bin = pnpm_home.join("bin");
+        let package = node_modules.join("typescript");
+        fs::create_dir_all(&command_dir).unwrap();
+        fs::create_dir_all(&package).unwrap();
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(
+            package.join("package.json"),
+            r#"{"name":"typescript","version":"5.9.3","description":"TypeScript","bin":{"tsc":"./bin/tsc"}}"#,
+        )
+        .unwrap();
+        write_executable(&pnpm_home.join("tsc"), b"#!/bin/sh\n");
+
+        let script = format!(
+            r#"#!/bin/sh
+case "$1 $2" in
+  "root -g") printf '%s\n' '{}' ;;
+  "bin -g") exit 1 ;;
+  "config get") printf 'undefined\n' ;;
+  "ls -g")
+    cat <<'JSON'
+[{{"name":"global","version":"0.0.0","dependencies":{{"typescript":{{"version":"5.9.3"}}}}}}]
+JSON
+    ;;
+  *) exit 1 ;;
+esac
+"#,
+            node_modules.display()
+        );
+        write_executable(&command_dir.join("pnpm"), script.as_bytes());
+        let _path = PathEnvGuard::prepend(&command_dir);
+
+        let tools = discover_pnpm_tools();
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools[0].detected_path,
+            pnpm_home.join("tsc").to_string_lossy().as_ref()
+        );
+        assert_eq!(tools[0].manager, PackageManager::Pnpm);
     }
 
     #[test]
