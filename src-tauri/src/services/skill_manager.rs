@@ -360,7 +360,7 @@ impl SkillManager {
             let file_name = final_install_dir
                 .file_name()
                 .and_then(|name| name.to_str())
-                .context("无效的技能目录名")?;
+                .context("INVALID_SKILL_DIR_NAME")?;
             let parent = final_install_dir.parent().context("无效的安装目录")?;
             let backup_path =
                 parent.join(format!(".{}.backup-{}", file_name, uuid::Uuid::new_v4()));
@@ -473,7 +473,7 @@ impl SkillManager {
     ) -> Result<crate::models::SecurityReport> {
         let locale = rust_i18n::locale();
         let report = self.scanner.scan_directory_with_options(
-            dir.to_str().context("技能目录路径无效")?,
+            dir.to_str().context("INVALID_SKILL_DIR_PATH")?,
             skill_id,
             &locale,
             ScanOptions { skip_readme: true },
@@ -572,7 +572,7 @@ impl SkillManager {
             .get_skills()?
             .into_iter()
             .find(|s| s.id == skill_id)
-            .context("未找到该技能")?;
+            .context("SKILL_NOT_FOUND")?;
         let (_skill_md_content, _report) = self.download_and_analyze(&mut skill).await?;
 
         // 获取仓库记录
@@ -580,7 +580,7 @@ impl SkillManager {
         let repo = repositories
             .iter()
             .find(|r| r.url == skill.repository_url)
-            .context("未找到对应的仓库记录")?
+            .context("REPOSITORY_NOT_FOUND")?
             .clone();
 
         // 确保仓库缓存存在
@@ -611,7 +611,7 @@ impl SkillManager {
 
         // 直接扫描缓存中的技能目录
         let scan_report = self.scanner.scan_directory_with_options(
-            skill_cache_dir.to_str().context("技能目录路径无效")?,
+            skill_cache_dir.to_str().context("INVALID_SKILL_DIR_PATH")?,
             &skill.id,
             locale,
             ScanOptions { skip_readme: true },
@@ -649,7 +649,7 @@ impl SkillManager {
 
         // 获取缓存基础目录
         let cache_base_dir = dirs::cache_dir()
-            .context("无法获取系统缓存目录")?
+            .context("CACHE_DIR_UNAVAILABLE")?
             .join("agent-skills-guard")
             .join("repositories");
 
@@ -820,7 +820,7 @@ impl SkillManager {
             .get_skills()?
             .into_iter()
             .find(|s| s.id == skill_id)
-            .context("未找到该技能")?;
+            .context("SKILL_NOT_FOUND")?;
 
         // 获取缓存中的技能路径（优先从 staging_path 读取，向后兼容 __cache__: 前缀）
         let cache_dir = if let Some(staging) = &skill.staging_path {
@@ -863,7 +863,7 @@ impl SkillManager {
         };
 
         // 获取技能目录名
-        let skill_dir_name = cache_dir.file_name().context("无效的技能目录名")?;
+        let skill_dir_name = cache_dir.file_name().context("INVALID_SKILL_DIR_NAME")?;
         let final_install_dir = install_base_dir.join(skill_dir_name);
 
         // 确保目标基础目录存在
@@ -1008,7 +1008,7 @@ impl SkillManager {
             .get_skills()?
             .into_iter()
             .find(|s| s.id == skill_id)
-            .context("未找到该技能")?;
+            .context("SKILL_NOT_FOUND")?;
 
         // 注意：不删除缓存中的文件，因为缓存是共享的仓库缓存
         // 只清除数据库中的准备阶段信息
@@ -1170,7 +1170,7 @@ impl SkillManager {
             .get_skills()?
             .into_iter()
             .find(|s| s.id == skill_id)
-            .context("未找到该技能")?;
+            .context("SKILL_NOT_FOUND")?;
 
         let mut errors: Vec<String> = Vec::new();
 
@@ -1262,7 +1262,7 @@ impl SkillManager {
             .get_skills()?
             .into_iter()
             .find(|s| s.id == skill_id)
-            .context("未找到该技能")?;
+            .context("SKILL_NOT_FOUND")?;
 
         // 删除指定路径的文件：链接用 remove_dir_link，真实目录用 remove_dir_all
         let mut errors: Vec<String> = Vec::new();
@@ -2046,7 +2046,7 @@ impl SkillManager {
             .get_skills()?
             .into_iter()
             .find(|s| s.id == skill_id)
-            .context("未找到该技能")?;
+            .context("SKILL_NOT_FOUND")?;
 
         if !skill.installed {
             anyhow::bail!("SKILL_NOT_INSTALLED");
@@ -2057,7 +2057,7 @@ impl SkillManager {
         let repo = repositories
             .iter()
             .find(|r| r.url == skill.repository_url)
-            .context("未找到对应的仓库记录")?
+            .context("REPOSITORY_NOT_FOUND")?
             .clone();
 
         // 重新下载仓库到新的临时缓存（staging）
@@ -2065,7 +2065,7 @@ impl SkillManager {
         let (owner, repo_name) = crate::models::Repository::from_github_url(&skill.repository_url)?;
 
         let staging_base_dir = dirs::cache_dir()
-            .context("无法获取系统缓存目录")?
+            .context("CACHE_DIR_UNAVAILABLE")?
             .join("agent-skills-guard")
             .join("staging");
 
@@ -2090,7 +2090,7 @@ impl SkillManager {
 
         // 扫描最新版本
         let scan_report = self.scanner.scan_directory_with_options(
-            staging_skill_dir.to_str().context("技能目录路径无效")?,
+            staging_skill_dir.to_str().context("INVALID_SKILL_DIR_PATH")?,
             &skill.id,
             locale,
             ScanOptions { skip_readme: true },
@@ -2166,7 +2166,7 @@ impl SkillManager {
             .get_skills()?
             .into_iter()
             .find(|s| s.id == skill_id)
-            .context("未找到该技能")?;
+            .context("SKILL_NOT_FOUND")?;
 
         // 获取 staging 路径
         let staging_marker = skill.local_path.as_ref().context("技能尚未准备更新")?;
@@ -2223,7 +2223,7 @@ impl SkillManager {
                 .context("无效的目录名")?
                 .to_string_lossy();
             let backup_root = dirs::cache_dir()
-                .context("无法获取系统缓存目录")?
+                .context("CACHE_DIR_UNAVAILABLE")?
                 .join("agent-skills-guard")
                 .join("skill-backups");
 
@@ -2473,7 +2473,7 @@ impl SkillManager {
             .get_skills()?
             .into_iter()
             .find(|s| s.id == skill_id)
-            .context("未找到该技能")?;
+            .context("SKILL_NOT_FOUND")?;
 
         // 获取 staging 路径
         let staging_marker = skill.local_path.as_ref().context("技能尚未准备更新")?;
@@ -2520,7 +2520,7 @@ impl SkillManager {
             .get_skills()?
             .into_iter()
             .find(|s| s.id == skill_id)
-            .context("未找到该技能")?;
+            .context("SKILL_NOT_FOUND")?;
 
         // 本地技能自动提升：复制到通用目录，原位置替换为 Junction
         if skill.is_local_only {
@@ -2530,7 +2530,7 @@ impl SkillManager {
                 .context("本地技能缺少 local_path")?
                 .clone();
             let original = PathBuf::from(&original_path);
-            let dir_name = original.file_name().context("无效的技能目录名")?;
+            let dir_name = original.file_name().context("INVALID_SKILL_DIR_NAME")?;
             let common_dir = self.skills_dir.join(&dir_name);
 
             // 确保通用目录的父目录存在
@@ -2599,7 +2599,7 @@ impl SkillManager {
 
         let skill_dir_name = source
             .file_name()
-            .context("无效的技能目录名")?
+            .context("INVALID_SKILL_DIR_NAME")?
             .to_string_lossy()
             .to_string();
 

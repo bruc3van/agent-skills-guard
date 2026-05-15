@@ -20,7 +20,12 @@
     "GITHUB_UNAUTHORIZED": "Unauthorized access, please configure GitHub Token",
     "GITHUB_SERVER_ERROR": "GitHub server error",
     "NETWORK_ERROR": "Network request failed",
-    "INSTALL_PATH_CONFLICT": "Install path conflicts with tool skills directory, please choose another path"
+    "INSTALL_PATH_CONFLICT": "Install path conflicts with tool skills directory, please choose another path",
+    "GITHUB_API_ERROR": "GitHub API request error",
+    "REPOSITORY_NOT_FOUND": "Repository record not found",
+    "INVALID_SKILL_DIR_NAME": "Invalid skill directory name",
+    "INVALID_SKILL_DIR_PATH": "Invalid skill directory path",
+    "CACHE_DIR_UNAVAILABLE": "Unable to get system cache directory"
   },
   "header": {
     "title": "AGENT SKILLS GUARD",

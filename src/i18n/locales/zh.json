@@ -20,7 +20,12 @@
     "GITHUB_UNAUTHORIZED": "未授权访问，请配置 GitHub Token",
     "GITHUB_SERVER_ERROR": "GitHub 服务器错误",
     "NETWORK_ERROR": "网络请求失败",
-    "INSTALL_PATH_CONFLICT": "安装路径与工具技能目录冲突，请选择其他路径"
+    "INSTALL_PATH_CONFLICT": "安装路径与工具技能目录冲突，请选择其他路径",
+    "GITHUB_API_ERROR": "GitHub API 请求错误",
+    "REPOSITORY_NOT_FOUND": "未找到对应的仓库记录",
+    "INVALID_SKILL_DIR_NAME": "无效的技能目录名",
+    "INVALID_SKILL_DIR_PATH": "技能目录路径无效",
+    "CACHE_DIR_UNAVAILABLE": "无法获取系统缓存目录"
   },
   "header": {
     "title": "智能体技能管家",
