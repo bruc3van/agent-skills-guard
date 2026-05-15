@@ -1410,6 +1410,36 @@ impl SkillManager {
         // 获取当前数据库中的所有技能（用于去重和提取路径）
         let existing_skills = self.db.get_skills()?;
 
+        // 预建索引，避免 O(N*M) 线性扫描
+        let mut index_by_path: HashMap<String, usize> = HashMap::new();
+        let mut index_by_dirname: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut index_by_checksum: HashMap<String, Vec<usize>> = HashMap::new();
+
+        for (i, skill) in existing_skills.iter().enumerate() {
+            if let Some(ref lp) = skill.local_path {
+                index_by_path.insert(normalize_path_for_compare(&PathBuf::from(lp)), i);
+            }
+            if let Some(ref lps) = skill.local_paths {
+                for lp in lps {
+                    index_by_path.insert(normalize_path_for_compare(&PathBuf::from(lp)), i);
+                }
+            }
+            if let Some(ref lp) = skill.local_path {
+                if let Some(dir_name) = PathBuf::from(lp).file_name().and_then(|n| n.to_str()) {
+                    index_by_dirname
+                        .entry(dir_name.to_string())
+                        .or_default()
+                        .push(i);
+                }
+            }
+            if let Some(ref checksum) = skill.checksum {
+                index_by_checksum
+                    .entry(checksum.clone())
+                    .or_default()
+                    .push(i);
+            }
+        }
+
         // 1. 获取所有 unique 的 local_path 父目录
         let mut scan_dirs: HashSet<PathBuf> = HashSet::new();
 
@@ -1582,16 +1612,11 @@ impl SkillManager {
 
                             // 检查是否已存在（按 local_path 和 local_paths 去重，避免目录不变但名称变化导致重复导入）
                             let local_path_str = path.to_string_lossy().to_string();
-                            let existing_by_path = existing_skills
-                                .iter()
-                                .filter(|s| {
-                                    s.local_path.as_deref() == Some(local_path_str.as_str())
-                                        || s.local_paths
-                                            .as_ref()
-                                            .map_or(false, |paths| paths.contains(&local_path_str))
-                                })
-                                .cloned()
-                                .collect::<Vec<_>>();
+                            let normalized_scan_path = normalize_path_for_compare(&path);
+                            let existing_by_path: Vec<Skill> = index_by_path
+                                .get(&normalized_scan_path)
+                                .map(|&i| vec![existing_skills[i].clone()])
+                                .unwrap_or_default();
 
                             if existing_by_path.len() > 1 {
                                 log::warn!(
@@ -1656,14 +1681,14 @@ impl SkillManager {
 
                             // 二次匹配：按目录名为 local::* 技能查找已有记录，避免技能被移动+编辑后产生重复
                             let dir_name = path.file_name().unwrap_or_default().to_string_lossy();
-                            let existing_by_dir = existing_skills.iter().find(|s| {
-                                s.id.starts_with("local::")
-                                    && !s.installed
-                                    && PathBuf::from(s.local_path.as_deref().unwrap_or(""))
-                                        .file_name()
-                                        .map(|n| n.to_string_lossy() == dir_name)
-                                        .unwrap_or(false)
-                            });
+                            let existing_by_dir = index_by_dirname
+                                .get(dir_name.as_ref())
+                                .and_then(|indices| {
+                                    indices.iter().find(|&&i| {
+                                        existing_skills[i].id.starts_with("local::")
+                                            && !existing_skills[i].installed
+                                    }).map(|&i| &existing_skills[i])
+                                });
                             if let Some(mut existing_skill) = existing_by_dir.cloned() {
                                 log::info!(
                                     "Reusing existing local skill '{}' for moved directory {:?} -> {:?}",
@@ -1700,11 +1725,14 @@ impl SkillManager {
                             }
 
                             // Fallback: match by checksum for renamed directories
-                            let existing_by_checksum = existing_skills.iter().find(|s| {
-                                s.checksum.as_deref() == Some(checksum.as_str())
-                                    && !s.installed
-                                    && s.repository_url == "local"
-                            });
+                            let existing_by_checksum = index_by_checksum
+                                .get(&checksum)
+                                .and_then(|indices| {
+                                    indices.iter().find(|&&i| {
+                                        !existing_skills[i].installed
+                                            && existing_skills[i].repository_url == "local"
+                                    }).map(|&i| &existing_skills[i])
+                                });
                             if let Some(mut existing_skill) = existing_by_checksum.cloned() {
                                 log::info!(
                                     "Reusing existing local skill '{}' by checksum for renamed directory {:?} -> {:?}",
