@@ -540,6 +540,17 @@ mod tests {
 
         assert_eq!(stale_ids, vec![stale.id]);
     }
+
+    #[test]
+    fn optional_allow_partial_scan_defaults_to_false() {
+        assert!(!allow_partial_scan_or_default(None));
+        assert!(!allow_partial_scan_or_default(Some(false)));
+        assert!(allow_partial_scan_or_default(Some(true)));
+    }
+}
+
+fn allow_partial_scan_or_default(allow_partial_scan: Option<bool>) -> bool {
+    allow_partial_scan.unwrap_or(false)
 }
 
 /// 获取所有 skills
@@ -566,7 +577,11 @@ pub async fn install_skill(
 ) -> Result<(), String> {
     let manager = state.skill_manager.lock().await;
     manager
-        .install_skill(&skill_id, install_path, allow_partial_scan.unwrap_or(false))
+        .install_skill(
+            &skill_id,
+            install_path,
+            allow_partial_scan_or_default(allow_partial_scan),
+        )
         .await
         .map_err(|e| e.to_string())
 }
@@ -577,11 +592,15 @@ pub async fn prepare_skill_installation(
     state: State<'_, AppState>,
     skill_id: String,
     locale: String,
-    allow_partial_scan: bool,
+    allow_partial_scan: Option<bool>,
 ) -> Result<crate::models::security::SecurityReport, String> {
     let manager = state.skill_manager.lock().await;
     manager
-        .prepare_skill_installation(&skill_id, &locale, allow_partial_scan)
+        .prepare_skill_installation(
+            &skill_id,
+            &locale,
+            allow_partial_scan_or_default(allow_partial_scan),
+        )
         .await
         .map_err(|e| e.to_string())
 }
@@ -602,7 +621,7 @@ pub async fn confirm_skill_installation(
             .confirm_skill_installation(
                 &skill_id,
                 install_path,
-                allow_partial_scan.unwrap_or(false),
+                allow_partial_scan_or_default(allow_partial_scan),
                 target_tools.unwrap_or_default(),
             )
             .map_err(|e| e.to_string())
@@ -1332,7 +1351,7 @@ pub async fn confirm_skill_update(
             .confirm_skill_update(
                 &skill_id,
                 force_overwrite,
-                allow_partial_scan.unwrap_or(false),
+                allow_partial_scan_or_default(allow_partial_scan),
             )
             .map_err(|e| e.to_string())
     })

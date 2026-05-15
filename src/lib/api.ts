@@ -60,6 +60,18 @@ export const api = {
     });
   },
 
+  async prepareSkillInstallation(
+    skillId: string,
+    locale: string,
+    allowPartialScan = false
+  ): Promise<SecurityReport> {
+    return invoke("prepare_skill_installation", {
+      skillId,
+      locale,
+      allowPartialScan,
+    });
+  },
+
   async confirmSkillInstallation(
     skillId: string,
     installPath?: string,

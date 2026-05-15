@@ -250,10 +250,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
     if (preparingSkillId || installingSkillId) return;
     try {
       setPreparingSkillId(skill.id);
-      const report = await invoke<SecurityReport>("prepare_skill_installation", {
-        skillId: skill.id,
-        locale: i18n.language,
-      });
+      const report = await api.prepareSkillInstallation(skill.id, i18n.language);
       setPendingSkillInstall({ skill, report });
     } catch (error: any) {
       appToast.error(`${t("skills.toast.installFailed")}: ${error.message || error}`);

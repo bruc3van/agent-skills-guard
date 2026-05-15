@@ -426,10 +426,10 @@ export function MarketplacePage({
                           ...prev,
                           preparingSkillId: entry.item.id,
                         }));
-                        const report = await invoke<SecurityReport>("prepare_skill_installation", {
-                          skillId: entry.item.id,
-                          locale: i18n.language,
-                        });
+                        const report = await api.prepareSkillInstallation(
+                          entry.item.id,
+                          i18n.language
+                        );
                         setInstallStatus((prev) => ({
                           ...prev,
                           preparingSkillId: null,
