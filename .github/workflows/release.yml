@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -14,10 +14,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-latest'
-            args: '--target universal-apple-darwin'
-          - platform: 'windows-latest'
-            args: ''
+          - platform: "macos-latest"
+            args: "--target universal-apple-darwin"
+          - platform: "windows-latest"
+            args: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -39,7 +39,16 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
+          prefix-key: "v1-rust"
+          cache-bin: "false"
+          workspaces: "./src-tauri -> target"
+
+      - name: Verify Rust toolchain
+        shell: bash
+        run: |
+          command -v cargo
+          cargo --version
+          cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps >/dev/null
 
       - name: Install frontend dependencies
         run: pnpm install
@@ -74,7 +83,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'Agent Skills Guard ${{ github.ref_name }}'
+          releaseName: "Agent Skills Guard ${{ github.ref_name }}"
           releaseBody: ${{ steps.changelog.outputs.changelog }}
           releaseDraft: false
           prerelease: false
