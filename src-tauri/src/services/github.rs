@@ -129,8 +129,9 @@ impl GitHubService {
                     skills.push(skill);
                 } else if repo.scan_subdirs {
                     // 递归扫描子目录
+                    let api_calls_remaining = std::sync::atomic::AtomicUsize::new(200);
                     match self
-                        .scan_directory(&owner, &repo_name, &item.path, &repo.url)
+                        .scan_directory(&owner, &repo_name, &item.path, &repo.url, &api_calls_remaining)
                         .await
                     {
                         Ok(mut sub_skills) => skills.append(&mut sub_skills),
@@ -150,8 +151,15 @@ impl GitHubService {
         repo: &'a str,
         path: &'a str,
         repo_url: &'a str,
+        api_calls_remaining: &'a std::sync::atomic::AtomicUsize,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<Skill>>> + Send + 'a>> {
         Box::pin(async move {
+            if api_calls_remaining.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                log::warn!("scan_directory: API 调用次数已达上限，停止扫描 path={}", path);
+                return Ok(Vec::new());
+            }
+            api_calls_remaining.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+
             let mut skills = Vec::new();
             let contents = self.fetch_directory_contents(owner, repo, path).await?;
 
@@ -186,7 +194,12 @@ impl GitHubService {
                         skills.push(skill);
                     } else if path.split('/').count() < 5 {
                         // 递归扫描（限制深度避免无限递归）
-                        match self.scan_directory(owner, repo, &item.path, repo_url).await {
+                        if api_calls_remaining.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                            log::warn!("scan_directory: API 调用次数已达上限，跳过子目录 {}", item.path);
+                            continue;
+                        }
+                        api_calls_remaining.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                        match self.scan_directory(owner, repo, &item.path, repo_url, api_calls_remaining).await {
                             Ok(mut sub_skills) => skills.append(&mut sub_skills),
                             Err(e) => {
                                 log::warn!("Failed to scan subdirectory {}: {}", item.path, e)
