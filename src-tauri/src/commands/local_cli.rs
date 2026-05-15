@@ -587,10 +587,7 @@ fn is_ascii_art_char(ch: char) -> bool {
 const CLI_SCAN_CACHE_TTL: Duration = Duration::from_secs(300);
 
 /// 将扫描结果与 DB 缓存合并，写入内存缓存，并同步到 DB
-fn merge_and_cache_tools(
-    state: &AppState,
-    tools: &mut Vec<LocalCliTool>,
-) -> Result<(), String> {
+fn merge_and_cache_tools(state: &AppState, tools: &mut Vec<LocalCliTool>) -> Result<(), String> {
     let cached = state
         .db
         .get_all_local_cli_tools()
@@ -629,21 +626,35 @@ fn merge_and_cache_tools(
     }
 
     // 写入内存缓存
-    if let Ok(mut cache) = state.cli_scan_cache.write() {
-        *cache = Some(crate::commands::CliScanCache {
-            tools: tools.clone(),
-            scanned_at: Instant::now(),
-        });
-    }
+    replace_cli_scan_cache(&state.cli_scan_cache, tools.clone());
 
     Ok(())
+}
+
+fn replace_cli_scan_cache(
+    cache: &std::sync::RwLock<Option<crate::commands::CliScanCache>>,
+    tools: Vec<LocalCliTool>,
+) {
+    let mut cache = cache.write().unwrap_or_else(|e| e.into_inner());
+    *cache = Some(crate::commands::CliScanCache {
+        tools,
+        scanned_at: Instant::now(),
+    });
+}
+
+fn clear_cli_scan_cache(cache: &std::sync::RwLock<Option<crate::commands::CliScanCache>>) {
+    let mut cache = cache.write().unwrap_or_else(|e| e.into_inner());
+    *cache = None;
 }
 
 #[tauri::command]
 pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<LocalCliTool>, String> {
     // 优先从内存缓存返回
     {
-        let cache = state.cli_scan_cache.read().unwrap_or_else(|e| e.into_inner());
+        let cache = state
+            .cli_scan_cache
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(ref c) = *cache {
             if c.scanned_at.elapsed() < CLI_SCAN_CACHE_TTL {
                 return Ok(c.tools.clone());
@@ -673,7 +684,9 @@ async fn force_scan_local_cli_tools(state: &AppState) -> Result<Vec<LocalCliTool
 }
 
 #[tauri::command]
-pub async fn rescan_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<LocalCliTool>, String> {
+pub async fn rescan_local_cli_tools(
+    state: State<'_, AppState>,
+) -> Result<Vec<LocalCliTool>, String> {
     force_scan_local_cli_tools(&state).await
 }
 
@@ -687,6 +700,7 @@ pub async fn check_local_cli_updates(
         .check_updates(&mut tools)
         .await
         .map_err(|e| e.to_string())?;
+    replace_cli_scan_cache(&state.cli_scan_cache, tools.clone());
     Ok(tools)
 }
 
@@ -762,6 +776,7 @@ pub async fn update_local_cli_tool(
                     tool.package_name.as_deref(),
                     tool.description.as_deref(),
                 );
+                clear_cli_scan_cache(&state.cli_scan_cache);
                 Ok(log)
             } else {
                 let log = non_empty_log_or_default(
@@ -794,9 +809,7 @@ fn build_cli_for_manager(bin: String, manager: &PackageManager) -> ClaudeCli {
             cli = cli.env_remove_prefix("npm_config_");
         }
         PackageManager::Brew => {
-            cli = cli
-                .env_var("HOMEBREW_NO_AUTO_UPDATE", "1")
-                .env_var("HOMEBREW_NO_EMOJI", "1");
+            cli = cli.env_var("HOMEBREW_NO_EMOJI", "1");
         }
         _ => {}
     }
@@ -1017,6 +1030,37 @@ mod tests {
         let (bin, argv) = build_pty_update_args(&tool).unwrap();
         assert_eq!(command_name(&bin), "npm");
         assert_eq!(argv, vec!["install", "-g", "@mermaid-js/mermaid-cli"]);
+    }
+
+    #[test]
+    fn brew_update_cli_allows_homebrew_auto_update() {
+        let cli = build_cli_for_manager("brew".to_string(), &PackageManager::Brew);
+
+        assert_eq!(cli.env_var_for_test("HOMEBREW_NO_AUTO_UPDATE"), None);
+        assert_eq!(cli.env_var_for_test("HOMEBREW_NO_EMOJI"), Some("1"));
+    }
+
+    #[test]
+    fn clearing_cli_scan_cache_removes_stale_update_button_state() {
+        let stale_tool = LocalCliTool {
+            current_version: Some("7.1.2-21".to_string()),
+            latest_version: Some("7.1.2-22".to_string()),
+            update_available: true,
+            package_name: Some("imagemagick".to_string()),
+            ..LocalCliTool::new(
+                "imagemagick",
+                "/opt/homebrew/opt/imagemagick/bin/animate",
+                PackageManager::Brew,
+            )
+        };
+        let cache = std::sync::RwLock::new(Some(crate::commands::CliScanCache {
+            tools: vec![stale_tool],
+            scanned_at: Instant::now(),
+        }));
+
+        clear_cli_scan_cache(&cache);
+
+        assert!(cache.read().unwrap().is_none());
     }
 
     #[test]

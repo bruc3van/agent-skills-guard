@@ -51,6 +51,14 @@ impl ClaudeCli {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn env_var_for_test(&self, key: &str) -> Option<&str> {
+        self.env_vars
+            .iter()
+            .find(|(env_key, _)| env_key == key)
+            .map(|(_, val)| val.as_str())
+    }
+
     pub fn run(&self, commands: &[ClaudeCommand]) -> Result<ClaudeCliResult> {
         let mut raw_log = String::new();
         let mut outputs = Vec::new();
