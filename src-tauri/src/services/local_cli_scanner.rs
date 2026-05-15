@@ -483,29 +483,52 @@ fn run_command_stdout(command: &str, args: &[&str]) -> Option<String> {
     run_command_stdout_timeout(command, args, SUBPROCESS_TIMEOUT)
 }
 
+fn resolve_command_path(command: &str) -> Option<PathBuf> {
+    // Try which first — respects PATH and PATHEXT on Windows.
+    if let Ok(path) = which::which(command) {
+        return Some(path);
+    }
+    // Fallback: search known install directories for GUI apps that don't inherit shell PATH
+    // (e.g. macOS apps launched from Finder, Windows apps launched outside a terminal).
+    let names: Vec<String> = if cfg!(windows) {
+        vec![
+            format!("{}.cmd", command),
+            format!("{}.exe", command),
+            command.to_string(),
+        ]
+    } else {
+        vec![command.to_string()]
+    };
+    for dir in common_cli_search_dirs(dirs::home_dir()) {
+        for name in &names {
+            let path = dir.join(name);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
 fn spawn_command_timeout(
     command: &str,
     args: &[&str],
     timeout: Duration,
 ) -> std::io::Result<Output> {
-    // On Windows, .cmd/.bat scripts cannot be executed directly via CreateProcess — they require
-    // cmd.exe. Resolve the command via `which` (which respects PATHEXT) so npm.cmd, pnpm.cmd, etc.
-    // are detected and wrapped appropriately.
-    #[cfg(windows)]
-    if let Ok(resolved) = which::which(command) {
+    if let Some(resolved) = resolve_command_path(command) {
         let ext = resolved
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
         if ext == "cmd" || ext == "bat" {
-            let mut command = Command::new("cmd");
-            command.arg("/c").arg(&resolved).args(args);
-            return command_output_timeout(command, timeout);
+            let mut cmd = Command::new("cmd");
+            cmd.arg("/c").arg(&resolved).args(args);
+            return command_output_timeout(cmd, timeout);
         }
-        let mut command = Command::new(resolved);
-        command.args(args);
-        return command_output_timeout(command, timeout);
+        let mut cmd = Command::new(resolved);
+        cmd.args(args);
+        return command_output_timeout(cmd, timeout);
     }
     let mut command = Command::new(command);
     command.args(args);
@@ -1154,7 +1177,7 @@ fn pip_tools_from_dist_info(site_packages: &Path, script_roots: &[PathBuf]) -> V
 
 fn discover_pip_tools() -> Vec<LocalCliTool> {
     let mut all_tools: Vec<LocalCliTool> = Vec::new();
-    let mut seen_ids: HashSet<String> = HashSet::new();
+    let mut seen_paths: HashSet<String> = HashSet::new();
 
     let site_packages_dirs = find_pip_site_packages();
     let leaf_names = pip_leaf_package_names(&site_packages_dirs);
@@ -1168,7 +1191,7 @@ fn discover_pip_tools() -> Vec<LocalCliTool> {
             if !is_pip_tool_visible(&tool, &leaf_names) {
                 continue;
             }
-            if seen_ids.insert(tool.id.clone()) {
+            if seen_paths.insert(tool.detected_path.clone()) {
                 all_tools.push(tool);
             }
         }

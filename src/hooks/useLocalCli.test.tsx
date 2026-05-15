@@ -7,6 +7,7 @@ import { LOCAL_CLI_QUERY_KEY, useRescanLocalCliTools, useUpdateLocalCliTool } fr
 
 const mocks = vi.hoisted(() => ({
   listLocalCliTools: vi.fn(),
+  rescanLocalCliTools: vi.fn(),
   updateLocalCliTool: vi.fn(),
   toastError: vi.fn(),
 }));
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../lib/api", () => ({
   api: {
     listLocalCliTools: mocks.listLocalCliTools,
+    rescanLocalCliTools: mocks.rescanLocalCliTools,
     updateLocalCliTool: mocks.updateLocalCliTool,
   },
 }));
@@ -35,6 +37,7 @@ const wrapper = createWrapper();
 
 afterEach(() => {
   mocks.listLocalCliTools.mockReset();
+  mocks.rescanLocalCliTools.mockReset();
   mocks.updateLocalCliTool.mockReset();
   mocks.toastError.mockReset();
 });
@@ -78,7 +81,7 @@ describe("useRescanLocalCliTools", () => {
         update_available: false,
       },
     ];
-    mocks.listLocalCliTools.mockResolvedValue(tools);
+    mocks.rescanLocalCliTools.mockResolvedValue(tools);
     const { result } = renderHook(() => useRescanLocalCliTools(), {
       wrapper: createWrapper(queryClient),
     });

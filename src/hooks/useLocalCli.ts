@@ -73,6 +73,10 @@ export function useUninstallLocalCliTool() {
   return useMutation<string, unknown, LocalCliTool>({
     mutationFn: (tool) => api.uninstallLocalCliTool(tool.detected_path),
     onSuccess: (_log, tool) => {
+      qc.setQueryData(LOCAL_CLI_QUERY_KEY, (old: LocalCliTool[] | undefined) => {
+        if (!old) return old;
+        return old.filter((t) => t.detected_path !== tool.detected_path);
+      });
       qc.invalidateQueries({ queryKey: LOCAL_CLI_QUERY_KEY });
       appToast.success(`${tool.id} 卸载完成`);
     },

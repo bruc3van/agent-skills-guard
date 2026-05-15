@@ -103,11 +103,19 @@ fn successful_update_cache_values(
     tool: &LocalCliTool,
     new_version: Option<String>,
 ) -> (Option<String>, Option<String>, bool, Option<String>) {
-    let version = new_version
+    let now = chrono::Utc::now().to_rfc3339();
+    let current = new_version
         .or_else(|| tool.latest_version.clone())
         .or_else(|| tool.current_version.clone());
-    let now = chrono::Utc::now().to_rfc3339();
-    (version.clone(), version, false, Some(now))
+    // If the detected version is still behind the known latest, keep the update visible instead
+    // of treating the stale detected version as the new latest.
+    let (latest, update_available) =
+        if is_outdated(current.as_deref(), tool.latest_version.as_deref()) {
+            (tool.latest_version.clone(), true)
+        } else {
+            (current.clone(), false)
+        };
+    (current, latest, update_available, Some(now))
 }
 
 pub fn build_pty_uninstall_args(tool: &LocalCliTool) -> Option<(String, Vec<String>)> {
@@ -898,6 +906,7 @@ pub async fn uninstall_local_cli_tool(
                     .db
                     .delete_local_cli_tool(&tool_path)
                     .map_err(|e| e.to_string())?;
+                clear_cli_scan_cache(&state.cli_scan_cache);
                 Ok(log)
             } else {
                 let log = non_empty_log_or_default(
@@ -1021,6 +1030,24 @@ mod tests {
             .and_then(|name| name.to_str())
             .unwrap_or(path_or_name)
             .to_string()
+    }
+
+    #[test]
+    fn successful_update_cache_values_keeps_update_available_when_version_unchanged() {
+        let mut tool = LocalCliTool::new("tool", "/usr/bin/tool", PackageManager::Npm);
+        tool.current_version = Some("1.0.0".to_string());
+        tool.latest_version = Some("1.2.0".to_string());
+        tool.update_available = true;
+        tool.last_checked = Some("2026-01-01T00:00:00Z".to_string());
+
+        // detect_version returned the same old version: the update command did not advance it.
+        let (current, latest, update_available, last_checked) =
+            successful_update_cache_values(&tool, Some("1.0.0".to_string()));
+
+        assert_eq!(current.as_deref(), Some("1.0.0"));
+        assert_eq!(latest.as_deref(), Some("1.2.0"));
+        assert!(update_available);
+        assert!(last_checked.is_some());
     }
 
     #[test]
