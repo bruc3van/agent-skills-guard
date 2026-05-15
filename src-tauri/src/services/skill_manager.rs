@@ -834,8 +834,23 @@ impl SkillManager {
         let commit_sha = repo.and_then(|r| r.cached_commit_sha.clone());
 
         // 确定最终安装路径
-        let install_base_dir = if let Some(user_path) = install_path {
-            PathBuf::from(user_path)
+        let install_base_dir = if let Some(user_path) = &install_path {
+            let user_dir = PathBuf::from(user_path);
+            // 校验：用户路径不能指向任何工具的 skills 目录（会导致自引用）
+            for tool in AgentTool::all() {
+                if let Some(tool_skills_dir) = tool.default_skills_dir() {
+                    if normalize_path_for_compare(&user_dir) == normalize_path_for_compare(&tool_skills_dir)
+                        || user_dir.starts_with(&tool_skills_dir)
+                    {
+                        anyhow::bail!(
+                            "INSTALL_PATH_CONFLICT: 安装路径 {:?} 与工具 '{}' 的技能目录冲突",
+                            user_dir,
+                            tool.id()
+                        );
+                    }
+                }
+            }
+            user_dir
         } else {
             self.skills_dir.clone()
         };

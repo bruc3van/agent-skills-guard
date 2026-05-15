@@ -19,7 +19,8 @@
     "GITHUB_REPO_NOT_FOUND": "Repository or path not found",
     "GITHUB_UNAUTHORIZED": "Unauthorized access, please configure GitHub Token",
     "GITHUB_SERVER_ERROR": "GitHub server error",
-    "NETWORK_ERROR": "Network request failed"
+    "NETWORK_ERROR": "Network request failed",
+    "INSTALL_PATH_CONFLICT": "Install path conflicts with tool skills directory, please choose another path"
   },
   "header": {
     "title": "AGENT SKILLS GUARD",
