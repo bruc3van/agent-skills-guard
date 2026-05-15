@@ -1117,6 +1117,14 @@ impl Database {
                latest_version    = excluded.latest_version,
                update_available  = excluded.update_available,
                last_checked      = excluded.last_checked,
+               update_status     = CASE
+                                      WHEN excluded.update_available != 0 THEN NULL
+                                      ELSE local_cli_tools.update_status
+                                    END,
+               update_log        = CASE
+                                      WHEN excluded.update_available != 0 THEN NULL
+                                      ELSE local_cli_tools.update_log
+                                    END,
                package_name      = excluded.package_name,
                description       = COALESCE(excluded.description, local_cli_tools.description)",
             params![
@@ -1367,5 +1375,51 @@ mod tests {
 
         let all = db.get_all_local_cli_tools().unwrap();
         assert_eq!(all.len(), 1);
+    }
+
+    #[test]
+    fn local_cli_upsert_clears_status_when_update_becomes_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = super::Database::new(dir.path().join("test.db")).unwrap();
+
+        db.upsert_local_cli_tool(
+            "wheel",
+            r"C:\Python314\Scripts\wheel.exe",
+            "pip",
+            Some("0.47.0"),
+            Some("0.47.0"),
+            false,
+            Some("2026-05-15T04:13:21Z"),
+            Some("wheel"),
+            None,
+        )
+        .unwrap();
+        db.set_local_cli_tool_update_status(
+            r"C:\Python314\Scripts\wheel.exe",
+            "success",
+            Some("Requirement already satisfied: wheel"),
+        )
+        .unwrap();
+
+        db.upsert_local_cli_tool(
+            "wheel",
+            r"C:\Python314\Scripts\wheel.exe",
+            "pip",
+            Some("0.47.0"),
+            Some("0.48.0"),
+            true,
+            Some("2026-05-15T05:00:00Z"),
+            Some("wheel"),
+            None,
+        )
+        .unwrap();
+
+        let row = db
+            .get_local_cli_tool(r"C:\Python314\Scripts\wheel.exe")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.update_status, None);
+        assert_eq!(row.update_log, None);
+        assert!(row.update_available);
     }
 }

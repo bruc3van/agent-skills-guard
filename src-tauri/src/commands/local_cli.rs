@@ -54,6 +54,9 @@ fn local_cli_cache_needs_refresh(
     tool.id != row.id
         || tool.manager.as_str() != row.manager
         || tool.current_version.as_deref() != row.current_version.as_deref()
+        || tool.latest_version.as_deref() != row.latest_version.as_deref()
+        || tool.update_available != row.update_available
+        || tool.last_checked.as_deref() != row.last_checked.as_deref()
         || tool.package_name.as_deref() != row.package_name.as_deref()
         || tool.description.as_deref() != row.description.as_deref()
 }
@@ -72,10 +75,26 @@ fn apply_cached_update_state(
             .latest_version
             .as_deref()
             .map(|v| v.strip_prefix('v').unwrap_or(v).to_string());
-        tool.update_available = is_outdated(
+        let computed_update_available = is_outdated(
             tool.current_version.as_deref(),
             tool.latest_version.as_deref(),
         );
+        let successful_update_reopened_by_stale_latest = row.update_status.as_deref()
+            == Some("success")
+            && computed_update_available
+            && row.current_version.as_deref() == tool.current_version.as_deref();
+
+        if successful_update_reopened_by_stale_latest {
+            tool.latest_version = tool
+                .current_version
+                .clone()
+                .or_else(|| row.current_version.clone());
+            tool.update_available = false;
+            tool.last_checked = None;
+            return;
+        }
+
+        tool.update_available = computed_update_available;
         tool.last_checked = row.last_checked.clone();
     }
 }
@@ -1006,6 +1025,37 @@ mod tests {
         apply_cached_update_state(&mut tool, &row);
 
         assert_eq!(tool.latest_version, None);
+        assert!(!tool.update_available);
+        assert_eq!(tool.last_checked, None);
+    }
+
+    #[test]
+    fn cached_success_state_does_not_reopen_update_prompt_from_stale_latest() {
+        let row = LocalCliToolRow {
+            id: "wheel".to_string(),
+            detected_path: r"C:\Python314\Scripts\wheel.exe".to_string(),
+            manager: "pip".to_string(),
+            current_version: Some("0.47.0".to_string()),
+            latest_version: Some("3.6.3".to_string()),
+            update_available: true,
+            last_checked: Some("2026-05-15T04:13:21Z".to_string()),
+            update_status: Some("success".to_string()),
+            update_log: Some("Requirement already satisfied: wheel".to_string()),
+            package_name: Some("wheel".to_string()),
+            description: None,
+        };
+
+        let mut tool = LocalCliTool::new(
+            "wheel",
+            r"C:\Python314\Scripts\wheel.exe",
+            PackageManager::Pip,
+        );
+        tool.current_version = Some("0.47.0".to_string());
+        tool.package_name = Some("wheel".to_string());
+
+        apply_cached_update_state(&mut tool, &row);
+
+        assert_eq!(tool.latest_version.as_deref(), Some("0.47.0"));
         assert!(!tool.update_available);
         assert_eq!(tool.last_checked, None);
     }
