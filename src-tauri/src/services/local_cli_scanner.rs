@@ -471,6 +471,18 @@ struct PipShowOutput {
 
 const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(15);
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(windows)]
+fn configure_background_command(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_background_command(_command: &mut Command) {}
+
 fn run_command_stdout_timeout(command: &str, args: &[&str], timeout: Duration) -> Option<String> {
     let output = spawn_command_timeout(command, args, timeout).ok()?;
     if !output.status.success() {
@@ -536,6 +548,8 @@ fn spawn_command_timeout(
 }
 
 fn command_output_timeout(mut command: Command, timeout: Duration) -> std::io::Result<Output> {
+    configure_background_command(&mut command);
+
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -3026,6 +3040,18 @@ esac
         assert!(dirs.contains(&PathBuf::from("/usr/local/bin")));
         assert!(dirs.contains(&home.join(".local").join("bin")));
         assert!(dirs.contains(&home.join("AppData").join("Local").join("pnpm")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scanner_subprocesses_are_configured_without_console_windows() {
+        let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(file!());
+        let source = fs::read_to_string(source_path).unwrap();
+        let production_source = source.split("#[cfg(test)]").next().unwrap();
+
+        assert!(production_source.contains("CREATE_NO_WINDOW"));
+        assert!(production_source.contains(".creation_flags(CREATE_NO_WINDOW)"));
+        assert!(production_source.contains("configure_background_command(&mut command)"));
     }
 
     #[cfg(windows)]
