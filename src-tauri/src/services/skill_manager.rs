@@ -18,7 +18,6 @@ pub struct SkillManager {
     skills_dir: PathBuf,
     cleanup_done: AtomicBool,
     installing: std::sync::Mutex<std::collections::HashSet<String>>,
-    installed_cache: std::sync::Mutex<Option<(std::time::Instant, Vec<Skill>)>>,
 }
 
 fn build_synced_tool_state(
@@ -254,13 +253,15 @@ fn refresh_existing_tool_links_for_skill(skill: &Skill, tool_dirs: &[(PathBuf, S
         .map(|path| PathBuf::from(path).exists())
         .unwrap_or(false);
     if !current_source_exists {
-        // 保留原 source_path 不自动迁移，仅记录警告。
-        // 用户应通过 sync_skill_to_tools 显式同步。
-        log::warn!(
-            "技能 '{}' 的 source_path {:?} 不存在，保留原值（请通过同步操作修复）",
-            skill.name,
-            skill.source_path
-        );
+        if let Some(replacement_source) = local_paths.first().cloned() {
+            refreshed.source_path = Some(replacement_source);
+        } else {
+            log::warn!(
+                "技能 '{}' 的 source_path {:?} 不存在，且未找到可用替代路径",
+                skill.name,
+                skill.source_path
+            );
+        }
     }
     refreshed.local_path = local_paths.first().cloned();
     refreshed.local_paths = Some(local_paths);
@@ -332,7 +333,6 @@ impl SkillManager {
             skills_dir,
             cleanup_done: AtomicBool::new(false),
             installing: std::sync::Mutex::new(std::collections::HashSet::new()),
-            installed_cache: std::sync::Mutex::new(None),
         }
     }
 
@@ -1347,19 +1347,13 @@ impl SkillManager {
 
     /// 获取已安装的 skills
     pub fn get_installed_skills(&self) -> Result<Vec<Skill>> {
-        // Check memory cache first (5-second TTL)
-        if let Ok(cache) = self.installed_cache.lock() {
-            if let Some((ts, skills)) = cache.as_ref() {
-                if ts.elapsed().as_secs() < 5 {
-                    return Ok(skills.clone());
-                }
-            }
-        }
+        self.get_installed_skills_from_dirs(&default_tool_skill_dirs())
+    }
 
-        // This intentionally checks the filesystem on demand instead of using a long-lived
-        // backend cache: external tools or previous app versions may create/remove links while
-        // the app is open. DB writes are still gated by installed_tool_state_changed.
-
+    fn get_installed_skills_from_dirs(
+        &self,
+        tool_skill_dirs: &[ToolSkillDir],
+    ) -> Result<Vec<Skill>> {
         // 清理残留的 __cache__: / __staging__: 临时路径（仅首次调用时执行）
         if !self.cleanup_done.load(Ordering::Relaxed) {
             if let Err(e) = self.cleanup_stale_prepare_paths() {
@@ -1368,7 +1362,26 @@ impl SkillManager {
             self.cleanup_done.store(true, Ordering::Relaxed);
         }
 
-        let tool_dirs = default_tool_dirs();
+        let tool_dirs = tool_skill_dirs
+            .iter()
+            .map(|tool_dir| (tool_dir.path.clone(), tool_dir.tool_id.clone()))
+            .collect::<Vec<_>>();
+
+        self.refresh_installed_tool_links_from_dirs(&tool_dirs)?;
+
+        let adoption_summary = self.adopt_existing_skills_for_scan(tool_skill_dirs)?;
+        if adoption_summary.discovered > 0
+            || adoption_summary.created > 0
+            || adoption_summary.updated > 0
+        {
+            log::info!(
+                "Installed skills refresh adopted existing skills: discovered={}, created={}, updated={}",
+                adoption_summary.discovered,
+                adoption_summary.created,
+                adoption_summary.updated
+            );
+        }
+
         let skills = self.db.get_skills()?;
         let mut installed = Vec::new();
 
@@ -1380,26 +1393,27 @@ impl SkillManager {
             installed.push(refreshed);
         }
 
-        if let Ok(mut cache) = self.installed_cache.lock() {
-            *cache = Some((std::time::Instant::now(), installed.clone()));
-        }
-
         Ok(installed)
     }
 
     fn invalidate_installed_cache(&self) {
-        if let Ok(mut cache) = self.installed_cache.lock() {
-            *cache = None;
-        }
+        // Installed skills are reconciled on every read; keep this hook for mutation call sites.
     }
 
     fn refresh_installed_tool_links(&self) -> Result<usize> {
         let tool_dirs = default_tool_dirs();
+        self.refresh_installed_tool_links_from_dirs(&tool_dirs)
+    }
+
+    fn refresh_installed_tool_links_from_dirs(
+        &self,
+        tool_dirs: &[(PathBuf, String)],
+    ) -> Result<usize> {
         let skills = self.db.get_skills()?;
         let mut refreshed_count = 0usize;
 
         for skill in skills.into_iter().filter(|s| s.installed) {
-            let refreshed = refresh_existing_tool_links_for_skill(&skill, &tool_dirs);
+            let refreshed = refresh_existing_tool_links_for_skill(&skill, tool_dirs);
             if installed_tool_state_changed(&skill, &refreshed) {
                 self.db.save_skill(&refreshed)?;
                 refreshed_count += 1;
@@ -3087,6 +3101,219 @@ mod tests {
             .unwrap()
             .contains(&claude_skill.to_string_lossy().to_string()));
         assert_eq!(skills[0].linked_tools, vec!["claude-code".to_string()]);
+    }
+
+    #[test]
+    fn installed_skills_prune_deleted_tool_link_without_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let agents_dir = temp.path().join(".agents").join("skills");
+        let codex_dir = temp.path().join(".codex").join("skills");
+        let source = agents_dir.join("example");
+        let codex_link = codex_dir.join("example");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "---\nname: example\n---\n").unwrap();
+        link_fs::create_dir_link(&source, &codex_link).unwrap();
+
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            crate::models::LOCAL_REPOSITORY_URL.to_string(),
+            source.to_string_lossy().to_string(),
+        );
+        skill.id = "skill-1".to_string();
+        skill.installed = true;
+        skill.is_local_only = false;
+        skill.source_path = Some(source.to_string_lossy().to_string());
+        skill.local_path = Some(source.to_string_lossy().to_string());
+        skill.local_paths = Some(vec![
+            source.to_string_lossy().to_string(),
+            codex_link.to_string_lossy().to_string(),
+        ]);
+        skill.linked_tools = vec!["codex".to_string()];
+        db.save_skill(&skill).unwrap();
+
+        let first = manager
+            .get_installed_skills_from_dirs(&[
+                ToolSkillDir {
+                    tool_id: "agents".to_string(),
+                    path: agents_dir.clone(),
+                },
+                ToolSkillDir {
+                    tool_id: "codex".to_string(),
+                    path: codex_dir.clone(),
+                },
+            ])
+            .unwrap();
+        assert_eq!(first[0].linked_tools, vec!["codex".to_string()]);
+
+        link_fs::remove_dir_link(&codex_link).unwrap();
+
+        let refreshed = manager
+            .get_installed_skills_from_dirs(&[
+                ToolSkillDir {
+                    tool_id: "agents".to_string(),
+                    path: agents_dir,
+                },
+                ToolSkillDir {
+                    tool_id: "codex".to_string(),
+                    path: codex_dir,
+                },
+            ])
+            .unwrap();
+
+        assert!(refreshed[0].linked_tools.is_empty());
+        assert_eq!(
+            refreshed[0].local_paths.as_deref(),
+            Some(&[source.to_string_lossy().to_string()][..])
+        );
+    }
+
+    #[test]
+    fn installed_skills_detect_new_tool_link_without_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let agents_dir = temp.path().join(".agents").join("skills");
+        let codex_dir = temp.path().join(".codex").join("skills");
+        let source = agents_dir.join("example");
+        let codex_link = codex_dir.join("example");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "---\nname: example\n---\n").unwrap();
+
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            crate::models::LOCAL_REPOSITORY_URL.to_string(),
+            source.to_string_lossy().to_string(),
+        );
+        skill.id = "skill-1".to_string();
+        skill.installed = true;
+        skill.is_local_only = false;
+        skill.source_path = Some(source.to_string_lossy().to_string());
+        skill.local_path = Some(source.to_string_lossy().to_string());
+        skill.local_paths = Some(vec![source.to_string_lossy().to_string()]);
+        db.save_skill(&skill).unwrap();
+
+        let first = manager
+            .get_installed_skills_from_dirs(&[
+                ToolSkillDir {
+                    tool_id: "agents".to_string(),
+                    path: agents_dir.clone(),
+                },
+                ToolSkillDir {
+                    tool_id: "codex".to_string(),
+                    path: codex_dir.clone(),
+                },
+            ])
+            .unwrap();
+        assert!(first[0].linked_tools.is_empty());
+
+        link_fs::create_dir_link(&source, &codex_link).unwrap();
+
+        let refreshed = manager
+            .get_installed_skills_from_dirs(&[
+                ToolSkillDir {
+                    tool_id: "agents".to_string(),
+                    path: agents_dir,
+                },
+                ToolSkillDir {
+                    tool_id: "codex".to_string(),
+                    path: codex_dir,
+                },
+            ])
+            .unwrap();
+
+        assert_eq!(refreshed[0].linked_tools, vec!["codex".to_string()]);
+        assert!(refreshed[0]
+            .local_paths
+            .as_ref()
+            .unwrap()
+            .contains(&codex_link.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn installed_skills_adopt_untracked_linked_skill_without_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let agents_dir = temp.path().join(".agents").join("skills");
+        let codex_dir = temp.path().join(".codex").join("skills");
+        let source = agents_dir.join("example");
+        let codex_link = codex_dir.join("example");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "---\nname: example\n---\n").unwrap();
+        link_fs::create_dir_link(&source, &codex_link).unwrap();
+
+        let installed = manager
+            .get_installed_skills_from_dirs(&[
+                ToolSkillDir {
+                    tool_id: "agents".to_string(),
+                    path: agents_dir,
+                },
+                ToolSkillDir {
+                    tool_id: "codex".to_string(),
+                    path: codex_dir,
+                },
+            ])
+            .unwrap();
+
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].name, "example");
+        assert_eq!(installed[0].linked_tools, vec!["codex".to_string()]);
+        assert!(installed[0]
+            .local_paths
+            .as_ref()
+            .unwrap()
+            .contains(&codex_link.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn installed_skills_reuse_existing_record_when_source_is_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let agents_dir = temp.path().join(".agents").join("skills");
+        let missing_source = agents_dir.join("example");
+        let codex_dir = temp.path().join(".codex").join("skills");
+        let codex_existing = codex_dir.join("example");
+        std::fs::create_dir_all(&codex_existing).unwrap();
+        std::fs::write(codex_existing.join("SKILL.md"), "same skill").unwrap();
+
+        let checksum = crate::security::SecurityScanner::new().calculate_checksum(b"same skill");
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            crate::models::LOCAL_REPOSITORY_URL.to_string(),
+            missing_source.to_string_lossy().to_string(),
+        );
+        skill.id = "skill-1".to_string();
+        skill.installed = true;
+        skill.is_local_only = false;
+        skill.source_path = Some(missing_source.to_string_lossy().to_string());
+        skill.local_path = Some(missing_source.to_string_lossy().to_string());
+        skill.local_paths = Some(vec![missing_source.to_string_lossy().to_string()]);
+        skill.checksum = Some(checksum);
+        db.save_skill(&skill).unwrap();
+
+        let installed = manager
+            .get_installed_skills_from_dirs(&[
+                ToolSkillDir {
+                    tool_id: "agents".to_string(),
+                    path: agents_dir,
+                },
+                ToolSkillDir {
+                    tool_id: "codex".to_string(),
+                    path: codex_dir,
+                },
+            ])
+            .unwrap();
+
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].id, "skill-1");
+        assert_eq!(
+            installed[0].source_path.as_deref(),
+            Some(codex_existing.to_string_lossy().as_ref())
+        );
+        assert_eq!(installed[0].linked_tools, vec!["codex".to_string()]);
     }
 
     #[test]
