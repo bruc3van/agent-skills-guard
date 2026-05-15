@@ -1662,9 +1662,16 @@ impl SkillManager {
 
                                 // 仅在 checksum 变化时重新扫描，避免每次扫描全量安全检查的性能开销
                                 if checksum_changed {
+                                    let path_str = match path.to_str() {
+                                        Some(s) => s,
+                                        None => {
+                                            log::warn!("跳过非 UTF-8 路径: {:?}", path);
+                                            continue;
+                                        }
+                                    };
                                     let locale = rust_i18n::locale();
                                     let report = self.scanner.scan_directory_with_options(
-                                        path.to_str().unwrap_or(""),
+                                        path_str,
                                         &existing_skill.id,
                                         &locale,
                                         ScanOptions { skip_readme: true },
@@ -1708,9 +1715,16 @@ impl SkillManager {
 
                                 if checksum_changed {
                                     existing_skill.checksum = Some(checksum);
+                                    let path_str = match path.to_str() {
+                                        Some(s) => s,
+                                        None => {
+                                            log::warn!("跳过非 UTF-8 路径: {:?}", path);
+                                            continue;
+                                        }
+                                    };
                                     let locale = rust_i18n::locale();
                                     let report = self.scanner.scan_directory_with_options(
-                                        path.to_str().unwrap_or(""),
+                                        path_str,
                                         &existing_skill.id,
                                         &locale,
                                         ScanOptions { skip_readme: true },
@@ -1750,9 +1764,16 @@ impl SkillManager {
                                 existing_skill.description = skill_description;
                                 existing_skill.file_path = local_path_str.clone();
 
+                                let path_str = match path.to_str() {
+                                    Some(s) => s,
+                                    None => {
+                                        log::warn!("跳过非 UTF-8 路径: {:?}", path);
+                                        continue;
+                                    }
+                                };
                                 let locale = rust_i18n::locale();
                                 let report = self.scanner.scan_directory_with_options(
-                                    path.to_str().unwrap_or(""),
+                                    path_str,
                                     &existing_skill.id,
                                     &locale,
                                     ScanOptions { skip_readme: true },
@@ -1769,9 +1790,16 @@ impl SkillManager {
                             let skill_id = build_local_skill_id(&checksum, &path);
 
                             // 扫描整个技能目录
+                            let path_str = match path.to_str() {
+                                Some(s) => s,
+                                None => {
+                                    log::warn!("跳过非 UTF-8 路径: {:?}", path);
+                                    continue;
+                                }
+                            };
                             let locale = rust_i18n::locale();
                             let report = self.scanner.scan_directory_with_options(
-                                path.to_str().unwrap_or(""),
+                                path_str,
                                 &skill_id,
                                 &locale,
                                 ScanOptions { skip_readme: true },
