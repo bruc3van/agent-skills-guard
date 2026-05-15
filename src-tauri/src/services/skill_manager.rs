@@ -546,7 +546,7 @@ impl SkillManager {
         allow_partial_scan: bool,
     ) -> Result<()> {
         let locale = rust_i18n::locale();
-        self.prepare_skill_installation(skill_id, &locale).await?;
+        self.prepare_skill_installation(skill_id, &locale, allow_partial_scan).await?;
         self.confirm_skill_installation(skill_id, install_path, allow_partial_scan, Vec::new())?;
         Ok(())
     }
@@ -557,6 +557,7 @@ impl SkillManager {
         &self,
         skill_id: &str,
         locale: &str,
+        allow_partial_scan: bool,
     ) -> Result<crate::models::security::SecurityReport> {
         use anyhow::Context;
 
@@ -628,7 +629,7 @@ impl SkillManager {
         // 保存安全信息到数据库，但不标记为已安装
         self.db.save_skill(&skill)?;
 
-        self.enforce_installable_report(&scan_report, "准备安装技能", false)?;
+        self.enforce_installable_report(&scan_report, "准备安装技能", allow_partial_scan)?;
 
         log::info!("Skill prepared successfully, scanned from cache, awaiting user confirmation");
         Ok(scan_report)

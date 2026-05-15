@@ -570,10 +570,11 @@ pub async fn prepare_skill_installation(
     state: State<'_, AppState>,
     skill_id: String,
     locale: String,
+    allow_partial_scan: bool,
 ) -> Result<crate::models::security::SecurityReport, String> {
     let manager = state.skill_manager.lock().await;
     manager
-        .prepare_skill_installation(&skill_id, &locale)
+        .prepare_skill_installation(&skill_id, &locale, allow_partial_scan)
         .await
         .map_err(|e| e.to_string())
 }
