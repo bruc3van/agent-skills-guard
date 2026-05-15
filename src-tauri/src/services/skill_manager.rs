@@ -783,7 +783,7 @@ impl SkillManager {
         log::info!("Confirming installation for skill: {}", skill_id);
 
         {
-            let mut installing = self.installing.lock().unwrap();
+            let mut installing = self.installing.lock().unwrap_or_else(|e| e.into_inner());
             if installing.contains(skill_id) {
                 anyhow::bail!("SKILL_INSTALL_IN_PROGRESS");
             }
@@ -796,7 +796,7 @@ impl SkillManager {
             allow_partial_scan,
             target_tools,
         );
-        self.installing.lock().unwrap().remove(skill_id);
+        self.installing.lock().unwrap_or_else(|e| e.into_inner()).remove(skill_id);
         result
     }
 
@@ -976,7 +976,7 @@ impl SkillManager {
 
         log::info!("Canceling installation for skill: {}", skill_id);
 
-        if self.installing.lock().unwrap().contains(skill_id) {
+        if self.installing.lock().unwrap_or_else(|e| e.into_inner()).contains(skill_id) {
             anyhow::bail!("SKILL_INSTALL_IN_PROGRESS");
         }
 
