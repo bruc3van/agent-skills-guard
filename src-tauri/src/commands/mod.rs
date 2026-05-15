@@ -588,15 +588,20 @@ pub async fn confirm_skill_installation(
     allow_partial_scan: Option<bool>,
     target_tools: Option<Vec<String>>,
 ) -> Result<(), String> {
-    let manager = state.skill_manager.lock().await;
-    manager
-        .confirm_skill_installation(
-            &skill_id,
-            install_path,
-            allow_partial_scan.unwrap_or(false),
-            target_tools.unwrap_or_default(),
-        )
-        .map_err(|e| e.to_string())
+    let skill_manager = Arc::clone(&state.skill_manager);
+    tokio::task::spawn_blocking(move || {
+        let manager = skill_manager.blocking_lock();
+        manager
+            .confirm_skill_installation(
+                &skill_id,
+                install_path,
+                allow_partial_scan.unwrap_or(false),
+                target_tools.unwrap_or_default(),
+            )
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("Task join error: {}", e)))
 }
 
 /// 取消安装技能：删除已下载的文件
@@ -1313,14 +1318,19 @@ pub async fn confirm_skill_update(
     force_overwrite: bool,
     allow_partial_scan: Option<bool>,
 ) -> Result<(), String> {
-    let manager = state.skill_manager.lock().await;
-    manager
-        .confirm_skill_update(
-            &skill_id,
-            force_overwrite,
-            allow_partial_scan.unwrap_or(false),
-        )
-        .map_err(|e| e.to_string())
+    let skill_manager = Arc::clone(&state.skill_manager);
+    tokio::task::spawn_blocking(move || {
+        let manager = skill_manager.blocking_lock();
+        manager
+            .confirm_skill_update(
+                &skill_id,
+                force_overwrite,
+                allow_partial_scan.unwrap_or(false),
+            )
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("Task join error: {}", e)))
 }
 
 /// 取消技能更新
