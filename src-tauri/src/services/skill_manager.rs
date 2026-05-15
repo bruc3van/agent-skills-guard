@@ -626,8 +626,8 @@ impl SkillManager {
 
         // 更新 skill 安全信息到数据库（但不标记为已安装）
         Self::apply_scan_report(&mut skill, &scan_report);
-        // 使用 __cache__: 前缀标记临时缓存路径，避免 scan_local_skills 误认为已安装
-        skill.local_path = Some(format!("__cache__:{}", skill_cache_dir.to_string_lossy()));
+        // 使用 staging_path 存储临时缓存路径，不污染 local_path
+        skill.staging_path = Some(skill_cache_dir.to_string_lossy().to_string());
 
         // 保存安全信息到数据库，但不标记为已安装
         self.db.save_skill(&skill)?;
@@ -822,15 +822,18 @@ impl SkillManager {
             .find(|s| s.id == skill_id)
             .context("未找到该技能")?;
 
-        // 获取缓存中的技能路径（prepare阶段保存的，可能带 __cache__: 前缀）
-        let raw_cache_path = skill
-            .local_path
-            .as_ref()
-            .context("技能尚未准备，请先调用prepare_skill_installation")?;
-        let cache_path = raw_cache_path
-            .strip_prefix("__cache__:")
-            .unwrap_or(raw_cache_path);
-        let cache_dir = PathBuf::from(cache_path);
+        // 获取缓存中的技能路径（优先从 staging_path 读取，向后兼容 __cache__: 前缀）
+        let cache_dir = if let Some(staging) = &skill.staging_path {
+            PathBuf::from(staging)
+        } else if let Some(local_path) = &skill.local_path {
+            if let Some(path) = local_path.strip_prefix("__cache__:") {
+                PathBuf::from(path)
+            } else {
+                PathBuf::from(local_path)
+            }
+        } else {
+            anyhow::bail!("SKILL_NO_INSTALL_PATH");
+        };
 
         // 获取仓库的 cached_commit_sha
         let repositories = self.db.get_repositories()?;
@@ -980,6 +983,7 @@ impl SkillManager {
         skill.installed = true;
         skill.installed_at = Some(Utc::now());
         skill.installed_commit_sha = commit_sha;
+        skill.staging_path = None; // 清除临时缓存路径
         Self::apply_scan_report(&mut skill, &scan_report);
 
         self.db.save_skill(&skill)?;
@@ -1012,6 +1016,7 @@ impl SkillManager {
         // 清除数据库中的安全信息和本地路径
         let mut skill = skill;
         skill.local_path = None;
+        skill.staging_path = None;
         skill.security_score = None;
         skill.security_level = None;
         skill.security_issues = None;
@@ -1068,6 +1073,27 @@ impl SkillManager {
             }
 
             // 检查 local_paths 中是否包含残留临时路径
+
+            // 检查 staging_path 是否残留
+            if let Some(ref staging) = skill.staging_path {
+                if !PathBuf::from(staging).exists() {
+                    updated.staging_path = None;
+                    if !skill.installed {
+                        updated.local_path = None;
+                        updated.security_score = None;
+                        updated.security_level = None;
+                        updated.security_issues = None;
+                        updated.security_report = None;
+                        updated.scanned_at = None;
+                    }
+                    needs_update = true;
+                    log::info!(
+                        "清理残留 staging_path: skill={}, path={}",
+                        skill.name,
+                        staging
+                    );
+                }
+            }
             if let Some(local_paths) = &skill.local_paths {
                 let cleaned_paths: Vec<String> = local_paths
                     .iter()
@@ -1109,6 +1135,11 @@ impl SkillManager {
         let orphaned: Vec<String> = skills.iter()
             .filter(|s| {
                 if s.installed { return false; }
+                // 检查 staging_path 残留
+                if let Some(staging) = &s.staging_path {
+                    return !PathBuf::from(staging).exists();
+                }
+                // 向后兼容：检查 __cache__:/__staging__: 前缀
                 if let Some(local_path) = &s.local_path {
                     if local_path.starts_with("__cache__:") || local_path.starts_with("__staging__:") {
                         let actual_path = local_path
@@ -1384,6 +1415,10 @@ impl SkillManager {
 
         // 从已安装技能的 local_path 提取父目录（跳过临时缓存/staging路径）
         for skill in &existing_skills {
+            // 跳过正在准备中的技能
+            if skill.staging_path.is_some() {
+                continue;
+            }
             if let Some(local_path) = &skill.local_path {
                 if local_path.starts_with("__cache__:") || local_path.starts_with("__staging__:") {
                     continue;
@@ -1748,6 +1783,7 @@ impl SkillManager {
                                 source_path: Some(local_path_str),
                                 linked_tools,
                                 is_local_only: true,
+                                staging_path: None,
                             };
 
                             // 保存到数据库

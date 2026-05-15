@@ -31,6 +31,8 @@ pub struct Skill {
     pub source_path: Option<String>,    // 统一源路径 (~/.agents/skills/<name>)
     pub linked_tools: Vec<String>,      // 已创建链接的工具 id 列表
     pub is_local_only: bool,            // true = 用户手动放入，未经本工具安装
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staging_path: Option<String>,   // prepare 阶段的临时缓存路径，不污染 local_path
 }
 
 impl Skill {
@@ -61,6 +63,7 @@ impl Skill {
             source_path: None,
             linked_tools: Vec::new(),
             is_local_only: false,
+            staging_path: None,
         }
     }
 

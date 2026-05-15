@@ -296,6 +296,7 @@ impl Database {
         self.migrate_add_agent_tool_fields()?;
         self.migrate_add_local_cli_tools()?;
         self.migrate_local_cli_tools_to_path_key()?;
+        self.migrate_add_staging_path()?;
 
         Ok(())
     }
@@ -500,8 +501,8 @@ impl Database {
             "INSERT OR REPLACE INTO skills
             (id, name, description, repository_url, repository_owner, file_path, version, author,
              installed, installed_at, local_path, local_paths, checksum, security_score, security_issues, security_level, security_report, scanned_at, installed_commit_sha,
-             source_path, linked_tools, is_local_only)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+             source_path, linked_tools, is_local_only, staging_path)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
             params![
                 skill.id,
                 skill.name,
@@ -525,6 +526,7 @@ impl Database {
                 skill.source_path,
                 linked_tools_json,
                 skill.is_local_only as i32,
+                skill.staging_path,
             ],
         )?;
         Ok(())
@@ -599,7 +601,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, name, description, repository_url, repository_owner, file_path, version, author,
                     installed, installed_at, local_path, local_paths, checksum, security_score, security_issues, security_level, security_report, scanned_at, installed_commit_sha,
-                    source_path, linked_tools, is_local_only
+                    source_path, linked_tools, is_local_only, staging_path
              FROM skills"
         )?;
 
@@ -655,6 +657,7 @@ impl Database {
                     source_path: row.get(19)?,
                     linked_tools,
                     is_local_only: row.get::<_, Option<i32>>(21)?.unwrap_or(0) != 0,
+                    staging_path: row.get(22)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1080,6 +1083,13 @@ impl Database {
                 old_count - new_count
             );
         }
+        Ok(())
+    }
+
+    /// 数据库迁移：添加 staging_path 列（prepare 阶段临时缓存路径）
+    fn migrate_add_staging_path(&self) -> Result<()> {
+        let conn = self.lock_conn();
+        let _ = conn.execute("ALTER TABLE skills ADD COLUMN staging_path TEXT", []);
         Ok(())
     }
 
