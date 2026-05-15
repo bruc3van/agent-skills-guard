@@ -311,7 +311,15 @@ impl GitHubService {
             }
         }
 
+        const MAX_FILE_BYTES: usize = 2 * 1024 * 1024; // 2 MiB，SKILL.md 等文件不应超过此限制
         let bytes = response.bytes().await.context("读取文件内容失败")?;
+        if bytes.len() > MAX_FILE_BYTES {
+            anyhow::bail!(
+                "NETWORK_ERROR: 文件大小 {} 字节超过限制 {} 字节",
+                bytes.len(),
+                MAX_FILE_BYTES
+            );
+        }
 
         Ok(bytes.to_vec())
     }
