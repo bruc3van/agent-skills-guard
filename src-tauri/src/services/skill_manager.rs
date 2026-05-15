@@ -241,10 +241,13 @@ fn refresh_existing_tool_links_for_skill(skill: &Skill, tool_dirs: &[(PathBuf, S
         .map(|path| PathBuf::from(path).exists())
         .unwrap_or(false);
     if !current_source_exists {
-        // Older builds could persist ~/.agents as the source even after that directory was
-        // removed. Move the canonical source to a compatible existing tool path so the UI
-        // no longer lights up a missing .agents location.
-        refreshed.source_path = local_paths.first().cloned();
+        // 保留原 source_path 不自动迁移，仅记录警告。
+        // 用户应通过 sync_skill_to_tools 显式同步。
+        log::warn!(
+            "技能 '{}' 的 source_path {:?} 不存在，保留原值（请通过同步操作修复）",
+            skill.name,
+            skill.source_path
+        );
     }
     refreshed.local_path = local_paths.first().cloned();
     refreshed.local_paths = Some(local_paths);
@@ -1896,7 +1899,12 @@ impl SkillManager {
                     .as_ref()
                     .map_or(true, |sp| !PathBuf::from(sp).exists())
                 {
-                    updated.source_path = Some(alive_paths[0].clone());
+                    // 保留原 source_path 不自动迁移，标记为需要用户同步
+                    log::warn!(
+                        "技能 '{}' 的 source_path 不存在，保留原值。alive_paths: {:?}",
+                        skill.name,
+                        alive_paths
+                    );
                 }
 
                 if let Err(e) = self.db.save_skill(&updated) {
