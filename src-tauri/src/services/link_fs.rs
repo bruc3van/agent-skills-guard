@@ -11,6 +11,24 @@ fn paths_point_to_same_location(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn prepare_link_destination(link: &Path) -> Result<()> {
+    let Ok(metadata) = std::fs::symlink_metadata(link) else {
+        return Ok(());
+    };
+
+    if is_dir_link(link) {
+        remove_dir_link(link).context(format!("无法删除已有链接: {:?}", link))?;
+    } else if metadata.file_type().is_symlink() {
+        std::fs::remove_file(link).context(format!("无法删除已有符号链接: {:?}", link))?;
+    } else if metadata.is_dir() {
+        std::fs::remove_dir_all(link).context(format!("无法删除已有目录: {:?}", link))?;
+    } else {
+        std::fs::remove_file(link).context(format!("无法删除已有文件: {:?}", link))?;
+    }
+
+    Ok(())
+}
+
 /// 创建目录链接：link -> source
 /// 若 link 已存在（链接或目录），先删除再创建
 pub fn create_dir_link(source: &Path, link: &Path) -> Result<()> {
@@ -24,21 +42,14 @@ pub fn create_dir_link(source: &Path, link: &Path) -> Result<()> {
         std::fs::create_dir_all(parent).context(format!("无法创建链接父目录: {:?}", parent))?;
     }
 
-    // 若目标已存在，先删除
-    if link.exists() || is_dir_link(link) {
+    // 若目标已存在，先删除。symlink_metadata 能识别 dangling symlink/junction，
+    // 避免 Windows 认为路径仍存在但 Path::exists() 返回 false 时触发 os error 183。
+    if link.symlink_metadata().is_ok() {
         if paths_point_to_same_location(source, link) {
             return Ok(());
         }
 
-        let metadata = std::fs::symlink_metadata(link)
-            .context(format!("无法读取已有链接/目录: {:?}", link))?;
-        if is_dir_link(link) {
-            remove_dir_link(link).context(format!("无法删除已有链接: {:?}", link))?;
-        } else if metadata.is_dir() {
-            std::fs::remove_dir_all(link).context(format!("无法删除已有目录: {:?}", link))?;
-        } else {
-            std::fs::remove_file(link).context(format!("无法删除已有文件: {:?}", link))?;
-        }
+        prepare_link_destination(link)?;
     }
 
     create_link_impl(source, link)
@@ -106,20 +117,38 @@ fn create_link_impl(source: &Path, link: &Path) -> Result<()> {
     let source_str = source.to_str().context("源路径包含无效字符")?;
     let link_str = link.to_str().context("链接路径包含无效字符")?;
 
-    let mut command = Command::new("cmd");
-    command.args(["/C", "mklink", "/J", link_str, source_str]);
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
+    let run_mklink = || -> Result<std::process::Output> {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "mklink", "/J", link_str, source_str]);
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
 
-    let output = command.output().context("无法执行 mklink 命令")?;
+        command.output().context("无法执行 mklink 命令")
+    };
+
+    let mut output = run_mklink()?;
 
     // cmd.exe /C 即使内部命令失败也可能返回 0，需要验证 junction 实际创建成功
     if output.status.success() && link.exists() {
         log::info!("创建 Junction: {:?} -> {:?}", link, source);
         return Ok(());
+    }
+
+    if link.symlink_metadata().is_ok() {
+        log::warn!(
+            "mklink /J 后目标路径仍存在，清理后重试一次: {:?} -> {:?}",
+            link,
+            source
+        );
+        prepare_link_destination(link)?;
+        output = run_mklink()?;
+        if output.status.success() && link.exists() {
+            log::info!("创建 Junction: {:?} -> {:?}", link, source);
+            return Ok(());
+        }
     }
 
     // Junction 失败时降级为目录拷贝（ReFS、跨卷等场景）
@@ -133,6 +162,7 @@ fn create_link_impl(source: &Path, link: &Path) -> Result<()> {
         source,
         link
     );
+    prepare_link_destination(link)?;
     copy_dir_fallback(source, link)
 }
 
@@ -244,6 +274,18 @@ mod tests {
 
         assert!(link.join("SKILL.md").exists(), "应该替换为新的源目录链接");
         assert!(!link.join("old.txt").exists(), "旧目录内容应该被替换");
+    }
+
+    #[test]
+    fn test_prepare_link_destination_removes_existing_directory() {
+        let tmp = tempdir().unwrap();
+        let link = tmp.path().join("link");
+        std::fs::create_dir_all(&link).unwrap();
+        std::fs::write(link.join("old.txt"), "old").unwrap();
+
+        prepare_link_destination(&link).unwrap();
+
+        assert!(!link.exists(), "残留目标目录应先被清理");
     }
 
     #[test]
