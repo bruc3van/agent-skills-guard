@@ -361,6 +361,7 @@ pub fn run() {
                 skill_manager,
                 plugin_manager,
                 github,
+                cli_scan_cache: std::sync::RwLock::new(None),
             });
 
             // 初始化系统托盘
@@ -455,6 +456,7 @@ pub fn run() {
             commands::sync_skill_to_tools,
             commands::sync_all_skills_to_tools,
             commands::local_cli::list_local_cli_tools,
+            commands::local_cli::rescan_local_cli_tools,
             commands::local_cli::check_local_cli_updates,
             commands::local_cli::update_local_cli_tool,
             commands::local_cli::uninstall_local_cli_tool,

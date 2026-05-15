@@ -7,7 +7,7 @@ use crate::services::{
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::State;
 
 pub fn build_pty_update_args(tool: &LocalCliTool) -> Option<(String, Vec<String>)> {
@@ -584,12 +584,13 @@ fn is_ascii_art_char(ch: char) -> bool {
     )
 }
 
-#[tauri::command]
-pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<LocalCliTool>, String> {
-    let mut tools = tokio::task::spawn_blocking(discover_local_cli_tools)
-        .await
-        .map_err(|e| e.to_string())?;
+const CLI_SCAN_CACHE_TTL: Duration = Duration::from_secs(300);
 
+/// 将扫描结果与 DB 缓存合并，写入内存缓存，并同步到 DB
+fn merge_and_cache_tools(
+    state: &AppState,
+    tools: &mut Vec<LocalCliTool>,
+) -> Result<(), String> {
     let cached = state
         .db
         .get_all_local_cli_tools()
@@ -610,7 +611,6 @@ pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<Loca
                 tool.description = row.description.clone();
             }
 
-            // 只有扫描结果与缓存不同时才写入 DB
             if !local_cli_cache_needs_refresh(tool, row) {
                 continue;
             }
@@ -628,14 +628,60 @@ pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<Loca
         );
     }
 
+    // 写入内存缓存
+    if let Ok(mut cache) = state.cli_scan_cache.write() {
+        *cache = Some(crate::commands::CliScanCache {
+            tools: tools.clone(),
+            scanned_at: Instant::now(),
+        });
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<LocalCliTool>, String> {
+    // 优先从内存缓存返回
+    {
+        let cache = state.cli_scan_cache.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref c) = *cache {
+            if c.scanned_at.elapsed() < CLI_SCAN_CACHE_TTL {
+                return Ok(c.tools.clone());
+            }
+        }
+    }
+
+    // 缓存过期，执行全量扫描
+    let mut tools = tokio::task::spawn_blocking(discover_local_cli_tools)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    merge_and_cache_tools(&state, &mut tools)?;
+
     Ok(tools)
+}
+
+/// 强制全量扫描，绕过内存缓存（供 Rescan / Check Updates 使用）
+async fn force_scan_local_cli_tools(state: &AppState) -> Result<Vec<LocalCliTool>, String> {
+    let mut tools = tokio::task::spawn_blocking(discover_local_cli_tools)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    merge_and_cache_tools(state, &mut tools)?;
+
+    Ok(tools)
+}
+
+#[tauri::command]
+pub async fn rescan_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<LocalCliTool>, String> {
+    force_scan_local_cli_tools(&state).await
 }
 
 #[tauri::command]
 pub async fn check_local_cli_updates(
     state: State<'_, AppState>,
 ) -> Result<Vec<LocalCliTool>, String> {
-    let mut tools = list_local_cli_tools(state.clone()).await?;
+    let mut tools = force_scan_local_cli_tools(&state).await?;
     let updater = LocalCliUpdater::new(Arc::clone(&state.db));
     updater
         .check_updates(&mut tools)

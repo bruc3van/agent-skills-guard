@@ -315,6 +315,10 @@ export const api = {
     return invoke("check_local_cli_updates");
   },
 
+  async rescanLocalCliTools(): Promise<LocalCliTool[]> {
+    return invoke("rescan_local_cli_tools");
+  },
+
   async updateLocalCliTool(toolPath: string): Promise<string> {
     return invoke("update_local_cli_tool", { toolPath });
   },

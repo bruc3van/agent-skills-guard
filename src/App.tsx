@@ -43,9 +43,7 @@ const RepositoriesPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import("./components/SettingsPage").then((module) => ({ default: module.SettingsPage }))
 );
-const LocalCliPage = lazy(() =>
-  import("./components/LocalCliPage").then((module) => ({ default: module.LocalCliPage }))
-);
+import { LocalCliPage } from "./components/LocalCliPage";
 
 const ONBOARDING_IMPORT_FEATURED_KEY = "asguard.onboarding.importFeatured.v1";
 import { isThrottleDue, markThrottleCompleted } from "./lib/rateLimit";
@@ -422,11 +420,6 @@ function AppContent() {
                 </div>
               </div>
             )}
-            {currentTab === "local-cli" && (
-              <div className="h-full overflow-hidden">
-                <LocalCliPage />
-              </div>
-            )}
             {currentTab === "settings" && (
               <div className="h-full overflow-y-auto">
                 <div className="p-8 animate-fade-in">
@@ -437,6 +430,10 @@ function AppContent() {
               </div>
             )}
           </Suspense>
+          {/* LocalCliPage 保持挂载，避免切换标签页时丢失状态和重复扫描 */}
+          <div style={{ display: currentTab === "local-cli" ? "block" : "none" }} className="h-full overflow-hidden">
+            <LocalCliPage />
+          </div>
           </ErrorBoundary>
         </main>
       </div>

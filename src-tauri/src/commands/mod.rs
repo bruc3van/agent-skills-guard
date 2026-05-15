@@ -7,7 +7,8 @@ use crate::models::{FeaturedRepositoriesConfig, Repository, Skill, LOCAL_REPOSIT
 use crate::services::{AgentTool, Database, GitHubService, PluginManager, SkillManager};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use tauri::Manager;
 use tauri::State;
 use tokio::sync::{Mutex, Semaphore};
@@ -37,6 +38,12 @@ pub struct AppState {
     pub skill_manager: Arc<Mutex<SkillManager>>,
     pub plugin_manager: Arc<Mutex<PluginManager>>,
     pub github: Arc<GitHubService>,
+    pub cli_scan_cache: RwLock<Option<CliScanCache>>,
+}
+
+pub struct CliScanCache {
+    pub tools: Vec<crate::models::LocalCliTool>,
+    pub scanned_at: Instant,
 }
 
 fn merge_scanned_skill(existing: Option<&Skill>, scanned: Skill) -> Skill {

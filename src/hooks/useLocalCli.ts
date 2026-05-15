@@ -23,7 +23,7 @@ export function useLocalCliTools(opts: { enabled?: boolean } = {}) {
   return useQuery<LocalCliTool[]>({
     queryKey: LOCAL_CLI_QUERY_KEY,
     queryFn: () => api.listLocalCliTools(),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
     enabled: opts.enabled ?? true,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
@@ -41,7 +41,7 @@ export function useCheckLocalCliUpdates() {
 export function useRescanLocalCliTools() {
   const qc = useQueryClient();
   return useMutation<LocalCliTool[], Error, void>({
-    mutationFn: () => api.listLocalCliTools(),
+    mutationFn: () => api.rescanLocalCliTools(),
     onSuccess: (data) => qc.setQueryData(LOCAL_CLI_QUERY_KEY, data),
   });
 }
