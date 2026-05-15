@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 pub struct SkillManager {
@@ -14,6 +15,7 @@ pub struct SkillManager {
     github: GitHubService,
     scanner: SecurityScanner,
     skills_dir: PathBuf,
+    cleanup_done: AtomicBool,
 }
 
 fn build_synced_tool_state(
@@ -310,6 +312,7 @@ impl SkillManager {
             github: GitHubService::new(),
             scanner: SecurityScanner::new(),
             skills_dir,
+            cleanup_done: AtomicBool::new(false),
         }
     }
 
@@ -542,7 +545,8 @@ impl SkillManager {
     ) -> Result<()> {
         let locale = rust_i18n::locale();
         self.prepare_skill_installation(skill_id, &locale).await?;
-        self.confirm_skill_installation(skill_id, install_path, allow_partial_scan, Vec::new())
+        self.confirm_skill_installation(skill_id, install_path, allow_partial_scan, Vec::new())?;
+        Ok(())
     }
 
     /// 准备安装技能：扫描缓存中的技能，但不复制文件，不标记为已安装
@@ -863,15 +867,26 @@ impl SkillManager {
             }
         }
 
-        // 如果用户选择了非 agents 工具但全部失败，返回错误让前端提示
+        // 更新 local_path（向后兼容）
+        skill.local_path = Some(source_path_str.clone());
+
+        // 如果用户选择了非 agents 工具但全部失败，保存源路径后返回错误让前端提示
+        // 此时源目录已创建，DB 记录已更新，用户可通过 sync_skill_to_tools 重试链接
         if !non_agent_tools.is_empty() && linked_tool_ids.is_empty() {
+            skill.source_path = Some(source_path_str.clone());
+            skill.local_paths = Some(vec![source_path_str.clone()]);
+            skill.linked_tools = Vec::new();
+            skill.is_local_only = false;
+            skill.installed = true;
+            skill.installed_at = Some(Utc::now());
+            skill.installed_commit_sha = commit_sha;
+            Self::apply_scan_report(&mut skill, &scan_report);
+            self.db.save_skill(&skill)?;
             anyhow::bail!(
                 "所有目标工具的链接创建均失败（{:?}），技能已安装到源目录但未同步到任何工具",
                 non_agent_tools.iter().map(|t| t.id()).collect::<Vec<_>>()
             );
         }
-
-        // 更新 local_path（向后兼容）
         skill.local_path = Some(source_path_str.clone());
 
         // local_paths 包含源 + 所有成功创建的链接路径（与 linked_tool_ids 保持一致）
@@ -937,41 +952,76 @@ impl SkillManager {
         let mut cleaned = 0usize;
 
         for skill in &skills {
+            let mut needs_update = false;
+            let mut updated = skill.clone();
+
+            // 检查 local_path 是否为残留临时路径
             if let Some(local_path) = &skill.local_path {
                 let is_temp = local_path.starts_with("__cache__:")
                     || local_path.starts_with("__staging__:");
-                if !is_temp {
-                    continue;
-                }
+                if is_temp {
+                    let actual_path = local_path
+                        .strip_prefix("__cache__:")
+                        .or_else(|| local_path.strip_prefix("__staging__:"))
+                        .unwrap_or(local_path);
 
-                // 如果实际路径已不存在，清除临时标记
-                let actual_path = local_path
-                    .strip_prefix("__cache__:")
-                    .or_else(|| local_path.strip_prefix("__staging__:"))
-                    .unwrap_or(local_path);
-
-                if !PathBuf::from(actual_path).exists() {
-                    let mut updated = skill.clone();
-                    if !skill.installed {
-                        updated.local_path = None;
-                        updated.security_score = None;
-                        updated.security_level = None;
-                        updated.security_issues = None;
-                        updated.security_report = None;
-                        updated.scanned_at = None;
-                    } else {
-                        // 已安装但有残留临时路径，只清除 local_path
-                        updated.local_path = skill.local_paths.as_ref()
-                            .and_then(|paths| paths.last().cloned());
+                    if !PathBuf::from(actual_path).exists() {
+                        if !skill.installed {
+                            updated.local_path = None;
+                            updated.security_score = None;
+                            updated.security_level = None;
+                            updated.security_issues = None;
+                            updated.security_report = None;
+                            updated.scanned_at = None;
+                        } else {
+                            updated.local_path = skill.local_paths.as_ref()
+                                .and_then(|paths| paths.last().cloned());
+                        }
+                        needs_update = true;
+                        log::info!(
+                            "清理残留临时路径 (local_path): skill={}, path={}",
+                            skill.name,
+                            local_path
+                        );
                     }
-                    self.db.save_skill(&updated)?;
-                    cleaned += 1;
-                    log::info!(
-                        "清理残留临时路径: skill={}, path={}",
-                        skill.name,
-                        local_path
-                    );
                 }
+            }
+
+            // 检查 local_paths 中是否包含残留临时路径
+            if let Some(local_paths) = &skill.local_paths {
+                let cleaned_paths: Vec<String> = local_paths
+                    .iter()
+                    .filter(|p| {
+                        let is_temp = p.starts_with("__cache__:")
+                            || p.starts_with("__staging__:");
+                        if !is_temp {
+                            return true; // 保留非临时路径
+                        }
+                        let actual = p
+                            .strip_prefix("__cache__:")
+                            .or_else(|| p.strip_prefix("__staging__:"))
+                            .unwrap_or(p.as_str());
+                        let keep = PathBuf::from(actual).exists();
+                        if !keep {
+                            log::info!(
+                                "清理残留临时路径 (local_paths): skill={}, path={}",
+                                skill.name,
+                                p
+                            );
+                        }
+                        keep
+                    })
+                    .cloned()
+                    .collect();
+                if cleaned_paths.len() < local_paths.len() {
+                    updated.local_paths = Some(cleaned_paths);
+                    needs_update = true;
+                }
+            }
+
+            if needs_update {
+                self.db.save_skill(&updated)?;
+                cleaned += 1;
             }
         }
 
@@ -1079,14 +1129,19 @@ impl SkillManager {
             .context("未找到该技能")?;
 
         // 删除指定路径的文件：链接用 remove_dir_link，真实目录用 remove_dir_all
+        let mut errors: Vec<String> = Vec::new();
         let path = PathBuf::from(path_to_remove);
         if link_fs::is_dir_link(&path) {
-            link_fs::remove_dir_link(&path).context("无法删除技能链接，请检查文件是否被占用")?;
+            if let Err(e) = link_fs::remove_dir_link(&path) {
+                errors.push(format!("无法删除技能链接: {}", e));
+            }
         } else if path.exists() {
             if path.is_dir() {
-                std::fs::remove_dir_all(&path).context("无法删除技能目录，请检查文件是否被占用")?;
-            } else {
-                std::fs::remove_file(&path).context("无法删除技能文件，请检查文件是否被占用")?;
+                if let Err(e) = std::fs::remove_dir_all(&path) {
+                    errors.push(format!("无法删除技能目录: {}", e));
+                }
+            } else if let Err(e) = std::fs::remove_file(&path) {
+                errors.push(format!("无法删除技能文件: {}", e));
             }
         }
 
@@ -1117,12 +1172,21 @@ impl SkillManager {
 
         self.db.save_skill(&skill).context("更新数据库失败")?;
 
-        log::info!(
-            "Skill path uninstalled: {} from {}",
-            skill.name,
-            path_to_remove
-        );
-        Ok(())
+        if errors.is_empty() {
+            log::info!(
+                "Skill path uninstalled: {} from {}",
+                skill.name,
+                path_to_remove
+            );
+            Ok(())
+        } else {
+            log::warn!(
+                "Skill path uninstall completed with errors: {} from {}",
+                skill.name,
+                path_to_remove
+            );
+            anyhow::bail!("卸载路径完成但存在残留: {}", errors.join("; "))
+        }
     }
 
     /// 获取所有 skills
@@ -1136,9 +1200,12 @@ impl SkillManager {
         // backend cache: external tools or previous app versions may create/remove links while
         // the app is open. DB writes are still gated by installed_tool_state_changed.
 
-        // 清理残留的 __cache__: / __staging__: 临时路径（用户 prepare 后未 confirm 就关闭 App）
-        if let Err(e) = self.cleanup_stale_prepare_paths() {
-            log::warn!("清理残留临时路径时出错（忽略）: {}", e);
+        // 清理残留的 __cache__: / __staging__: 临时路径（仅首次调用时执行）
+        if !self.cleanup_done.load(Ordering::Relaxed) {
+            if let Err(e) = self.cleanup_stale_prepare_paths() {
+                log::warn!("清理残留临时路径时出错（忽略）: {}", e);
+            }
+            self.cleanup_done.store(true, Ordering::Relaxed);
         }
 
         let tool_dirs = default_tool_dirs();
@@ -2463,9 +2530,9 @@ fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
                 let is_last = attempt + 1 >= attempts;
                 last_err = Some(err);
                 if retryable && !is_last {
-                    // 指数退避：250ms, 500ms, 750ms, 1000ms, 1250ms, 1500ms, 1750ms
+                    // 指数退避（上限 4s）：250ms, 500ms, 1000ms, 2000ms, 4000ms, 4000ms, 4000ms
                     // Windows 病毒扫描可能持有句柄 > 2 秒
-                    let delay_ms = 250u64 * (attempt as u64 + 1);
+                    let delay_ms = (250u64.saturating_mul(1u64 << attempt)).min(4000);
                     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     continue;
                 }

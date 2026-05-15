@@ -1,0 +1,56 @@
+一、发现阶段（Discovery）
+实现：github.rs:87 scan_repository + commands/mod.rs:203 scan_repository + github.rs:598 scan_cached_repository。
+
+级别	问题	位置
+🔴	远端递归扫描没有任何并发/总数上限：scan_directory 仅按 path.split('/').count() < 5 限深度，但宽度无限制，对 GitHub API "拼速率"。一个包含大量子目录的仓库可能在几秒内打爆 60次/小时 的未认证额度。建议先用 zipball 缓存（已有 scan_cached_repository）作为唯一入口。	github.rs:147-201
+🟠	scan_repository 命令首次扫描下载 zipball，但后续扫描没有任何"提示远端 commit 已变化"的捕获：缓存一旦写入即"永久"沿用，需用户手动 refresh_repository_cache。建议在 scan 之前用 GET /repos/{owner}/{repo} 比对 default_branch head sha，sha 一致就复用缓存，否则刷新。	commands/mod.rs:224-274
+🟠	scan_repository 中 extract_commit_sha_from_cache 是从目录名 {owner}-{repo}-{sha} 末尾抠出 SHA。仓库或 owner 自带 - 时不会出错，但若 GitHub 改变 zipball 命名（已有 mirror 直接给 commit-only 目录名）就会取错值，且校验只查"≥7 位 hex"。建议把 sha 改从 Etag/Location header 或单独 commits/{branch} API 读取，避免依赖目录名启发式。	github.rs:668-688
+🟡	parse_skill_frontmatter 用第一次 --- 当起始 (github.rs:382)；如果 SKILL.md 第 1 行有 BOM 或 CRLF（windows 库克隆常见），会直接报 Invalid frontmatter。建议 content.trim_start_matches('\u{feff}').trim_start().	github.rs:378-401
+🟡	"精选市场"导入只按 url 跳过重复 (commands/mod.rs:1085)，但不会修正已存在仓库的 name/分类，更新 yaml 后用户看到的仍是旧名字。	commands/mod.rs:1077-1098
+
+二、多工具同步（Multi-tool sync）
+实现：agent_tools.rs + skill_manager.rs:2367 sync_skill_to_tools + link_fs.rs。
+
+级别	问题	位置
+🔴	sync_skill_to_tools 在删除旧链接前没有验证链接确实指向自己的源：if link_fs::is_dir_link(&link) { remove_dir_link(...) } 直接删除。若用户先前用第三方工具手动建立了同名 Junction/symlink 指向另一处，本方法会把它无声删除。建议先 read_dir_link_target 比对源后再删。	skill_manager.rs:2457-2468
+🔴	Windows 降级到目录拷贝时彻底脱离"链接"语义：mklink /J 失败后 copy_dir_fallback 把源内容复制到 link 路径下 (link_fs.rs:121-132)。从此后：① 该工具下的拷贝不再随源更新；② remove_dir_link 会用 remove_dir（非递归）尝试删除满目录，会直接失败留下残骸（link_fs.rs:82）。要么删除后改用 remove_dir_all，要么把"已降级"事实写回 linked_tools/local_paths 并在更新流程里也走拷贝路径。	link_fs.rs:82-92, link_fs.rs:121-132
+🟠	sync_skill_to_tools 不是原子：先删旧链接再创建新链接 (skill_manager.rs:2457-2505)。中途失败时已删的链接不会还原，而 build_synced_tool_state 仅在确认安装时调用——这里靠 refresh_existing_tool_links_for_skill 扫盘补 DB，掩盖了"几个工具消失"的事实。建议保存 previous_linked = skill.linked_tools.clone()，create 全成功后才删 previous。	skill_manager.rs:2456-2516
+🟠	confirm_skill_installation 中 linked_tool_ids 收集了"创建链接成功"的工具，但接着 build_synced_tool_state 又用同一 linked_tool_ids 当 target 重算 paths (skill_manager.rs:1000-1004)。如果链接全部失败，linked_tool_ids 为空，DB 里只剩 source，与"用户实际选了 codex/claude-code"的意图不一致且无任何错误返回（仅 log::warn!）。建议在所有目标工具失败时返回 Err，让前端能提示。	skill_manager.rs:973-1009
+🟠	同名不同内容防护点放在 sync_skill_to_tools (skill_manager.rs:2480-2494) 上，但 confirm_skill_installation 的链接创建路径没有该校验——create_dir_link 会无条件覆盖已存在的目录/链接 (link_fs.rs:27-44)。这意味着首次安装就能"踩"掉别人 .claude/skills/<同名> 下的内容。两条路径应共享 tool_skill_path_is_compatible_with_source 检查。	skill_manager.rs:981-994, link_fs.rs:27-44
+
+三、安装阶段（Install）
+实现：prepare → confirm 两段式（skill_manager.rs:701 / skill_manager.rs:897），与同名遗留 install_skill (skill_manager.rs:537)。
+
+级别	问题	位置
+🔴	install_skill 与 confirm_skill_installation 双入口、行为分叉：旧的 install_skill 仍在用 install_from_network 走 GitHub Contents API 递归下载 (skill_manager.rs:1701-1769)，没有 staging、没有多工具链接、没有 installed_commit_sha、没有 source_path/linked_tools。命令层仍把它注册为 install_skill (commands/mod.rs:500)。一旦前端误调用就会产生"半安装"记录。要么删除该入口，要么内部直接 delegate 到 prepare + confirm。	skill_manager.rs:537-697, commands/mod.rs:500-511
+🔴	prepare_skill_installation 把 local_path = "__cache__:..." 直接写回 DB：如果用户在 prepare 后从未 confirm/cancel 就关闭 App，下次 get_installed_skills 因 skill.installed == false 不会显示，但 scan_local_skills 用 starts_with("__cache__:") 跳过 (skill_manager.rs:1230)，而 cancel_skill_installation 只在用户显式取消时清理。结果是数据库残留指向已被回收 cache 的脏 local_path，再次进入 confirm 就会 copy_dir_recursive(unknown_path, ...) 失败。建议 prepare 把状态放进"transient" 字段或 in-memory map，不污染 DB 主表。	skill_manager.rs:770-778, skill_manager.rs:1024-1053
+🟠	copy_dir_recursive 与 copy_directory 两份几乎相同的实现：前者跟踪 counter，后者 windows 错误信息丰富。差异里 copy_dir_recursive 不创建文件父目录（不是问题，因为它自顶向下创建）但 copy_directory 会重复 create_dir_all。维护成本高，且容易让人改了一处忘了改另一处。建议合并。	skill_manager.rs:857-893, skill_manager.rs:2297-2361
+🟠	confirm_skill_installation 用同步 I/O，但 cancel_skill_installation 也走 state.skill_manager.lock().await (commands/mod.rs:553-561)；confirm 调用 tokio::task::spawn_blocking + blocking_lock，cancel 在 async 上直接锁。前端如果"用户点确认 → 5 秒内点取消"，cancel 会一直等到 confirm 释放锁，期间没有任何"正在安装"标志阻止用户重复点击。建议加用户层乐观锁（per-skill state）。	commands/mod.rs:529-561
+🟠	enforce_installable_report 把 partial_scan 当硬阻挡 (skill_manager.rs:441-455)；allow_partial_scan 来自前端 boolean。问题在于 prepare 阶段不接受 allow_partial_scan 参数，只在 confirm 阶段重扫时再判断 (skill_manager.rs:460-475)。也就是说"准备"阶段如果有 partial scan，UI 拿到的 report 不会触发硬错误，要等到用户点击"确认安装"才报错——交互上很糟糕。建议 prepare 也 enforce，前端再决定是否提示 override。	skill_manager.rs:701-779
+🟡	replace_installation_directory 的备份恢复路径 (skill_manager.rs:367-413) 写得严谨，但 rename_with_retry 只重试 6×250ms (skill_manager.rs:2547-2569)。Windows 病毒扫描经常持有句柄 > 2 秒；建议延长或指数退避。	skill_manager.rs:2547-2569
+🟡	install_path 来自用户自定义路径时未走 tool_skill_path_is_compatible_with_source 类校验：用户可以选 ~/.claude/skills 作为 install_path，于是 source = .claude 路径，再为 claude-code 创建链接时自指。create_dir_link 已能识别 same location 直接返回 (link_fs.rs:29-31)，但 linked_tools 会错误地把 claude-code 加进去；之后 sync_skill_to_tools 取消勾选会把同一个目录当链接删掉，带走源。	skill_manager.rs:931-1005
+
+四、卸载阶段（Uninstall）
+实现：skill_manager.rs:1056 uninstall_skill + skill_manager.rs:1121 uninstall_skill_path。
+
+级别	问题	位置
+🔴	uninstall_skill 遍历 local_paths，但其中第一项通常就是 source (~/.agents/skills/<name>)，是个真目录而非链接。is_dir_link 返回 false ⇒ 走 remove_dir_all。这没问题，但删除顺序是 paths 数组顺序：如果数组里 source 不在末尾、其它工具有降级拷贝（参见 §二 link_fs 降级），先删源后删拷贝就会让拷贝变成"孤儿真目录"——逻辑上还是干净的，但若 source 先于链接被删，is_dir_link 在某些 Windows 实现里对悬空链接返回 false（因为 reparse target 不可访问），代码会 fallback 到 remove_dir_all，用 remove_dir_all 跟随 Junction 删除"目标"目录——虽然此时目标已删，但顺序敏感性是隐患。建议显式两遍：第一遍删所有链接（用 read_dir_link_target 确认指回 source），第二遍删 source。	skill_manager.rs:1067-1084
+🔴	uninstall_skill_path 用 path == path_to_remove 字符串相等过滤 (skill_manager.rs:1144)。Windows 上路径大小写/分隔符差异会导致 retain 失败，DB 留下已删的死链路径。应该用 normalize_path_for_compare（skill_manager.rs:62）。	skill_manager.rs:1121-1167
+🟠	uninstall_skill_path 删除最后一个路径时不删除 DB 记录，只是 installed=false。对于 is_local_only=true、repository_url=local 的技能这是死记录（用户没法从市场页"再安装"它）。应该走 reconcile_stale_skills 的逻辑分支（local-only → db.delete_skill）。	skill_manager.rs:1146-1151, skill_manager.rs:1619-1646
+🟠	前端 executeSkillUninstall 对每个 operationSkillId 串行 await（InstalledSkillsPage.tsx:1005）。多 skill 共享路径的 case 下，第一个 skill 已经把目录删了，第二个会进入 "path.exists() == false" 分支，但 DB 里的 local_paths 仍指向已不存在路径，warnings 满天飞。建议在 get_operation_skill_ids 内合并去重，并在 backend 也容忍多 skill 共享路径（看起来 uninstall_skill_path 已经容忍）。	InstalledSkillsPage.tsx:1000-1020
+🟡	uninstall_skill 完全用 log::warn! 吞掉个别删除失败，最后总是返回 Ok。用户点了卸载，看到"已卸载"，实际有目录残留。至少把 errors 汇总成 Err 让前端的 toast 改色，或返回结构化"部分失败"结果。	skill_manager.rs:1056-1118
+
+五、状态一致性（DB ↔ 磁盘）
+级别	问题	位置
+🔴	scan_local_skills 是 O(N×M) 且每次 UI 触发都会重扫安全规则：对每个目录调 scanner.scan_directory_with_options，即使 checksum 未变也"first match" 路径会重扫 (skill_manager.rs:1448-1457 有 checksum_changed 优化，但 1492-1500 的"二次匹配 by dir name" 和新建分支无条件扫描)。前端在切换 tab 时频繁调用会导致 UI 卡顿，且 macOS 上还触发 Gatekeeper/扩展属性读取。建议把 reconcile（路径存在性 + 关联工具）与"重新扫描安全"分开，安全扫描只在显式 refresh 或 checksum 变化时跑。	skill_manager.rs:1211-1582
+🟠	get_installed_skills 每次都重扫盘 + 可能写 DB (skill_manager.rs:1175-1192)，但没有去重锁。前端 react-query 的 staleTime: 5min 防了普通刷新，但侧栏切换/弹窗都会调用，并发命中时会发生"两个写者把不同 refreshed 状态写回"。建议加 manager 级 RWLock 或防抖。	skill_manager.rs:1175-1208, useSkills.ts:12-18
+🟠	reconcile_stale_skills 把 linked_tools.retain 依据 path_is_inside_dir_resolving_links (skill_manager.rs:1665-1675)。Stale path 已不存在，canonicalize 必然失败 → 只剩 path.starts_with(dir) 的字符串前缀判断，在自定义安装路径下不在任何 default_skills_dir 之下，会保留所有 linked_tools，导致脏状态。建议把"该路径属于哪个 tool"信息在写入 DB 时就 persist（已有 linked_tools，但路径与 tool 的映射没单独保存）。	skill_manager.rs:1648-1690
+🟠	scan_local_skills 第二次"by dir name"匹配 (skill_manager.rs:1464-1504) 写死了 s.id.starts_with("local::") 与 !s.installed。如果用户改了目录名、又把市场 skill 当地标的 source 移走，此分支不会复用，会产生重复 local::记录 —— 之后 reconcile_stale_skills 把旧记录删了，但元数据/scan history 也丢了。建议用 checksum 作为去重 fallback。	skill_manager.rs:1464-1504
+🟡	refresh_existing_tool_links_for_skill 在 current_source_exists == false 时把 source_path 自动改为某个兼容工具路径（skill_manager.rs:239-243）。这会让 update 流程把更新写到第三方工具目录里（resolve_update_target_install_dir 跟随链接），随后再触发新一轮 stale 重整，状态在两次刷新间反复跳变。建议保留原 source_path 直到用户显式 sync_skill_to_tools 才迁移。	skill_manager.rs:230-249
+
+六、横切关注点
+级别	问题
+🟠	没有事件总线广播文件系统变更：当外部 CLI（claude code、codex）自己创建/删除 skill 目录时，App 只能等下次 get_installed_skills 刷新。结合 §五的"每次都写 DB" 问题，体验抖动明显。可考虑 notify crate 对四个 skills_dir 做监听，节流后触发 invalidate。
+🟠	国际化错误信息中文写死：bail!("未找到该技能") 等大量出现在 Rust 层 (skill_manager.rs:549,716,914)，与前端 i18next 体系脱节。建议改成稳定的 error code，由前端国际化。
+🟡	大量 unwrap / expect：get_skills_directory().expect("Failed to get home directory") (skill_manager.rs:319) 在 CI/容器场景会让进程 abort。
+🟡	测试覆盖偏向"build_synced_tool_state / refresh_existing_tool_links" 等小函数；端到端的 prepare→confirm→sync→uninstall 没有集成测试。新增链接相关回归（如 §二 sync_skill_to_tools 非原子性）很容易溜过。
