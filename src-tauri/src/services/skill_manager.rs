@@ -16,6 +16,8 @@ pub struct SkillManager {
     scanner: SecurityScanner,
     skills_dir: PathBuf,
     cleanup_done: AtomicBool,
+    installing: std::sync::Mutex<std::collections::HashSet<String>>,
+    installed_cache: std::sync::Mutex<Option<(std::time::Instant, Vec<Skill>)>>,
 }
 
 fn build_synced_tool_state(
@@ -313,13 +315,15 @@ impl SkillManager {
             scanner: SecurityScanner::new(),
             skills_dir,
             cleanup_done: AtomicBool::new(false),
+            installing: std::sync::Mutex::new(std::collections::HashSet::new()),
+            installed_cache: std::sync::Mutex::new(None),
         }
     }
 
     /// 获取统一源 skills 安装目录（~/.agents/skills）
     fn get_skills_directory() -> PathBuf {
         AgentTool::Agents.default_skills_dir().unwrap_or_else(|| {
-            let home = dirs::home_dir().expect("Failed to get home directory");
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
             home.join(".agents").join("skills")
         })
     }
@@ -431,19 +435,18 @@ impl SkillManager {
     ) -> Result<()> {
         if report.blocked || !report.hard_trigger_issues.is_empty() {
             let mut error_msg = format!(
-                "⛔ 安全检测发现严重威胁，已禁止{}！\n\n检测到以下高危操作：\n",
+                "SECURITY_CHECK_BLOCKED: {}\n",
                 operation
             );
             for (idx, issue) in report.hard_trigger_issues.iter().enumerate() {
                 error_msg.push_str(&format!("{}. {}\n", idx + 1, issue));
             }
-            error_msg.push_str("\n这些操作可能对您的系统造成严重危害，强烈建议不要继续。");
             anyhow::bail!(error_msg);
         }
 
         if report.partial_scan && !allow_partial_scan {
             let mut error_msg = format!(
-                "⛔ 安全扫描未完整覆盖全部内容，已禁止{}。\n\n以下文件未被完整扫描：\n",
+                "SECURITY_PARTIAL_SCAN_BLOCKED: {}\n",
                 operation
             );
             if report.skipped_files.is_empty() {
@@ -453,7 +456,6 @@ impl SkillManager {
                     error_msg.push_str(&format!("{}. {}\n", idx + 1, file));
                 }
             }
-            error_msg.push_str("\n请先移除超大文件、二进制文件或不可读文件后再试。");
             anyhow::bail!(error_msg);
         }
 
@@ -567,8 +569,6 @@ impl SkillManager {
             .into_iter()
             .find(|s| s.id == skill_id)
             .context("未找到该技能")?;
-
-        // 下载并分析 SKILL.md
         let (_skill_md_content, _report) = self.download_and_analyze(&mut skill).await?;
 
         // 获取仓库记录
@@ -627,6 +627,8 @@ impl SkillManager {
 
         // 保存安全信息到数据库，但不标记为已安装
         self.db.save_skill(&skill)?;
+
+        self.enforce_installable_report(&scan_report, "准备安装技能", false)?;
 
         log::info!("Skill prepared successfully, scanned from cache, awaiting user confirmation");
         Ok(scan_report)
@@ -703,10 +705,11 @@ impl SkillManager {
             }
         }
 
-        anyhow::bail!("未找到仓库根目录")
+        anyhow::bail!("REPOSITORY_ROOT_NOT_FOUND")
     }
 
     /// 递归复制目录
+    /// counter: 文件计数器，传入 &mut 变量可统计复制的文件数
     fn copy_dir_recursive(
         &self,
         src: &std::path::Path,
@@ -715,10 +718,12 @@ impl SkillManager {
     ) -> Result<()> {
         use anyhow::Context;
 
-        std::fs::create_dir_all(dst).context(format!("无法创建目标目录: {:?}", dst))?;
+        if !dst.exists() {
+            std::fs::create_dir_all(dst).context(format!("无法创建目标目录: {:?}", dst))?;
+        }
 
         for entry in std::fs::read_dir(src).context(format!("无法读取源目录: {:?}", src))? {
-            let entry = entry?;
+            let entry = entry.context(format!("读取目录项失败: {:?}", src))?;
             let src_path = entry.path();
             let file_name = entry.file_name();
             let dst_path = dst.join(&file_name);
@@ -727,18 +732,39 @@ impl SkillManager {
                 .context(format!("无法获取文件类型: {:?}", src_path))?;
 
             if file_type.is_symlink() {
-                // 拒绝复制来自 zip 解压缓存中的符号链接（防御恶意仓库）
                 log::warn!("跳过符号链接（源目录中不允许）: {:?}", src_path);
                 continue;
             } else if file_type.is_dir() {
-                std::fs::create_dir_all(&dst_path)
-                    .context(format!("无法创建目标目录: {:?}", dst_path))?;
                 self.copy_dir_recursive(&src_path, &dst_path, counter)?;
             } else if file_type.is_file() {
-                std::fs::copy(&src_path, &dst_path)
-                    .context(format!("无法复制文件: {:?} -> {:?}", src_path, dst_path))?;
-                *counter += 1;
-                log::debug!("Copied file: {:?}", file_name);
+                // 确保目标文件的父目录存在
+                if let Some(parent) = dst_path.parent() {
+                    if !parent.exists() {
+                        std::fs::create_dir_all(parent)
+                            .context(format!("无法创建文件父目录: {:?}", parent))?;
+                    }
+                }
+
+                match std::fs::copy(&src_path, &dst_path) {
+                    Ok(bytes) => {
+                        *counter += 1;
+                        log::debug!("已复制文件: {:?} ({} bytes)", file_name, bytes);
+                    }
+                    Err(e) => {
+                        let error_msg = if e.raw_os_error() == Some(5) {
+                            format!(
+                                "复制文件失败（拒绝访问）\n文件: {:?}\n\n可能原因：\n1. 目标文件正在被其他程序使用\n2. 文件被设置为只读\n3. 权限不足\n4. 杀毒软件拦截\n\n建议：\n1. 关闭可能打开该文件的程序\n2. 检查文件是否为只读\n3. 以管理员权限运行\n\n原始错误: {}",
+                                file_name, e
+                            )
+                        } else {
+                            format!(
+                                "复制文件失败\n源: {:?}\n目标: {:?}\n错误: {}",
+                                src_path, dst_path, e
+                            )
+                        };
+                        return Err(anyhow::anyhow!(error_msg));
+                    }
+                }
             }
         }
 
@@ -754,10 +780,36 @@ impl SkillManager {
         allow_partial_scan: bool,
         target_tools: Vec<String>,
     ) -> Result<()> {
+        log::info!("Confirming installation for skill: {}", skill_id);
+
+        {
+            let mut installing = self.installing.lock().unwrap();
+            if installing.contains(skill_id) {
+                anyhow::bail!("SKILL_INSTALL_IN_PROGRESS");
+            }
+            installing.insert(skill_id.to_string());
+        }
+
+        let result = self.confirm_skill_installation_inner(
+            skill_id,
+            install_path,
+            allow_partial_scan,
+            target_tools,
+        );
+        self.installing.lock().unwrap().remove(skill_id);
+        result
+    }
+
+    /// Inner implementation of confirm_skill_installation (called after installing guard is set)
+    fn confirm_skill_installation_inner(
+        &self,
+        skill_id: &str,
+        install_path: Option<String>,
+        allow_partial_scan: bool,
+        target_tools: Vec<String>,
+    ) -> Result<()> {
         use anyhow::Context;
         use std::path::PathBuf;
-
-        log::info!("Confirming installation for skill: {}", skill_id);
 
         let mut skill = self
             .db
@@ -858,7 +910,10 @@ impl SkillManager {
                 match link_fs::create_dir_link(&final_install_dir, &link_path) {
                     Ok(()) => {
                         log::info!("链接创建成功 [{:?}]: {:?}", tool.id(), link_path);
-                        linked_tool_ids.push(tool.id().to_string());
+                        // Don't add to linked_tool_ids if source and link are the same location
+                        if !paths_point_to_same_location(&final_install_dir, &link_path) {
+                            linked_tool_ids.push(tool.id().to_string());
+                        }
                     }
                     Err(e) => {
                         log::warn!("链接创建失败 [{:?}]: {}", tool.id(), e);
@@ -883,7 +938,7 @@ impl SkillManager {
             Self::apply_scan_report(&mut skill, &scan_report);
             self.db.save_skill(&skill)?;
             anyhow::bail!(
-                "所有目标工具的链接创建均失败（{:?}），技能已安装到源目录但未同步到任何工具",
+                "LINK_CREATION_ALL_FAILED: {:?}",
                 non_agent_tools.iter().map(|t| t.id()).collect::<Vec<_>>()
             );
         }
@@ -911,6 +966,7 @@ impl SkillManager {
         self.db.save_skill(&skill)?;
 
         log::info!("Skill installation confirmed: {}", skill.name);
+        self.invalidate_installed_cache();
         Ok(())
     }
 
@@ -919,6 +975,10 @@ impl SkillManager {
         use anyhow::Context;
 
         log::info!("Canceling installation for skill: {}", skill_id);
+
+        if self.installing.lock().unwrap().contains(skill_id) {
+            anyhow::bail!("SKILL_INSTALL_IN_PROGRESS");
+        }
 
         let skill = self
             .db
@@ -942,6 +1002,7 @@ impl SkillManager {
         self.db.save_skill(&skill)?;
 
         log::info!("Skill installation canceled: {}", skill.name);
+        self.invalidate_installed_cache();
         Ok(())
     }
 
@@ -1023,6 +1084,29 @@ impl SkillManager {
                 self.db.save_skill(&updated)?;
                 cleaned += 1;
             }
+        }
+
+        // Second pass: delete orphaned __cache__ skills where cache dir no longer exists
+        let orphaned: Vec<String> = skills.iter()
+            .filter(|s| {
+                if s.installed { return false; }
+                if let Some(local_path) = &s.local_path {
+                    if local_path.starts_with("__cache__:") || local_path.starts_with("__staging__:") {
+                        let actual_path = local_path
+                            .strip_prefix("__cache__:")
+                            .or_else(|| local_path.strip_prefix("__staging__:"))
+                            .unwrap_or(local_path);
+                        return !PathBuf::from(actual_path).exists();
+                    }
+                }
+                false
+            })
+            .map(|s| s.id.clone())
+            .collect();
+
+        for skill_id in orphaned {
+            log::info!("清理孤立的缓存技能记录: {}", skill_id);
+            let _ = self.db.delete_skill(&skill_id);
         }
 
         Ok(cleaned)
@@ -1111,10 +1195,12 @@ impl SkillManager {
 
         if errors.is_empty() {
             log::info!("Skill uninstalled successfully: {}", skill.name);
+            self.invalidate_installed_cache();
             Ok(())
         } else {
             log::warn!("Skill uninstall completed with errors: {}", skill.name);
-            anyhow::bail!("卸载完成但存在残留: {}", errors.join("; "))
+            self.invalidate_installed_cache();
+            anyhow::bail!("UNINSTALL_PARTIAL_FAILURE: {}", errors.join("; "))
         }
     }
 
@@ -1178,6 +1264,7 @@ impl SkillManager {
                 skill.name,
                 path_to_remove
             );
+            self.invalidate_installed_cache();
             Ok(())
         } else {
             log::warn!(
@@ -1185,7 +1272,8 @@ impl SkillManager {
                 skill.name,
                 path_to_remove
             );
-            anyhow::bail!("卸载路径完成但存在残留: {}", errors.join("; "))
+            self.invalidate_installed_cache();
+            anyhow::bail!("UNINSTALL_PATH_PARTIAL_FAILURE: {}", errors.join("; "))
         }
     }
 
@@ -1196,6 +1284,15 @@ impl SkillManager {
 
     /// 获取已安装的 skills
     pub fn get_installed_skills(&self) -> Result<Vec<Skill>> {
+        // Check memory cache first (5-second TTL)
+        if let Ok(cache) = self.installed_cache.lock() {
+            if let Some((ts, skills)) = cache.as_ref() {
+                if ts.elapsed().as_secs() < 5 {
+                    return Ok(skills.clone());
+                }
+            }
+        }
+
         // This intentionally checks the filesystem on demand instead of using a long-lived
         // backend cache: external tools or previous app versions may create/remove links while
         // the app is open. DB writes are still gated by installed_tool_state_changed.
@@ -1220,7 +1317,17 @@ impl SkillManager {
             installed.push(refreshed);
         }
 
+        if let Ok(mut cache) = self.installed_cache.lock() {
+            *cache = Some((std::time::Instant::now(), installed.clone()));
+        }
+
         Ok(installed)
+    }
+
+    fn invalidate_installed_cache(&self) {
+        if let Ok(mut cache) = self.installed_cache.lock() {
+            *cache = None;
+        }
     }
 
     fn refresh_installed_tool_links(&self) -> Result<usize> {
@@ -1510,6 +1617,47 @@ impl SkillManager {
                                     existing_skill.local_path,
                                     path
                                 );
+                                let checksum_changed = existing_skill.checksum.as_deref() != Some(checksum.as_str());
+                                existing_skill.local_path = Some(local_path_str.clone());
+                                existing_skill.local_paths = Some(vec![local_path_str.clone()]);
+                                existing_skill.source_path = Some(local_path_str.clone());
+                                existing_skill.installed = true;
+                                existing_skill.installed_at = Some(Utc::now());
+                                existing_skill.name = skill_name;
+                                existing_skill.description = skill_description;
+                                existing_skill.file_path = local_path_str.clone();
+
+                                if checksum_changed {
+                                    existing_skill.checksum = Some(checksum);
+                                    let locale = rust_i18n::locale();
+                                    let report = self.scanner.scan_directory_with_options(
+                                        path.to_str().unwrap_or(""),
+                                        &existing_skill.id,
+                                        &locale,
+                                        ScanOptions { skip_readme: true },
+                                        None,
+                                    )?;
+                                    Self::apply_scan_report(&mut existing_skill, &report);
+                                }
+
+                                self.db.save_skill(&existing_skill)?;
+                                scanned_skills.push(existing_skill);
+                                continue;
+                            }
+
+                            // Fallback: match by checksum for renamed directories
+                            let existing_by_checksum = existing_skills.iter().find(|s| {
+                                s.checksum.as_deref() == Some(checksum.as_str())
+                                    && !s.installed
+                                    && s.repository_url == "local"
+                            });
+                            if let Some(mut existing_skill) = existing_by_checksum.cloned() {
+                                log::info!(
+                                    "Reusing existing local skill '{}' by checksum for renamed directory {:?} -> {:?}",
+                                    existing_skill.id,
+                                    existing_skill.local_path,
+                                    path
+                                );
                                 existing_skill.local_path = Some(local_path_str.clone());
                                 existing_skill.local_paths = Some(vec![local_path_str.clone()]);
                                 existing_skill.source_path = Some(local_path_str.clone());
@@ -1698,9 +1846,28 @@ impl SkillManager {
                     if let Some(tool) = AgentTool::from_id(tool_id) {
                         if let Some(tool_dir) = tool.default_skills_dir() {
                             // Check if any stale path belongs to this tool
-                            return !stale_paths.iter().any(|sp| {
+                            let is_stale = stale_paths.iter().any(|sp| {
                                 path_is_inside_dir_resolving_links(&PathBuf::from(sp), &tool_dir)
                             });
+                            if is_stale {
+                                return false;
+                            }
+                            // Also check: if any local_path was under this tool's dir and is now stale
+                            let skill_path_was_in_tool_dir = updated.local_paths.as_ref()
+                                .map(|paths| paths.iter().any(|p| {
+                                    let p_buf = PathBuf::from(p);
+                                    path_is_inside_dir_resolving_links(&p_buf, &tool_dir)
+                                }))
+                                .unwrap_or(false);
+                            let any_stale_in_tool_dir = stale_paths.iter().any(|sp| {
+                                let sp_buf = PathBuf::from(sp);
+                                normalize_path_for_compare(&sp_buf).starts_with(
+                                    &normalize_path_for_compare(&tool_dir)
+                                )
+                            });
+                            if skill_path_was_in_tool_dir && any_stale_in_tool_dir {
+                                return false;
+                            }
                         }
                     }
                     true
@@ -1794,7 +1961,7 @@ impl SkillManager {
             .context("未找到该技能")?;
 
         if !skill.installed {
-            anyhow::bail!("该技能尚未安装，无法更新");
+            anyhow::bail!("SKILL_NOT_INSTALLED");
         }
 
         // 获取仓库记录
@@ -1917,21 +2084,21 @@ impl SkillManager {
         let staging_marker = skill.local_path.as_ref().context("技能尚未准备更新")?;
 
         if !staging_marker.starts_with("__staging__:") {
-            anyhow::bail!("技能尚未准备更新，请先调用 prepare_skill_update");
+            anyhow::bail!("SKILL_NOT_PREPARED_FOR_UPDATE");
         }
 
         let staging_path_str = &staging_marker[12..]; // 去掉 "__staging__:" 前缀
         let staging_dir = PathBuf::from(staging_path_str);
 
         if !staging_dir.exists() {
-            anyhow::bail!("Staging 目录不存在");
+            anyhow::bail!("STAGING_DIR_NOT_FOUND");
         }
 
         // 获取原安装路径（从 local_paths）
         let install_paths = skill.local_paths.as_ref().context("无法获取安装路径")?;
 
         if install_paths.is_empty() {
-            anyhow::bail!("技能没有有效的安装路径");
+            anyhow::bail!("SKILL_NO_INSTALL_PATH");
         }
 
         // 始终以当前活跃安装路径（local_path / local_paths 最后一个）为更新目标。
@@ -2011,7 +2178,7 @@ impl SkillManager {
                         move_err
                     );
 
-                    match self.copy_directory(&target_install_dir, &backup_path) {
+                    match self.copy_dir_recursive(&target_install_dir, &backup_path, &mut 0) {
                         Ok(()) => {
                             log::info!("创建备份(复制到缓存): {:?}", backup_path);
                             Some(BackupDir::Copied(backup_path))
@@ -2066,7 +2233,7 @@ impl SkillManager {
             }
         }
 
-        match self.copy_directory(&staging_dir, &target_install_dir) {
+        match self.copy_dir_recursive(&staging_dir, &target_install_dir, &mut 0) {
             Ok(_) => {
                 log::info!("成功更新技能到: {:?}", target_install_dir);
 
@@ -2138,7 +2305,7 @@ impl SkillManager {
                                                 rename_err
                                             );
                                             if let Err(copy_err) =
-                                                self.copy_directory(&extract_dir, &extracted_dest)
+                                                self.copy_dir_recursive(&extract_dir, &extracted_dest, &mut 0)
                                             {
                                                 log::warn!("同步仓库缓存(复制)失败: {}", copy_err);
                                             } else {
@@ -2197,7 +2364,7 @@ impl SkillManager {
                             log::warn!("更新失败，已恢复备份(重命名): {:?}", p);
                         }
                         BackupDir::Copied(p) => {
-                            let _ = self.copy_directory(&p, &target_install_dir);
+                            let _ = self.copy_dir_recursive(&p, &target_install_dir, &mut 0);
                             log::warn!("更新失败，已恢复备份(复制): {:?}", p);
                         }
                     }
@@ -2252,73 +2419,6 @@ impl SkillManager {
         self.db.save_skill(&skill)?;
 
         log::info!("技能更新已取消: {}", skill.name);
-        Ok(())
-    }
-
-    /// 递归复制目录
-    fn copy_directory(&self, src: &PathBuf, dst: &PathBuf) -> Result<()> {
-        use std::fs;
-
-        log::info!("复制目录: {:?} -> {:?}", src, dst);
-
-        // 确保目标目录存在
-        if !dst.exists() {
-            fs::create_dir_all(dst).context(format!("无法创建目标目录: {:?}", dst))?;
-            log::debug!("创建目标目录: {:?}", dst);
-        }
-
-        // 遍历源目录
-        for entry in fs::read_dir(src).context(format!("无法读取源目录: {:?}", src))? {
-            let entry = entry.context(format!("读取目录项失败: {:?}", src))?;
-            let file_type = entry
-                .file_type()
-                .context(format!("获取文件类型失败: {:?}", entry.path()))?;
-            let src_path = entry.path();
-            let file_name = entry.file_name();
-            let dst_path = dst.join(&file_name);
-
-            if file_type.is_symlink() {
-                // 跳过符号链接（缓存源中不允许，防御恶意仓库）
-                log::warn!("跳过符号链接（源目录中不允许）: {:?}", src_path);
-                continue;
-            } else if file_type.is_dir() {
-                // 递归复制子目录
-                log::debug!("复制子目录: {:?}", file_name);
-                self.copy_directory(&src_path, &dst_path)?;
-            } else if file_type.is_file() {
-                // 确保目标文件的父目录存在
-                if let Some(parent) = dst_path.parent() {
-                    if !parent.exists() {
-                        fs::create_dir_all(parent)
-                            .context(format!("无法创建文件父目录: {:?}", parent))?;
-                    }
-                }
-
-                // 复制文件
-                match fs::copy(&src_path, &dst_path) {
-                    Ok(bytes) => {
-                        log::debug!("已复制文件: {:?} ({} bytes)", file_name, bytes);
-                    }
-                    Err(e) => {
-                        // 提供详细的错误信息
-                        let error_msg = if e.raw_os_error() == Some(5) {
-                            format!(
-                                "复制文件失败（拒绝访问）\n文件: {:?}\n\n可能原因：\n1. 目标文件正在被其他程序使用\n2. 文件被设置为只读\n3. 权限不足\n4. 杀毒软件拦截\n\n建议：\n1. 关闭可能打开该文件的程序\n2. 检查文件是否为只读\n3. 以管理员权限运行\n\n原始错误: {}",
-                                file_name, e
-                            )
-                        } else {
-                            format!(
-                                "复制文件失败\n源: {:?}\n目标: {:?}\n错误: {}",
-                                src_path, dst_path, e
-                            )
-                        };
-                        return Err(anyhow::anyhow!(error_msg));
-                    }
-                }
-            }
-        }
-
-        log::info!("目录复制完成: {:?}", dst);
         Ok(())
     }
 
@@ -2482,10 +2582,11 @@ impl SkillManager {
         self.db.save_skill(&reconciled)?;
 
         log::info!("Synced skill '{}' to tools: {:?}", skill.name, target_tools);
+        self.invalidate_installed_cache();
         if sync_errors.is_empty() {
             Ok(())
         } else {
-            anyhow::bail!("部分工具同步失败: {}", sync_errors.join("; "))
+            anyhow::bail!("SYNC_PARTIAL_FAILURE: {}", sync_errors.join("; "))
         }
     }
 
@@ -2505,7 +2606,7 @@ impl SkillManager {
         if errors.is_empty() {
             Ok(())
         } else {
-            anyhow::bail!("部分技能同步失败:\n{}", errors.join("\n"))
+            anyhow::bail!("SYNC_BATCH_PARTIAL_FAILURE:\n{}", errors.join("\n"))
         }
     }
 }

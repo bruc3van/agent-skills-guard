@@ -1,4 +1,26 @@
 {
+  "errors": {
+    "SKILL_NOT_FOUND": "Skill not found",
+    "SKILL_INSTALL_IN_PROGRESS": "Skill installation is in progress",
+    "REPOSITORY_ROOT_NOT_FOUND": "Repository root directory not found",
+    "UNINSTALL_PARTIAL_FAILURE": "Uninstall completed with residual files",
+    "UNINSTALL_PATH_PARTIAL_FAILURE": "Path uninstall completed with residual files",
+    "SKILL_NOT_INSTALLED": "Skill is not installed and cannot be updated",
+    "SKILL_NOT_PREPARED_FOR_UPDATE": "Skill is not prepared for update, please prepare first",
+    "STAGING_DIR_NOT_FOUND": "Staging directory does not exist",
+    "SKILL_NO_INSTALL_PATH": "Skill has no valid install path",
+    "LINK_CREATION_ALL_FAILED": "All target tool link creation failed",
+    "SYNC_PARTIAL_FAILURE": "Some tools sync failed",
+    "SYNC_BATCH_PARTIAL_FAILURE": "Some skills sync failed",
+    "SECURITY_CHECK_BLOCKED": "Security check blocked the operation",
+    "SECURITY_PARTIAL_SCAN_BLOCKED": "Security scan did not fully cover all content, operation blocked",
+    "GITHUB_RATE_LIMITED": "GitHub API rate limit reached",
+    "GITHUB_REPO_FORBIDDEN": "No permission to access this repository",
+    "GITHUB_REPO_NOT_FOUND": "Repository or path not found",
+    "GITHUB_UNAUTHORIZED": "Unauthorized access, please configure GitHub Token",
+    "GITHUB_SERVER_ERROR": "GitHub server error",
+    "NETWORK_ERROR": "Network request failed"
+  },
   "header": {
     "title": "AGENT SKILLS GUARD",
     "subtitle": "SECURE_SKILL_MANAGEMENT_PROTOCOL"

@@ -225,8 +225,62 @@ pub async fn scan_repository(
         // 使用缓存扫描(0次API请求)
         let cache_path_buf = std::path::PathBuf::from(cache_path);
         if cache_path_buf.exists() && cache_path_buf.is_dir() {
-            log::info!("使用本地缓存扫描仓库: {}", repo.name);
-            cache_path_buf
+            // 检查远端是否有新提交（1次API调用）
+            let cached_sha = repo.cached_commit_sha.as_deref();
+            let sha_matches = match state
+                .github
+                .get_repository_default_branch_sha(&owner, &repo_name)
+                .await
+            {
+                Ok(Some(remote_sha)) => {
+                    if cached_sha == Some(remote_sha.as_str()) {
+                        log::info!(
+                            "缓存 SHA 匹配，复用缓存: {} (sha={})",
+                            repo.name,
+                            remote_sha
+                        );
+                        true
+                    } else {
+                        log::info!(
+                            "远端有新提交 (cached={:?}, remote={})，重新下载",
+                            cached_sha,
+                            remote_sha
+                        );
+                        false
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("无法获取远端 SHA，使用缓存: {}", repo.name);
+                    true // API 未返回有效结果时回退使用缓存
+                }
+                Err(e) => {
+                    log::warn!("检查远端 SHA 失败: {}，使用缓存", e);
+                    true
+                }
+            };
+
+            if sha_matches {
+                cache_path_buf
+            } else {
+                // SHA 不匹配：重新下载
+                let (extract_dir, commit_sha) = state
+                    .github
+                    .download_repository_archive(&owner, &repo_name, &cache_base_dir)
+                    .await
+                    .map_err(|e| format!("下载仓库压缩包失败: {}", e))?;
+
+                state
+                    .db
+                    .update_repository_cache(
+                        &repo_id,
+                        &extract_dir.to_string_lossy(),
+                        Utc::now(),
+                        Some(&commit_sha),
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                extract_dir
+            }
         } else {
             // 缓存路径不存在，重新下载
             log::warn!("缓存路径不存在，重新下载: {:?}", cache_path_buf);
@@ -525,7 +579,6 @@ pub async fn prepare_skill_installation(
 }
 
 /// 确认安装技能：标记为已安装，并为 target_tools 创建链接
-/// 使用 spawn_blocking 包装同步文件 I/O，避免阻塞 Tokio 异步运行时
 #[tauri::command]
 pub async fn confirm_skill_installation(
     state: State<'_, AppState>,
@@ -534,18 +587,15 @@ pub async fn confirm_skill_installation(
     allow_partial_scan: Option<bool>,
     target_tools: Option<Vec<String>>,
 ) -> Result<(), String> {
-    let manager = state.skill_manager.clone();
-    let allow_partial = allow_partial_scan.unwrap_or(false);
-    let tools = target_tools.unwrap_or_default();
-
-    tokio::task::spawn_blocking(move || {
-        let manager = manager.blocking_lock();
-        manager
-            .confirm_skill_installation(&skill_id, install_path, allow_partial, tools)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| format!("任务执行失败: {}", e))?
+    let manager = state.skill_manager.lock().await;
+    manager
+        .confirm_skill_installation(
+            &skill_id,
+            install_path,
+            allow_partial_scan.unwrap_or(false),
+            target_tools.unwrap_or_default(),
+        )
+        .map_err(|e| e.to_string())
 }
 
 /// 取消安装技能：删除已下载的文件

@@ -28,6 +28,7 @@ import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
+import { translateError } from "../lib/error-codes";
 import {
   getDisplayedPluginToolIds,
   getDisplayedToolIds,
@@ -1000,22 +1001,22 @@ export function InstalledSkillsPage() {
   const executeSkillUninstall = async (skill: Skill) => {
     setInstalledOps((prev) => ({ ...prev, uninstallingSkillId: skill.id }));
     const operationSkillIds = getOperationSkillIds(skill);
-    const errors: string[] = [];
     try {
-      for (const operationSkillId of operationSkillIds) {
-        try {
-          await uninstallMutation.mutateAsync(operationSkillId);
-        } catch (error: any) {
-          errors.push(error?.message || String(error));
-        }
+      const results = await Promise.allSettled(
+        operationSkillIds.map((id) => uninstallMutation.mutateAsync(id))
+      );
+      const errors = results
+        .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+        .map((r) => r.reason?.message || String(r.reason));
+      if (errors.length === 0) {
+        appToast.success(t("skills.toast.uninstalled"));
+      } else {
+        appToast.error(
+          `${t("skills.toast.uninstallFailed")}: ${errors.join("; ")}`
+        );
       }
     } finally {
       setInstalledOps((prev) => ({ ...prev, uninstallingSkillId: null }));
-    }
-    if (errors.length === 0) {
-      appToast.success(t("skills.toast.uninstalled"));
-    } else {
-      appToast.error(`${t("skills.toast.uninstallFailed")}: ${errors[0]}`);
     }
   };
 
@@ -1037,7 +1038,7 @@ export function InstalledSkillsPage() {
             {
               onSuccess: () => appToast.success(t("skills.toast.uninstalled")),
               onError: (error: any) =>
-                appToast.error(`${t("skills.toast.uninstallFailed")}: ${error.message || error}`),
+                appToast.error(`${t("skills.toast.uninstallFailed")}: ${translateError(error?.message || String(error))}`),
             }
           );
         }}
@@ -1049,7 +1050,7 @@ export function InstalledSkillsPage() {
             setPendingUpdate({ skill, report, conflicts });
           } catch (error: any) {
             setPreparingUpdateSkillId(null);
-            appToast.error(`${t("skills.toast.updateFailed")}: ${error.message || error}`);
+            appToast.error(`${t("skills.toast.updateFailed")}: ${translateError(error?.message || String(error))}`);
           }
         }}
         onToggleTool={async (toolId: string, active: boolean) => {
@@ -1142,7 +1143,7 @@ export function InstalledSkillsPage() {
             appToast.error(t("plugins.toast.uninstallFailed"));
           }
         } catch (error: any) {
-          appToast.error(`${t("plugins.toast.uninstallFailed")}: ${error.message || error}`);
+          appToast.error(`${t("plugins.toast.uninstallFailed")}: ${translateError(error?.message || String(error))}`);
         } finally {
           setInstalledOps((prev) => ({ ...prev, uninstallingPluginId: null }));
         }
@@ -1576,7 +1577,7 @@ export function InstalledSkillsPage() {
               });
               appToast.success(t("skills.toast.updateSuccess"));
             } catch (error: any) {
-              appToast.error(`${t("skills.toast.updateFailed")}: ${error.message || error}`);
+              appToast.error(`${t("skills.toast.updateFailed")}: ${translateError(error?.message || String(error))}`);
             } finally {
               setConfirmingUpdateSkillId(null);
             }

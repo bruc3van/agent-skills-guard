@@ -78,7 +78,7 @@ impl GitHubService {
                 .timeout(std::time::Duration::from_secs(30)) // 30秒超时
                 .connect_timeout(std::time::Duration::from_secs(10)) // 10秒连接超时
                 .build()
-                .unwrap(),
+                .unwrap_or_else(|_| Client::new()),
             api_base: "https://api.github.com".to_string(),
         }
     }
@@ -238,7 +238,7 @@ impl GitHubService {
                                     if let Ok(reset_timestamp) = reset_str.parse::<i64>() {
                                         let now = std::time::SystemTime::now()
                                             .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap()
+                                            .unwrap_or_default()
                                             .as_secs()
                                             as i64;
                                         let wait_seconds = reset_timestamp - now;
@@ -246,29 +246,29 @@ impl GitHubService {
                                         if wait_seconds > 0 {
                                             let wait_minutes = (wait_seconds + 59) / 60; // 向上取整
                                             anyhow::bail!(
-                                                "GitHub API 速率限制已达上限，请等待约 {} 分钟后重试。\n\n提示：未认证的请求限制为每小时60次，认证后可提升至5000次/小时。",
+                                                "GITHUB_RATE_LIMITED: {}",
                                                 wait_minutes
                                             );
                                         }
                                     }
                                 }
                             }
-                            anyhow::bail!("GitHub API 速率限制已达上限，请稍后重试（约1小时后）");
+                            anyhow::bail!("GITHUB_RATE_LIMITED");
                         }
                     }
-                    anyhow::bail!("无权限访问该仓库，请检查仓库是否为私有仓库");
+                    anyhow::bail!("GITHUB_REPO_FORBIDDEN");
                 }
                 404 => {
-                    anyhow::bail!("仓库或路径不存在: {}/{}", owner, repo);
+                    anyhow::bail!("GITHUB_REPO_NOT_FOUND: {}/{}", owner, repo);
                 }
                 401 => {
-                    anyhow::bail!("未授权访问，请配置 GitHub Token");
+                    anyhow::bail!("GITHUB_UNAUTHORIZED");
                 }
                 500..=599 => {
-                    anyhow::bail!("GitHub 服务器错误，请稍后重试");
+                    anyhow::bail!("GITHUB_SERVER_ERROR");
                 }
                 _ => {
-                    anyhow::bail!("GitHub API 返回错误: {}", status);
+                    anyhow::bail!("GITHUB_API_ERROR: {}", status);
                 }
             }
         }
@@ -297,16 +297,16 @@ impl GitHubService {
                 403 => {
                     if let Some(remaining) = response.headers().get("x-ratelimit-remaining") {
                         if remaining == "0" {
-                            anyhow::bail!("GitHub API 速率限制已达上限，请稍后重试");
+                            anyhow::bail!("GITHUB_RATE_LIMITED");
                         }
                     }
-                    anyhow::bail!("无权限访问该文件");
+                    anyhow::bail!("GITHUB_REPO_FORBIDDEN");
                 }
                 404 => {
-                    anyhow::bail!("文件不存在: {}", download_url);
+                    anyhow::bail!("GITHUB_REPO_NOT_FOUND: {}", download_url);
                 }
                 _ => {
-                    anyhow::bail!("下载文件失败: {}", status);
+                    anyhow::bail!("NETWORK_ERROR: HTTP {}", status);
                 }
             }
         }
@@ -524,6 +524,12 @@ impl GitHubService {
 
         log::info!("提取到 commit SHA: {}", commit_sha);
 
+        // 将 SHA 写入元数据文件，供后续可靠的缓存复用判断
+        let sha_file = extract_dir.join(".commit_sha");
+        if let Err(e) = fs::write(&sha_file, &commit_sha) {
+            log::warn!("无法写入 commit SHA 元数据文件: {}", e);
+        }
+
         Ok((extract_dir, commit_sha))
     }
 
@@ -572,6 +578,47 @@ impl GitHubService {
         Ok(())
     }
 
+    /// 获取仓库默认分支的最新 commit SHA（使用 1 次 API 调用）
+    /// 用于缓存复用前的 SHA 比对，判断远端是否有新提交。
+    pub async fn get_repository_default_branch_sha(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Option<String>> {
+        let url = format!(
+            "{}/repos/{}/{}/commits?per_page=1",
+            self.api_base, owner, repo
+        );
+
+        let response = match self
+            .client
+            .get(&url)
+            .header("Accept", "application/vnd.github.v3+json")
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return Ok(None), // 网络错误，不阻塞缓存使用
+        };
+
+        if !response.status().is_success() {
+            return Ok(None); // API 错误时不阻塞缓存使用
+        }
+
+        let commits: Vec<serde_json::Value> = match response.json().await {
+            Ok(c) => c,
+            Err(_) => return Ok(None),
+        };
+
+        if let Some(first) = commits.first() {
+            if let Some(sha) = first.get("sha").and_then(|s| s.as_str()) {
+                return Ok(Some(sha.to_string()));
+            }
+        }
+
+        Ok(None)
+    }
+
     /// 检查GitHub API限流状态
     fn check_rate_limit(&self, response: &reqwest::Response) -> Result<()> {
         if let Some(remaining) = response.headers().get("x-ratelimit-remaining") {
@@ -587,7 +634,7 @@ impl GitHubService {
                                 let wait_minutes = (wait_seconds + 59) / 60;
 
                                 return Err(anyhow::anyhow!(
-                                    "GitHub API 速率限制已达上限，请等待约 {} 分钟后重试。\n\n提示：未认证的请求限制为每小时60次，认证后可提升至5000次/小时。",
+                                    "GITHUB_RATE_LIMITED: {}",
                                     wait_minutes
                                 ));
                             }
@@ -671,6 +718,19 @@ impl GitHubService {
     /// 从解压后的缓存目录中提取 commit SHA
     /// GitHub zipball 解压后的目录名格式：{owner}-{repo}-{commit_sha}
     pub fn extract_commit_sha_from_cache(&self, extract_dir: &Path) -> Result<String> {
+        // 优先读取 .commit_sha 元数据文件（由 download_repository_archive 写入）
+        let sha_file = extract_dir.join(".commit_sha");
+        if sha_file.exists() {
+            if let Ok(content) = fs::read_to_string(&sha_file) {
+                let sha = content.trim().to_string();
+                if !sha.is_empty() {
+                    log::info!("从 .commit_sha 元数据文件读取到 SHA: {}", sha);
+                    return Ok(sha);
+                }
+            }
+        }
+
+        // 回退：从解压后的子目录名解析（{owner}-{repo}-{commit_sha}）
         for entry in fs::read_dir(extract_dir).context("无法读取解压目录")? {
             let entry = entry.context("无法读取目录条目")?;
             if entry.file_type()?.is_dir() {
@@ -791,7 +851,7 @@ impl GitHubService {
                     if let Err(e) = self.check_rate_limit(&response) {
                         return Err(e);
                     }
-                    return Err(anyhow::anyhow!("无权限访问该仓库"));
+                    return Err(anyhow::anyhow!("GITHUB_REPO_FORBIDDEN"));
                 }
                 404 => {
                     log::warn!("技能路径不存在: {}/{}/{}", owner, repo, skill_path);

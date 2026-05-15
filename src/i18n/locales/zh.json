@@ -1,4 +1,26 @@
 {
+  "errors": {
+    "SKILL_NOT_FOUND": "未找到该技能",
+    "SKILL_INSTALL_IN_PROGRESS": "该技能正在安装中",
+    "REPOSITORY_ROOT_NOT_FOUND": "未找到仓库根目录",
+    "UNINSTALL_PARTIAL_FAILURE": "卸载完成但存在残留",
+    "UNINSTALL_PATH_PARTIAL_FAILURE": "卸载路径完成但存在残留",
+    "SKILL_NOT_INSTALLED": "该技能尚未安装，无法更新",
+    "SKILL_NOT_PREPARED_FOR_UPDATE": "技能尚未准备更新，请先准备",
+    "STAGING_DIR_NOT_FOUND": "临时目录不存在",
+    "SKILL_NO_INSTALL_PATH": "技能没有有效的安装路径",
+    "LINK_CREATION_ALL_FAILED": "所有目标工具的链接创建均失败",
+    "SYNC_PARTIAL_FAILURE": "部分工具同步失败",
+    "SYNC_BATCH_PARTIAL_FAILURE": "部分技能同步失败",
+    "SECURITY_CHECK_BLOCKED": "安全检测发现威胁，已禁止操作",
+    "SECURITY_PARTIAL_SCAN_BLOCKED": "安全扫描未完整覆盖全部内容，已禁止操作",
+    "GITHUB_RATE_LIMITED": "GitHub API 速率限制已达上限",
+    "GITHUB_REPO_FORBIDDEN": "无权限访问该仓库",
+    "GITHUB_REPO_NOT_FOUND": "仓库或路径不存在",
+    "GITHUB_UNAUTHORIZED": "未授权访问，请配置 GitHub Token",
+    "GITHUB_SERVER_ERROR": "GitHub 服务器错误",
+    "NETWORK_ERROR": "网络请求失败"
+  },
   "header": {
     "title": "智能体技能管家",
     "subtitle": "一站式技能安全管理"
