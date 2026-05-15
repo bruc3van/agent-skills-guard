@@ -6,7 +6,7 @@
 
 ### 让 Claude Code 技能管理像应用商店一样简单安全
 
-[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
+[![Version](https://img.shields.io/badge/version-1.1.4-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 
@@ -40,7 +40,7 @@
 
 <div align="center">
 
-**🎯 三秒钟了解核心价值：可视化管理 + 安全扫描 + 精选仓库**
+**🎯 三秒钟了解核心价值：可视化管理 + 安全扫描 + 精选仓库 + CLI 工具管理**
 
 [⭐ 立即下载](https://github.com/bruc3van/agent-skills-guard/releases)
 
@@ -48,7 +48,7 @@
 
 ---
 
-## 🌟 四大核心特色
+## 🌟 五大核心特色
 
 ### 🔄 全生命周期管理
 
@@ -82,6 +82,17 @@
 - 🌟 **精选插件市场**：新增「精选市场」标签页，支持在线刷新推荐列表并缓存
 - 🔄 **自动刷新**：启动时静默更新，保持最新
 - ➕ **自定义仓库**：支持添加任意 GitHub 仓库
+
+### 💻 本地 CLI 工具管理
+
+自动发现并管理通过包管理器安装的命令行工具，一站式掌握本地开发工具状态。
+
+- 🔍 **自动发现**：扫描 npm、pnpm、pip、Homebrew、Scoop、Chocolatey 安装的 CLI 工具
+- 🔄 **检查更新**：一键检查所有 CLI 工具是否有新版本，支持批量更新
+- 📦 **智能合并**：同一 Homebrew formula / Scoop 包自动合并，减少列表噪音
+- 🗑️ **卸载管理**：支持从界面直接卸载 CLI 工具
+- 📂 **目录浏览**：快速打开工具安装目录
+- 🏷️ **分类展示**：按包管理器分类，支持搜索和筛选
 
 ### 🎨 现代化可视化管理
 
@@ -118,6 +129,7 @@
 | **更新技能/插件** | ❌ 手动检查，重复操作       | ✅ 自动检测，批量更新                       |
 | **同步到工具**    | ❌ 手动复制到各工具目录     | ✅ 一键同步到 Claude Code / Codex / Antigravity / OpenCode，支持批量操作 |
 | **卸载技能**      | ❌ 手动删除，担心残留       | ✅ 一键卸载，确认弹窗，自动清理             |
+| **CLI 工具管理**  | ❌ 逐个检查各包管理器       | ✅ 自动发现，统一管理，批量更新             |
 
 ---
 

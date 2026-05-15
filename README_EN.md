@@ -6,7 +6,7 @@
 
 ### Making Claude Code Skills Management as Simple and Secure as an App Store
 
-[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
+[![Version](https://img.shields.io/badge/version-1.1.4-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 
@@ -28,7 +28,7 @@ When enjoying Claude Code's AI-assisted programming, do you face these frustrati
 
 <div align="center">
 
-**🎯 Core value in three seconds: Visual management + Security scanning + Featured repositories**
+**🎯 Core value in three seconds: Visual management + Security scanning + Featured repositories + CLI tool management**
 
 [⭐ Download Now](https://github.com/bruc3van/agent-skills-guard/releases)
 
@@ -36,7 +36,7 @@ When enjoying Claude Code's AI-assisted programming, do you face these frustrati
 
 ---
 
-## 🌟 Four Core Features
+## 🌟 Five Core Features
 
 ### 🔄 Full Lifecycle Management
 
@@ -70,6 +70,17 @@ Built-in manually curated quality skills repository, syncs with Claude plugin ma
 - 🌟 **Featured plugin marketplace**: New "Featured Marketplace" tab, supports online refresh and caching
 - 🔄 **Auto refresh**: Silent update on startup, keep latest
 - ➕ **Custom repositories**: Support adding any GitHub repository
+
+### 💻 Local CLI Tool Management
+
+Automatically discover and manage command-line tools installed via package managers, all in one place.
+
+- 🔍 **Auto Discovery**: Scan CLI tools installed via npm, pnpm, pip, Homebrew, Scoop, Chocolatey
+- 🔄 **Update Check**: One-click check for updates across all CLI tools, with batch update support
+- 📦 **Smart Merge**: Auto-merge tools from the same Homebrew formula / Scoop package to reduce noise
+- 🗑️ **Uninstall**: Uninstall CLI tools directly from the interface
+- 📂 **Folder Browse**: Quickly open tool installation directories
+- 🏷️ **Categorized View**: Organized by package manager, with search and filtering
 
 ### 🎨 Modern Visual Management
 
@@ -106,6 +117,7 @@ No GUI required, perfect for developers who prefer working in the terminal.
 | **Update skills/plugins**   | ❌ Manual check, repetitive           | ✅ Auto detect, batch update                            |
 | **Sync to tools**           | ❌ Manually copy to tool directories  | ✅ One-click sync to Claude Code / Codex / Antigravity / OpenCode, batch operations |
 | **Uninstall skills**        | ❌ Manual delete, worried leftovers   | ✅ One-click uninstall, confirmation dialog, auto cleanup |
+| **CLI tool management**     | ❌ Check each package manager one by one | ✅ Auto discover, unified management, batch update    |
 
 ---
 

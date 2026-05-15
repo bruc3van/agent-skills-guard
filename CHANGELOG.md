@@ -5,6 +5,43 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.4] - 2026-05-15
+
+### ✨ 新增功能
+
+- **本地 CLI 工具管理** - 全新「CLI 管理」页面，自动发现并管理通过包管理器安装的命令行工具。
+  - 支持 npm、pnpm、pip、Homebrew、Scoop、Chocolatey 六大主流包管理器，跨平台覆盖 macOS 与 Windows。
+  - 按包管理器分类展示，支持搜索、筛选，仅显示可更新工具。
+  - 一键检查更新，支持逐个或批量更新 CLI 工具。
+  - 支持卸载和打开安装目录，方便管理工具生命周期。
+  - 工具描述自动获取，逐条加载并显示进度。
+- **包管理器智能合并** - 同一 Homebrew formula 下的多个二进制文件自动合并为一条（如 ffmpeg 从 40+ 条合并为 1 条）；Scoop 与 Chocolatey 同步支持按包合并，大幅减少列表噪音。
+- **pip 依赖图分析** - 读取所有 METADATA 的 `Requires-Dist` 构建反向依赖图，仅展示不被其他包依赖的 leaf package，避免展示大量库内部脚本。
+- **Homebrew 降噪** - 只保留被链接到全局 `bin` 目录的二进制，过滤掉 formula 内部测试与开发脚本。
+- **CLI 工具卸载与目录浏览** - 支持从界面直接卸载 CLI 工具，或打开其安装目录查看文件。
+
+### 🔧 优化改进
+
+- **CLI 扫描性能** - 批量调用 `brew list --versions` 和 `brew desc` 减少子进程数量；预构建 HashMap 索引消除 O(N*M) 复杂度；数据库无变化时跳过写入。
+- **版本比较增强** - 去除 Homebrew `_N` 修订后缀避免误报可更新；优化版本比较逻辑，更新缓存处理更可靠。
+- **子进程健壮性** - CLI 扫描子进程增加 15 秒超时；用 `LazyLock` 替换为每次调用重新计算 Scoop/Choco 映射，修复重新扫描失效问题。
+- **国际化改进** - 将硬编码的中文错误上下文替换为稳定的错误码，提升多语言一致性。
+
+### 🐛 问题修复
+
+- 修复 NPM/yarn 更新成功却显示失败的两个根因。
+- 修复 Homebrew 更新中「已是最新」误报失败、spinner 输出洪水、超时不足三个问题。
+- 修复 `check_updates` 结果回写时使用了错误的索引字段。
+- 修复更新成功后 `latest_version` 和 `last_checked` 未保留的问题。
+- 修复非 UTF-8 路径导致扫描器收到空字符串的问题，改为跳过并输出警告。
+- 为 `scan_directory` 新增 API 调用预算（200 次），防止耗尽速率限制。
+- 将阻塞 I/O 包裹到 `spawn_blocking`，避免饿死 tokio 运行时。
+- 使用 `staging_path` 字段替代污染 `local_path` 的 `__cache__:` 前缀方案。
+- 校验用户安装路径与工具 skills 目录的交叉引用，防止自引用。
+- `copy_dir_fallback` 跳过文件符号链接，防止路径穿越。
+- `download_file` 新增 2 MiB 响应大小限制，防止 OOM。
+- 处理 installing 锁的 Mutex 中毒，防止级联 panic。
+
 ## [1.1.3] - 2026-05-09
 
 ### 🔎 近期更新概览
