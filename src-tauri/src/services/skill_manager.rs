@@ -127,6 +127,32 @@ fn path_is_inside_dir_resolving_links(path: &Path, dir: &Path) -> bool {
     }
 }
 
+fn path_is_same_or_inside_dir(path: &Path, dir: &Path) -> bool {
+    let normalized_path = normalize_path_for_compare(path);
+    let normalized_dir = normalize_path_for_compare(dir);
+
+    normalized_path == normalized_dir
+        || normalized_path.starts_with(&format!("{}/", normalized_dir))
+}
+
+fn install_base_conflicting_tool(install_base_dir: &Path) -> Option<AgentTool> {
+    for tool in AgentTool::all() {
+        if tool == AgentTool::Agents {
+            continue;
+        }
+
+        let Some(tool_skills_dir) = tool.default_skills_dir() else {
+            continue;
+        };
+
+        if path_is_same_or_inside_dir(install_base_dir, &tool_skills_dir) {
+            return Some(tool);
+        }
+    }
+
+    None
+}
+
 fn find_tool_id_for_scan_dir(
     scan_dir: &Path,
     dir_to_tool: &HashMap<PathBuf, String>,
@@ -856,19 +882,14 @@ impl SkillManager {
         // 确定最终安装路径
         let install_base_dir = if let Some(user_path) = &install_path {
             let user_dir = PathBuf::from(user_path);
-            // 校验：用户路径不能指向任何工具的 skills 目录（会导致自引用）
-            for tool in AgentTool::all() {
-                if let Some(tool_skills_dir) = tool.default_skills_dir() {
-                    if normalize_path_for_compare(&user_dir) == normalize_path_for_compare(&tool_skills_dir)
-                        || user_dir.starts_with(&tool_skills_dir)
-                    {
-                        anyhow::bail!(
-                            "INSTALL_PATH_CONFLICT: 安装路径 {:?} 与工具 '{}' 的技能目录冲突",
-                            user_dir,
-                            tool.id()
-                        );
-                    }
-                }
+            // 校验：用户路径不能指向工具自己的 skills 目录（会导致自引用）。
+            // ~/.agents/skills 是统一源目录，允许作为安装基准路径。
+            if let Some(tool) = install_base_conflicting_tool(&user_dir) {
+                anyhow::bail!(
+                    "INSTALL_PATH_CONFLICT: 安装路径 {:?} 与工具 '{}' 的技能目录冲突",
+                    user_dir,
+                    tool.id()
+                );
             }
             user_dir
         } else {
@@ -2809,10 +2830,12 @@ fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 mod tests {
     use super::{
         build_local_skill_id, build_synced_tool_state, find_tool_id_for_scan_dir,
-        paths_point_to_same_location, refresh_existing_tool_links_for_skill,
+        install_base_conflicting_tool, paths_point_to_same_location,
+        refresh_existing_tool_links_for_skill,
         resolve_update_install_paths, resolve_update_target_install_dir,
         restore_installation_backup, tool_skill_path_is_compatible_with_source, ToolSkillDir,
     };
+    use crate::services::agent_tools::AgentTool;
     use crate::services::{link_fs, Database};
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -2843,6 +2866,28 @@ mod tests {
 
         assert!(linked_tools.is_empty());
         assert_eq!(local_paths, vec!["/tmp/.agents/skills/example".to_string()]);
+    }
+
+    #[test]
+    fn install_base_conflict_allows_unified_agents_dir() {
+        let agents_dir = AgentTool::Agents.default_skills_dir().unwrap();
+
+        assert_eq!(install_base_conflicting_tool(&agents_dir), None);
+    }
+
+    #[test]
+    fn install_base_conflict_rejects_non_agents_tool_dirs() {
+        let codex_dir = AgentTool::Codex.default_skills_dir().unwrap();
+        let codex_child = codex_dir.join("nested");
+
+        assert_eq!(
+            install_base_conflicting_tool(&codex_dir),
+            Some(AgentTool::Codex)
+        );
+        assert_eq!(
+            install_base_conflicting_tool(&codex_child),
+            Some(AgentTool::Codex)
+        );
     }
 
     #[test]
