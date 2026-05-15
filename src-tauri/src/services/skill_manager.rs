@@ -2,6 +2,7 @@ use crate::models::{Skill, LOCAL_REPOSITORY_URL};
 use crate::security::{ScanOptions, SecurityScanner};
 use crate::services::agent_tools::AgentTool;
 use crate::services::link_fs;
+use crate::services::migration::{MigrationManager, SkillAdoptionSummary, ToolSkillDir};
 use crate::services::{Database, GitHubService};
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -153,6 +154,18 @@ fn default_tool_dirs() -> Vec<(PathBuf, String)> {
         .filter_map(|tool| {
             tool.default_skills_dir()
                 .map(|dir| (dir, tool.id().to_string()))
+        })
+        .collect()
+}
+
+fn default_tool_skill_dirs() -> Vec<ToolSkillDir> {
+    AgentTool::all()
+        .into_iter()
+        .filter_map(|tool| {
+            tool.default_skills_dir().map(|path| ToolSkillDir {
+                tool_id: tool.id().to_string(),
+                path,
+            })
         })
         .collect()
 }
@@ -1396,9 +1409,26 @@ impl SkillManager {
         Ok(refreshed_count)
     }
 
+    fn adopt_existing_skills_for_scan(
+        &self,
+        tool_dirs: &[ToolSkillDir],
+    ) -> Result<SkillAdoptionSummary> {
+        MigrationManager::new(Arc::clone(&self.db)).adopt_existing_skills_from_dirs(tool_dirs)
+    }
+
     /// 扫描所有工具 skill 目录，导入未追踪的技能；通过 realpath 去重，避免链接和源重复导入
     pub fn scan_local_skills(&self) -> Result<Vec<Skill>> {
         use std::collections::HashSet;
+
+        let adoption_summary = self.adopt_existing_skills_for_scan(&default_tool_skill_dirs())?;
+        if adoption_summary.discovered > 0 {
+            log::info!(
+                "Manual scan adopted existing skills before scanning: discovered={}, created={}, updated={}",
+                adoption_summary.discovered,
+                adoption_summary.created,
+                adoption_summary.updated
+            );
+        }
 
         // 所有扫描到的技能
         let mut scanned_skills = Vec::new();
@@ -2767,7 +2797,7 @@ mod tests {
         build_local_skill_id, build_synced_tool_state, find_tool_id_for_scan_dir,
         paths_point_to_same_location, refresh_existing_tool_links_for_skill,
         resolve_update_install_paths, resolve_update_target_install_dir,
-        restore_installation_backup, tool_skill_path_is_compatible_with_source,
+        restore_installation_backup, tool_skill_path_is_compatible_with_source, ToolSkillDir,
     };
     use crate::services::{link_fs, Database};
     use std::collections::HashMap;
@@ -3013,6 +3043,50 @@ mod tests {
         assert_eq!(refreshed.local_path.as_deref(), Some(codex_path.as_str()));
         assert_eq!(refreshed.local_paths.as_deref(), Some(&[codex_path][..]));
         assert!(refreshed.linked_tools.contains(&"codex".to_string()));
+    }
+
+    #[test]
+    fn manual_scan_adopts_existing_tool_links_before_scanning() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let agents_dir = temp.path().join(".agents").join("skills");
+        let claude_dir = temp.path().join(".claude").join("skills");
+        let agents_skill = agents_dir.join("frontend-design");
+        let claude_skill = claude_dir.join("frontend-design");
+        std::fs::create_dir_all(&agents_skill).unwrap();
+        std::fs::write(
+            agents_skill.join("SKILL.md"),
+            "---\nname: frontend-design\ndescription: Shared skill\n---\n",
+        )
+        .unwrap();
+        link_fs::create_dir_link(&agents_skill, &claude_skill).unwrap();
+
+        manager
+            .adopt_existing_skills_for_scan(&[
+                ToolSkillDir {
+                    tool_id: "agents".to_string(),
+                    path: agents_dir.clone(),
+                },
+                ToolSkillDir {
+                    tool_id: "claude-code".to_string(),
+                    path: claude_dir.clone(),
+                },
+            ])
+            .unwrap();
+
+        let skills = db.get_skills().unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(
+            skills[0].source_path.as_deref(),
+            Some(agents_skill.to_string_lossy().as_ref())
+        );
+        assert!(skills[0]
+            .local_paths
+            .as_ref()
+            .unwrap()
+            .contains(&claude_skill.to_string_lossy().to_string()));
+        assert_eq!(skills[0].linked_tools, vec!["claude-code".to_string()]);
     }
 
     #[test]
