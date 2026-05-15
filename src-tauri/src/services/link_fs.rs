@@ -175,9 +175,9 @@ fn copy_dir_fallback(source: &Path, dst: &Path) -> Result<()> {
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
         let ft = entry.file_type()?;
-        // 跳过 Junction / symlink，防止循环递归
-        if is_dir_link(&src_path) {
-            log::warn!("copy_dir_fallback: 跳过链接 {:?}", src_path);
+        // 跳过 Junction / symlink / 文件符号链接，防止循环递归和路径遍历
+        if is_dir_link(&src_path) || ft.is_symlink() {
+            log::warn!("copy_dir_fallback: 跳过链接/符号链接 {:?}", src_path);
             continue;
         }
         if ft.is_dir() {
