@@ -149,6 +149,25 @@ impl SecurityScanner {
             .unwrap_or(false)
     }
 
+    fn is_static_raster_asset_ext(ext: Option<&str>) -> bool {
+        matches!(
+            ext,
+            Some("avif")
+                | Some("bmp")
+                | Some("gif")
+                | Some("heic")
+                | Some("heif")
+                | Some("icns")
+                | Some("ico")
+                | Some("jpeg")
+                | Some("jpg")
+                | Some("png")
+                | Some("tif")
+                | Some("tiff")
+                | Some("webp")
+        )
+    }
+
     fn supports_backslash_continuation(ext: Option<&str>) -> bool {
         Self::is_shell_ext(ext) || matches!(ext, Some("yaml") | Some("yml") | Some("dockerfile"))
     }
@@ -753,6 +772,12 @@ impl SecurityScanner {
             let file_path = entry.path();
             let rel = file_path.strip_prefix(path).unwrap_or(file_path);
             let rel_str = rel.to_string_lossy().to_string();
+            let file_ext = Self::normalized_extension(&rel_str);
+
+            if Self::is_static_raster_asset_ext(file_ext.as_deref()) {
+                log::debug!("Skipping static raster asset: {:?}", file_path);
+                continue;
+            }
 
             if options.skip_readme {
                 if let Some(file_name) = entry.file_name().to_str() {
@@ -841,7 +866,6 @@ impl SecurityScanner {
             }
 
             let content = content.unwrap_or_else(|| String::from_utf8_lossy(&buf).into_owned());
-            let file_ext = Self::normalized_extension(&rel_str);
             scanned_files.push(rel_str.clone());
             files_scanned += 1;
             let is_skill_md = Self::is_skill_md(&rel_str);
@@ -1687,6 +1711,39 @@ eval(user_input)
                 .any(|p| p.contains("script.ps1")),
             "Should include UTF-16 file in scanned files, got: {:?}",
             report.scanned_files
+        );
+    }
+
+    #[test]
+    fn test_static_binary_assets_do_not_make_scan_partial() {
+        let scanner = SecurityScanner::new();
+        let dir = tempdir().expect("tempdir");
+        let asset_dir = dir.path().join("assets/screenshot-backgrounds/style-a");
+        std::fs::create_dir_all(&asset_dir).expect("create asset dir");
+        std::fs::write(
+            dir.path().join("SKILL.md"),
+            "# Safe skill\n\nUses static screenshot backgrounds.\n",
+        )
+        .expect("write SKILL.md");
+        std::fs::write(
+            asset_dir.join("indigo-porcelain.webp"),
+            [0x52, 0x49, 0x46, 0x46, 0x00],
+        )
+        .expect("write webp asset");
+
+        let report = scanner
+            .scan_directory(dir.path().to_str().unwrap(), "skill-test", "en")
+            .unwrap();
+
+        assert!(
+            !report.partial_scan,
+            "Static .webp assets should not make the scan partial: {:?}",
+            report.skipped_files
+        );
+        assert!(
+            report.skipped_files.is_empty(),
+            "Static .webp assets should not be listed as skipped: {:?}",
+            report.skipped_files
         );
     }
 

@@ -89,6 +89,129 @@ interface RepositoriesPageProps {
   onNavigateToMarket?: (options?: { marketplaceName?: string }) => void;
 }
 
+type RepositoryPreview = {
+  repoName: string;
+  repoUrl: string;
+  skills: Skill[];
+};
+
+interface RepositoryPreviewDialogProps {
+  preview: RepositoryPreview | null;
+  preparingSkillId: string | null;
+  installingSkillId: string | null;
+  onClose: () => void;
+  onNavigateToMarket?: (options?: { marketplaceName?: string }) => void;
+  onPrepareSkillInstall: (skill: Skill) => void | Promise<void>;
+}
+
+export function RepositoryPreviewDialog({
+  preview,
+  preparingSkillId,
+  installingSkillId,
+  onClose,
+  onNavigateToMarket,
+  onPrepareSkillInstall,
+}: RepositoryPreviewDialogProps) {
+  const { t } = useTranslation();
+
+  return (
+    <AlertDialog open={preview !== null} onOpenChange={(open) => !open && onClose()}>
+      <AlertDialogContent className="max-w-3xl max-h-[85vh] !flex !flex-col !gap-0 !overflow-hidden !p-0">
+        <AlertDialogHeader
+          data-testid="repository-preview-header"
+          className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-border/60"
+        >
+          <AlertDialogTitle>
+            {t("repositories.preview.title", { name: preview?.repoName || "" })}
+          </AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-4">
+              <div className="text-sm text-muted-foreground break-all">{preview?.repoUrl}</div>
+
+              <div className="p-3 rounded-lg bg-muted/40 border border-border/60">
+                <div className="text-sm font-medium mb-2">
+                  {t("repositories.preview.foundTitle")}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {t("repositories.preview.foundSummary", {
+                    skills: preview?.skills.length || 0,
+                  })}
+                </div>
+              </div>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        <div
+          data-testid="repository-preview-scroll-area"
+          className="flex-1 min-h-0 overflow-y-auto px-6 py-4"
+        >
+          <div className="space-y-2">
+            {(preview?.skills || []).map((skill) => (
+              <div
+                key={skill.id}
+                className="flex items-center justify-between gap-3 p-3 rounded-xl bg-card border border-border/60"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600">
+                      {t("skills.badge")}
+                    </span>
+                    <span className="font-medium text-foreground truncate">{skill.name}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1 overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]">
+                    {skill.description || t("skills.noDescription")}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => onPrepareSkillInstall(skill)}
+                  disabled={
+                    skill.installed || preparingSkillId !== null || installingSkillId !== null
+                  }
+                  className="apple-button-primary h-8 px-3 text-xs flex items-center gap-1.5 disabled:opacity-50 flex-shrink-0"
+                >
+                  {skill.installed ? (
+                    t("market.installed")
+                  ) : preparingSkillId === skill.id ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      {t("skills.scanning")}
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-3.5 h-3.5" />
+                      {t("skills.install")}
+                    </>
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <AlertDialogFooter
+          data-testid="repository-preview-footer"
+          className="flex-shrink-0 border-t border-border/60 px-6 py-4"
+        >
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onNavigateToMarket?.();
+            }}
+            disabled={!onNavigateToMarket}
+            className="apple-button-secondary disabled:opacity-50"
+          >
+            {t("repositories.preview.goToMarket")}
+          </button>
+          <AlertDialogCancel>{t("repositories.preview.close")}</AlertDialogCancel>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -113,11 +236,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
   const addFormRef = useRef<HTMLDivElement | null>(null);
   const urlInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [preview, setPreview] = useState<{
-    repoName: string;
-    repoUrl: string;
-    skills: Skill[];
-  } | null>(null);
+  const [preview, setPreview] = useState<RepositoryPreview | null>(null);
 
   const [pendingSkillInstall, setPendingSkillInstall] = useState<{
     skill: Skill;
@@ -879,89 +998,16 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
           </div>
         ))}
 
-      <AlertDialog open={preview !== null} onOpenChange={(open) => !open && setPreview(null)}>
-        <AlertDialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t("repositories.preview.title", { name: preview?.repoName || "" })}
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-4">
-                <div className="text-sm text-muted-foreground break-all">{preview?.repoUrl}</div>
-
-                <div className="p-3 rounded-lg bg-muted/40 border border-border/60">
-                  <div className="text-sm font-medium mb-2">
-                    {t("repositories.preview.foundTitle")}
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    {t("repositories.preview.foundSummary", {
-                      skills: preview?.skills.length || 0,
-                    })}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  {(preview?.skills || []).map((skill) => (
-                    <div
-                      key={skill.id}
-                      className="flex items-center justify-between gap-3 p-3 rounded-xl bg-card border border-border/60"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600">
-                            {t("skills.badge")}
-                          </span>
-                          <span className="font-medium text-foreground truncate">{skill.name}</span>
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-1 overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]">
-                          {skill.description || t("skills.noDescription")}
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => prepareSkillInstall(skill)}
-                        disabled={
-                          skill.installed || preparingSkillId !== null || installingSkillId !== null
-                        }
-                        className="apple-button-primary h-8 px-3 text-xs flex items-center gap-1.5 disabled:opacity-50 flex-shrink-0"
-                      >
-                        {skill.installed ? (
-                          t("market.installed")
-                        ) : preparingSkillId === skill.id ? (
-                          <>
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            {t("skills.scanning")}
-                          </>
-                        ) : (
-                          <>
-                            <Download className="w-3.5 h-3.5" />
-                            {t("skills.install")}
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-
-          <AlertDialogFooter>
-            <button
-              type="button"
-              onClick={() => {
-                setPreview(null);
-                onNavigateToMarket?.();
-              }}
-              disabled={!onNavigateToMarket}
-              className="apple-button-secondary disabled:opacity-50"
-            >
-              {t("repositories.preview.goToMarket")}
-            </button>
-            <AlertDialogCancel>{t("repositories.preview.close")}</AlertDialogCancel>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <RepositoryPreviewDialog
+        preview={preview}
+        preparingSkillId={preparingSkillId}
+        installingSkillId={installingSkillId}
+        onClose={() => setPreview(null)}
+        onNavigateToMarket={onNavigateToMarket}
+        onPrepareSkillInstall={(skill) => {
+          void prepareSkillInstall(skill);
+        }}
+      />
 
       <SkillInstallConfirmDialog
         open={pendingSkillInstall !== null}
@@ -1121,19 +1167,26 @@ function SkillInstallConfirmDialog({
           <InstallPathSelector onSelect={setSelectedPath} />
           {agentTools.filter((t) => t.id !== "agents").length > 0 && (
             <div>
-              <p className="text-xs text-muted-foreground mb-2 font-medium">同时同步到其他编程工具（可选）</p>
+              <p className="text-xs text-muted-foreground mb-2 font-medium">
+                同时同步到其他编程工具（可选）
+              </p>
               <div className="flex flex-wrap gap-2">
-                {agentTools.filter((t) => t.id !== "agents").map((tool) => (
-                  <label key={tool.id} className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={selectedTools.has(tool.id)}
-                      onChange={() => toggleTool(tool.id)}
-                      className="accent-primary"
-                    />
-                    {tool.label}
-                  </label>
-                ))}
+                {agentTools
+                  .filter((t) => t.id !== "agents")
+                  .map((tool) => (
+                    <label
+                      key={tool.id}
+                      className="flex items-center gap-1.5 text-xs cursor-pointer select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedTools.has(tool.id)}
+                        onChange={() => toggleTool(tool.id)}
+                        className="accent-primary"
+                      />
+                      {tool.label}
+                    </label>
+                  ))}
               </div>
             </div>
           )}
