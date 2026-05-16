@@ -5,7 +5,7 @@
 # 本文件包含为 Agent Skills Guard 用户推荐的精选 Marketplace 与插件。
 
 version: "1.0"
-last_updated: "2026-03-17"
+last_updated: "2026-05-17"
 
 marketplace:
   - id: "official"
