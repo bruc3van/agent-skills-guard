@@ -683,9 +683,7 @@ export function InstalledSkillsPage() {
     if (failed === 0 && skipped === 0) {
       appToast.success(t("installed.updatesFocus.bulkAllSuccess", { success }));
     } else if (failed === 0) {
-      appToast.success(
-        t("installed.updatesFocus.bulkSummary", { success, skipped, failed })
-      );
+      appToast.success(t("installed.updatesFocus.bulkSummary", { success, skipped, failed }));
       appToast.info(t("installed.updatesFocus.bulkSkippedHint", { count: skipped }));
     } else {
       const summary =
@@ -1143,9 +1141,7 @@ export function InstalledSkillsPage() {
       if (errors.length === 0) {
         appToast.success(t("skills.toast.uninstalled"));
       } else {
-        appToast.error(
-          `${t("skills.toast.uninstallFailed")}: ${errors.join("; ")}`
-        );
+        appToast.error(`${t("skills.toast.uninstallFailed")}: ${errors.join("; ")}`);
       }
     } finally {
       setInstalledOps((prev) => ({ ...prev, uninstallingSkillId: null }));
@@ -1178,7 +1174,9 @@ export function InstalledSkillsPage() {
             {
               onSuccess: () => appToast.success(t("skills.toast.uninstalled")),
               onError: (error: any) =>
-                appToast.error(`${t("skills.toast.uninstallFailed")}: ${translateError(error?.message || String(error))}`),
+                appToast.error(
+                  `${t("skills.toast.uninstallFailed")}: ${translateError(error?.message || String(error))}`
+                ),
             }
           );
         }}
@@ -1190,7 +1188,9 @@ export function InstalledSkillsPage() {
             setPendingUpdate({ skill, report, conflicts });
           } catch (error: any) {
             setPreparingUpdateSkillId(null);
-            appToast.error(`${t("skills.toast.updateFailed")}: ${translateError(error?.message || String(error))}`);
+            appToast.error(
+              `${t("skills.toast.updateFailed")}: ${translateError(error?.message || String(error))}`
+            );
           }
         }}
         onToggleTool={async (toolId: string, active: boolean) => {
@@ -1275,7 +1275,9 @@ export function InstalledSkillsPage() {
             appToast.error(t("plugins.toast.uninstallFailed"));
           }
         } catch (error: any) {
-          appToast.error(`${t("plugins.toast.uninstallFailed")}: ${translateError(error?.message || String(error))}`);
+          appToast.error(
+            `${t("plugins.toast.uninstallFailed")}: ${translateError(error?.message || String(error))}`
+          );
         } finally {
           setInstalledOps((prev) => ({ ...prev, uninstallingPluginId: null }));
         }
@@ -1732,7 +1734,9 @@ export function InstalledSkillsPage() {
               });
               appToast.success(t("skills.toast.updateSuccess"));
             } catch (error: any) {
-              appToast.error(`${t("skills.toast.updateFailed")}: ${translateError(error?.message || String(error))}`);
+              appToast.error(
+                `${t("skills.toast.updateFailed")}: ${translateError(error?.message || String(error))}`
+              );
             } finally {
               setConfirmingUpdateSkillId(null);
             }
@@ -1751,51 +1755,55 @@ export function InstalledSkillsPage() {
           if (!open) setPendingSkillPluginUpgrade(null);
         }}
       >
-        <AlertDialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <AlertDialogHeader>
+        <AlertDialogContent className="max-w-2xl max-h-[80vh] !flex !flex-col !gap-0 !overflow-hidden !p-0">
+          <AlertDialogHeader className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-border/60">
             <AlertDialogTitle>{t("skills.installedPage.upgradeDialog.title")}</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-4 pb-4">
-                <div className="text-sm text-muted-foreground">
-                  {t("skills.installedPage.upgradeDialog.description")}
-                </div>
-
-                {pendingSkillPluginUpgrade && (
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <span className="text-blue-500 font-medium">
-                        {t("skills.installedPage.upgradeDialog.plugin")}
-                      </span>{" "}
-                      {pendingSkillPluginUpgrade.plugin_id}
-                      {pendingSkillPluginUpgrade.latest_version
-                        ? ` (${pendingSkillPluginUpgrade.latest_version})`
-                        : ""}
-                    </div>
-
-                    {pendingSkillPluginUpgrade.marketplace_repo && (
-                      <div>
-                        <span className="text-blue-500 font-medium">
-                          {t("skills.installedPage.upgradeDialog.marketplaceRepo")}
-                        </span>{" "}
-                        {pendingSkillPluginUpgrade.marketplace_repo}
-                      </div>
-                    )}
-
-                    <div className="mt-3">
-                      <div className="text-blue-500 font-medium mb-2">
-                        {t("skills.installedPage.upgradeDialog.commands")}
-                      </div>
-                      <div className="font-mono text-xs whitespace-pre-wrap p-3 bg-secondary/50 rounded-xl border border-border/60">
-                        {pluginUpgradeCommands}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+            <AlertDialogDescription className="sr-only">
+              {t("skills.installedPage.upgradeDialog.description")}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          <AlertDialogFooter>
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+            <div className="space-y-4">
+              <div className="text-sm text-muted-foreground">
+                {t("skills.installedPage.upgradeDialog.description")}
+              </div>
+
+              {pendingSkillPluginUpgrade && (
+                <div className="space-y-2 text-sm">
+                  <div>
+                    <span className="text-blue-500 font-medium">
+                      {t("skills.installedPage.upgradeDialog.plugin")}
+                    </span>{" "}
+                    {pendingSkillPluginUpgrade.plugin_id}
+                    {pendingSkillPluginUpgrade.latest_version
+                      ? ` (${pendingSkillPluginUpgrade.latest_version})`
+                      : ""}
+                  </div>
+
+                  {pendingSkillPluginUpgrade.marketplace_repo && (
+                    <div>
+                      <span className="text-blue-500 font-medium">
+                        {t("skills.installedPage.upgradeDialog.marketplaceRepo")}
+                      </span>{" "}
+                      {pendingSkillPluginUpgrade.marketplace_repo}
+                    </div>
+                  )}
+
+                  <div className="mt-3">
+                    <div className="text-blue-500 font-medium mb-2">
+                      {t("skills.installedPage.upgradeDialog.commands")}
+                    </div>
+                    <div className="font-mono text-xs whitespace-pre-wrap p-3 bg-secondary/50 rounded-xl border border-border/60">
+                      {pluginUpgradeCommands}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <AlertDialogFooter className="flex-shrink-0 border-t border-border/60 px-6 py-4">
             <AlertDialogCancel onClick={() => setPendingSkillPluginUpgrade(null)}>
               {t("skills.marketplace.install.cancel")}
             </AlertDialogCancel>
@@ -1829,42 +1837,49 @@ export function InstalledSkillsPage() {
           }
         }}
       >
-        <AlertDialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <AlertDialogHeader>
+        <AlertDialogContent className="max-w-2xl max-h-[80vh] !flex !flex-col !gap-0 !overflow-hidden !p-0">
+          <AlertDialogHeader className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-border/60">
             <AlertDialogTitle>{t("plugins.confirmRemoveTitle")}</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-3">
-                <div>
-                  {t("plugins.confirmRemoveMessage", {
-                    name: pendingMarketplaceRemove?.marketplaceName || "",
-                    count: pendingMarketplaceRemove?.installedPluginNames.length || 0,
-                  })}
-                </div>
-
-                {(pendingMarketplaceRemove?.installedPluginNames.length || 0) > 0 && (
-                  <div className="p-3 rounded-lg bg-muted/40 border border-border/60">
-                    <div className="text-sm font-medium mb-2">
-                      {t("installed.marketplaces.dependentPlugins")}
-                    </div>
-                    <ul className="text-sm text-muted-foreground space-y-1 max-h-52 overflow-y-auto">
-                      {pendingMarketplaceRemove?.installedPluginNames.slice(0, 30).map((name) => (
-                        <li key={name}>- {name}</li>
-                      ))}
-                      {(pendingMarketplaceRemove?.installedPluginNames.length || 0) > 30 && (
-                        <li className="text-xs">
-                          {t("installed.marketplaces.andMore", {
-                            count:
-                              (pendingMarketplaceRemove?.installedPluginNames.length || 0) - 30,
-                          })}
-                        </li>
-                      )}
-                    </ul>
-                  </div>
-                )}
-              </div>
+            <AlertDialogDescription className="sr-only">
+              {t("plugins.confirmRemoveMessage", {
+                name: pendingMarketplaceRemove?.marketplaceName || "",
+                count: pendingMarketplaceRemove?.installedPluginNames.length || 0,
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
+
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+            <div className="space-y-3">
+              <div>
+                {t("plugins.confirmRemoveMessage", {
+                  name: pendingMarketplaceRemove?.marketplaceName || "",
+                  count: pendingMarketplaceRemove?.installedPluginNames.length || 0,
+                })}
+              </div>
+
+              {(pendingMarketplaceRemove?.installedPluginNames.length || 0) > 0 && (
+                <div className="p-3 rounded-lg bg-muted/40 border border-border/60">
+                  <div className="text-sm font-medium mb-2">
+                    {t("installed.marketplaces.dependentPlugins")}
+                  </div>
+                  <ul className="text-sm text-muted-foreground space-y-1 max-h-52 overflow-y-auto">
+                    {pendingMarketplaceRemove?.installedPluginNames.slice(0, 30).map((name) => (
+                      <li key={name}>- {name}</li>
+                    ))}
+                    {(pendingMarketplaceRemove?.installedPluginNames.length || 0) > 30 && (
+                      <li className="text-xs">
+                        {t("installed.marketplaces.andMore", {
+                          count: (pendingMarketplaceRemove?.installedPluginNames.length || 0) - 30,
+                        })}
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <AlertDialogFooter className="flex-shrink-0 border-t border-border/60 px-6 py-4">
             <AlertDialogCancel disabled={removingMarketplaceName !== null}>
               {t("skills.cancel")}
             </AlertDialogCancel>
@@ -2506,7 +2521,7 @@ function UpdateConfirmDialog({
       preparingLabel={t("skills.installedPage.preparingUpdate")}
       report={report}
       issuePreviewCount={5}
-      contentClassName="max-w-2xl max-h-[80vh] overflow-y-auto"
+      contentClassName="max-w-2xl max-h-[80vh]"
       leadContent={
         <>
           <div className="rounded-lg bg-primary/10 p-3">

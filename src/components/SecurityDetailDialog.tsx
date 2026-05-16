@@ -1,6 +1,7 @@
 import {
   AlertDialog,
   AlertDialogContent,
+  AlertDialogDescription,
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogFooter,
@@ -75,8 +76,11 @@ export function SecurityDetailDialog({ result, open, onClose }: SecurityDetailDi
 
   return (
     <AlertDialog open={open} onOpenChange={onClose}>
-      <AlertDialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-        <AlertDialogHeader>
+      <AlertDialogContent className="max-w-3xl max-h-[80vh] !flex !flex-col !gap-0 !overflow-hidden !p-0">
+        <AlertDialogHeader
+          data-testid="security-detail-header"
+          className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-border/60"
+        >
           <AlertDialogTitle className="flex items-center gap-3">
             <Shield className="w-6 h-6 text-primary" />
             <div>
@@ -86,121 +90,134 @@ export function SecurityDetailDialog({ result, open, onClose }: SecurityDetailDi
               </div>
             </div>
           </AlertDialogTitle>
+          <AlertDialogDescription className="sr-only">
+            {t("security.detail.securityScore")} {result.score}, {result.level}
+          </AlertDialogDescription>
         </AlertDialogHeader>
 
-        {/* 总体评分 */}
-        <div className="flex items-center justify-between p-6 bg-muted/30 rounded-lg border border-border">
-          <div>
-            <div className="text-sm text-muted-foreground mb-1">
-              {t("security.detail.securityScore")}
-            </div>
-            <div
-              className={`text-5xl font-bold ${
-                result.score >= 90
-                  ? "text-success"
-                  : result.score >= 70
-                    ? "text-warning"
-                    : result.score >= 50
-                      ? "text-orange-500"
-                      : "text-destructive"
-              }`}
-            >
-              {result.score}
-            </div>
-          </div>
-          <div>
-            <span
-              className={`px-4 py-2 rounded-lg text-lg font-medium border ${
-                result.level === "Safe"
-                  ? "bg-success/10 text-success border-success/30"
-                  : result.level === "Low"
-                    ? "bg-primary/10 text-primary border-primary/30"
-                    : result.level === "Medium"
-                      ? "bg-warning/10 text-warning border-warning/30"
-                      : result.level === "High"
-                        ? "bg-orange-500/10 text-orange-500 border-orange-500/30"
-                        : "bg-destructive/10 text-destructive border-destructive/30"
-              }`}
-            >
-              {result.level}
-            </span>
-          </div>
-        </div>
-
-        {showPartial && (
-          <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg text-sm">
-            <div className="font-medium">{t("security.detail.partialScan")}</div>
-            {skippedCount > 0 && (
-              <div className="text-muted-foreground mt-1">
-                {t("security.detail.skippedFiles", { count: skippedCount })}
-                {skippedPreview && (
-                  <div className="mt-1">
-                    {t("security.detail.skippedExamples", { files: skippedPreview })}
-                  </div>
-                )}
+        <div
+          data-testid="security-detail-scroll-area"
+          className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4"
+        >
+          {/* 总体评分 */}
+          <div className="flex items-center justify-between p-6 bg-muted/30 rounded-lg border border-border">
+            <div>
+              <div className="text-sm text-muted-foreground mb-1">
+                {t("security.detail.securityScore")}
               </div>
+              <div
+                className={`text-5xl font-bold ${
+                  result.score >= 90
+                    ? "text-success"
+                    : result.score >= 70
+                      ? "text-warning"
+                      : result.score >= 50
+                        ? "text-orange-500"
+                        : "text-destructive"
+                }`}
+              >
+                {result.score}
+              </div>
+            </div>
+            <div>
+              <span
+                className={`px-4 py-2 rounded-lg text-lg font-medium border ${
+                  result.level === "Safe"
+                    ? "bg-success/10 text-success border-success/30"
+                    : result.level === "Low"
+                      ? "bg-primary/10 text-primary border-primary/30"
+                      : result.level === "Medium"
+                        ? "bg-warning/10 text-warning border-warning/30"
+                        : result.level === "High"
+                          ? "bg-orange-500/10 text-orange-500 border-orange-500/30"
+                          : "bg-destructive/10 text-destructive border-destructive/30"
+                }`}
+              >
+                {result.level}
+              </span>
+            </div>
+          </div>
+
+          {showPartial && (
+            <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg text-sm">
+              <div className="font-medium">{t("security.detail.partialScan")}</div>
+              {skippedCount > 0 && (
+                <div className="text-muted-foreground mt-1">
+                  {t("security.detail.skippedFiles", { count: skippedCount })}
+                  {skippedPreview && (
+                    <div className="mt-1">
+                      {t("security.detail.skippedExamples", { files: skippedPreview })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 问题列表 */}
+          <div className="space-y-4">
+            {criticalIssues.length > 0 && (
+              <IssueSection
+                title={t("security.detail.issues.critical")}
+                icon={<AlertTriangle className="w-5 h-5 text-destructive" />}
+                issues={criticalIssues}
+                color="red"
+              />
+            )}
+
+            {highIssues.length > 0 && (
+              <IssueSection
+                title={t("security.detail.issues.high")}
+                icon={<AlertTriangle className="w-5 h-5 text-orange-500" />}
+                issues={highIssues}
+                color="orange"
+                defaultCollapsed
+              />
+            )}
+
+            {mediumIssues.length > 0 && (
+              <IssueSection
+                title={t("security.detail.issues.medium")}
+                icon={<Info className="w-5 h-5 text-warning" />}
+                issues={mediumIssues}
+                color="yellow"
+                defaultCollapsed
+              />
+            )}
+
+            {lowIssues.length > 0 && (
+              <IssueSection
+                title={t("security.detail.issues.low")}
+                icon={<Info className="w-5 h-5 text-primary" />}
+                issues={lowIssues}
+                color="blue"
+                defaultCollapsed
+              />
             )}
           </div>
-        )}
 
-        {/* 问题列表 */}
-        <div className="space-y-4">
-          {criticalIssues.length > 0 && (
-            <IssueSection
-              title={t("security.detail.issues.critical")}
-              icon={<AlertTriangle className="w-5 h-5 text-destructive" />}
-              issues={criticalIssues}
-              color="red"
-            />
-          )}
-
-          {highIssues.length > 0 && (
-            <IssueSection
-              title={t("security.detail.issues.high")}
-              icon={<AlertTriangle className="w-5 h-5 text-orange-500" />}
-              issues={highIssues}
-              color="orange"
-              defaultCollapsed
-            />
-          )}
-
-          {mediumIssues.length > 0 && (
-            <IssueSection
-              title={t("security.detail.issues.medium")}
-              icon={<Info className="w-5 h-5 text-warning" />}
-              issues={mediumIssues}
-              color="yellow"
-              defaultCollapsed
-            />
-          )}
-
-          {lowIssues.length > 0 && (
-            <IssueSection
-              title={t("security.detail.issues.low")}
-              icon={<Info className="w-5 h-5 text-primary" />}
-              issues={lowIssues}
-              color="blue"
-              defaultCollapsed
-            />
+          {/* 建议区域 */}
+          {report.recommendations.length > 0 && (
+            <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg">
+              <div className="text-sm font-medium mb-2">
+                {t("security.detail.recommendations")}：
+              </div>
+              <ul className="space-y-1 text-sm">
+                {report.recommendations.map((rec, idx) => (
+                  <li key={idx} className="flex items-start gap-2">
+                    <span className="text-warning">▸</span>
+                    <span>{rec}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
 
-        {/* 建议区域 */}
-        {report.recommendations.length > 0 && (
-          <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg">
-            <div className="text-sm font-medium mb-2">{t("security.detail.recommendations")}：</div>
-            <ul className="space-y-1 text-sm">
-              {report.recommendations.map((rec, idx) => (
-                <li key={idx} className="flex items-start gap-2">
-                  <span className="text-warning">▸</span>
-                  <span>{rec}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <AlertDialogFooter>
+        <AlertDialogFooter
+          data-testid="security-detail-footer"
+          className="flex-shrink-0 border-t border-border/60 px-6 py-4"
+        >
           <AlertDialogCancel onClick={onClose}>{t("security.detail.close")}</AlertDialogCancel>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -306,7 +323,10 @@ function IssueSection({
                 </summary>
                 <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
                   {group.items.map((item, idx) => (
-                    <div key={`${group.key}-${idx}`} className="p-2 bg-muted/50 rounded border border-border/70">
+                    <div
+                      key={`${group.key}-${idx}`}
+                      className="p-2 bg-muted/50 rounded border border-border/70"
+                    >
                       {typeof item.line_number === "number" && (
                         <div className="text-xs text-muted-foreground mb-1">
                           {t("security.detail.lineNumber")}：{item.line_number}

@@ -1161,7 +1161,7 @@ function SkillInstallConfirmDialog({
       preparingLabel={t("skills.marketplace.install.preparingInstall")}
       report={report}
       issuePreviewCount={3}
-      contentClassName="max-w-2xl max-h-[80vh] overflow-y-auto"
+      contentClassName="max-w-2xl max-h-[80vh]"
       extraContent={
         <div className="border-t border-border py-4 space-y-4">
           <InstallPathSelector onSelect={setSelectedPath} />

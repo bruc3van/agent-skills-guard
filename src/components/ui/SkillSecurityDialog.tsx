@@ -52,7 +52,10 @@ export function SkillSecurityDialog({
     () => (report ? countIssuesBySeverity(report.issues) : { critical: 0, error: 0, warning: 0 }),
     [report]
   );
-  const groupedIssues = useMemo(() => (report ? groupIssuesBySignature(report.issues) : []), [report]);
+  const groupedIssues = useMemo(
+    () => (report ? groupIssuesBySignature(report.issues) : []),
+    [report]
+  );
   const previewGroups = useMemo(
     () => groupedIssues.slice(0, issuePreviewCount),
     [groupedIssues, issuePreviewCount]
@@ -61,21 +64,39 @@ export function SkillSecurityDialog({
   if (!report) {
     return (
       <AlertDialog open={open} onOpenChange={onOpenChange}>
-        <AlertDialogContent className={contentClassName}>
-          <AlertDialogHeader>
+        <AlertDialogContent
+          className={`${contentClassName || ""} !flex !flex-col !gap-0 !overflow-hidden !p-0`}
+        >
+          <AlertDialogHeader
+            data-testid="skill-security-header"
+            className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-border/60"
+          >
             <AlertDialogTitle className="flex items-center gap-2">
               <Loader2 className="w-5 h-5 animate-spin" />
               {title}
             </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-4 pb-4">
-                <div>
-                  {preparingLabel}: <span className="font-semibold">{skillName}</span>
-                </div>
-              </div>
+            <AlertDialogDescription className="sr-only">
+              {preparingLabel}: {skillName}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>{footer}</AlertDialogFooter>
+
+          <div
+            data-testid="skill-security-scroll-area"
+            className="flex-1 min-h-0 overflow-y-auto px-6 py-4"
+          >
+            <div className="space-y-4">
+              <div>
+                {preparingLabel}: <span className="font-semibold">{skillName}</span>
+              </div>
+            </div>
+          </div>
+
+          <AlertDialogFooter
+            data-testid="skill-security-footer"
+            className="flex-shrink-0 border-t border-border/60 px-6 py-4"
+          >
+            {footer}
+          </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     );
@@ -83,8 +104,13 @@ export function SkillSecurityDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent className={contentClassName}>
-        <AlertDialogHeader>
+      <AlertDialogContent
+        className={`${contentClassName || ""} !flex !flex-col !gap-0 !overflow-hidden !p-0`}
+      >
+        <AlertDialogHeader
+          data-testid="skill-security-header"
+          className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-border/60"
+        >
           <AlertDialogTitle className="flex items-center gap-2">
             {isHighRisk ? (
               <XCircle className="w-5 h-5 text-destructive" />
@@ -95,169 +121,184 @@ export function SkillSecurityDialog({
             )}
             {title}
           </AlertDialogTitle>
-          <AlertDialogDescription asChild>
-            <div className="space-y-4 pb-4">
-              <div>
-                {preparingLabel}: <span className="font-semibold">{skillName}</span>
-              </div>
+          <AlertDialogDescription className="sr-only">
+            {preparingLabel}: {skillName}. {t("skills.marketplace.install.securityScore")}:{" "}
+            {report.score}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
 
-              <div className="flex items-center justify-between rounded-lg bg-muted/50 p-4">
-                <span className="text-sm">{t("skills.marketplace.install.securityScore")}:</span>
-                <span
-                  className={`text-2xl font-semibold ${
-                    report.score >= 70
-                      ? "text-success"
-                      : report.score >= 50
-                        ? "text-warning"
-                        : "text-destructive"
-                  }`}
-                >
-                  {report.score}
-                </span>
-              </div>
+        <div
+          data-testid="skill-security-scroll-area"
+          className="flex-1 min-h-0 overflow-y-auto px-6 py-4"
+        >
+          <div className="space-y-4">
+            <div>
+              {preparingLabel}: <span className="font-semibold">{skillName}</span>
+            </div>
 
-              {leadContent}
+            <div className="flex items-center justify-between rounded-lg bg-muted/50 p-4">
+              <span className="text-sm">{t("skills.marketplace.install.securityScore")}:</span>
+              <span
+                className={`text-2xl font-semibold ${
+                  report.score >= 70
+                    ? "text-success"
+                    : report.score >= 50
+                      ? "text-warning"
+                      : "text-destructive"
+                }`}
+              >
+                {report.score}
+              </span>
+            </div>
 
-              {hasPartialScan && (
-                <div className="rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm">
-                  <div className="mb-1 font-medium text-warning">
-                    {t("skills.marketplace.install.partialScanTitle")}
+            {leadContent}
+
+            {hasPartialScan && (
+              <div className="rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm">
+                <div className="mb-1 font-medium text-warning">
+                  {t("skills.marketplace.install.partialScanTitle")}
+                </div>
+                <div className="text-muted-foreground">
+                  {t("skills.marketplace.install.partialScanDescription")}
+                </div>
+                <ul className="mt-3 space-y-1 text-xs text-warning">
+                  {skippedPreview.length > 0 ? (
+                    skippedPreview.map((file, index) => <li key={`${file}-${index}`}>• {file}</li>)
+                  ) : (
+                    <li>• {t("skills.marketplace.install.partialScanUnknown")}</li>
+                  )}
+                </ul>
+                {skippedFiles.length > skippedPreview.length && (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    ...{" "}
+                    {t("skills.installedPage.andMore", {
+                      count: skippedFiles.length - skippedPreview.length,
+                    })}
                   </div>
-                  <div className="text-muted-foreground">
-                    {t("skills.marketplace.install.partialScanDescription")}
-                  </div>
-                  <ul className="mt-3 space-y-1 text-xs text-warning">
-                    {skippedPreview.length > 0 ? (
-                      skippedPreview.map((file, index) => <li key={`${file}-${index}`}>• {file}</li>)
+                )}
+              </div>
+            )}
+
+            {report.issues.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-sm font-medium">
+                  {t("skills.marketplace.install.issuesDetected")}:
+                </div>
+                <div className="flex gap-4 text-sm">
+                  {issueCounts.critical > 0 && (
+                    <span className="text-destructive">
+                      {t("skills.marketplace.install.critical")}: {issueCounts.critical}
+                    </span>
+                  )}
+                  {issueCounts.error > 0 && (
+                    <span className="text-warning">
+                      {t("skills.marketplace.install.highRisk")}: {issueCounts.error}
+                    </span>
+                  )}
+                  {issueCounts.warning > 0 && (
+                    <span className="text-warning">
+                      {t("skills.marketplace.install.mediumRisk")}: {issueCounts.warning}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {report.issues.length > 0 && (
+              <div
+                className={`rounded-lg p-3 ${
+                  isHighRisk
+                    ? "border border-destructive/30 bg-destructive/10"
+                    : isMediumRisk
+                      ? "border border-warning/30 bg-warning/10"
+                      : "border border-success/30 bg-success/10"
+                }`}
+              >
+                <div className="space-y-2 text-sm">
+                  {previewGroups.map((group) =>
+                    group.items.length === 1 ? (
+                      <div key={group.key} className="text-xs">
+                        {group.summary.file_path && (
+                          <span className="mr-1.5 text-primary">[{group.summary.file_path}]</span>
+                        )}
+                        {group.summary.description}
+                        {typeof group.summary.line_number === "number" && (
+                          <span className="ml-2 text-muted-foreground">
+                            ({t("security.detail.lineNumber")} {group.summary.line_number})
+                          </span>
+                        )}
+                      </div>
                     ) : (
-                      <li>• {t("skills.marketplace.install.partialScanUnknown")}</li>
-                    )}
-                  </ul>
-                  {skippedFiles.length > skippedPreview.length && (
-                    <div className="mt-2 text-xs text-muted-foreground">
+                      <details key={group.key} className="text-xs">
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
+                          <span className="min-w-0 truncate">
+                            {group.summary.file_path && (
+                              <span className="mr-1.5 text-primary">
+                                [{group.summary.file_path}]
+                              </span>
+                            )}
+                            {group.summary.description}
+                          </span>
+                          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
+                            {group.items.length}
+                          </span>
+                        </summary>
+                        <ul className="mt-2 space-y-1 border-l border-border/60 pl-3">
+                          {group.items.map((item, itemIdx) => (
+                            <li key={`${group.key}-${itemIdx}`} className="text-muted-foreground">
+                              <span className="mr-1">#{itemIdx + 1}</span>
+                              {typeof item.line_number === "number" && (
+                                <span className="mr-1">
+                                  ({t("security.detail.lineNumber")} {item.line_number})
+                                </span>
+                              )}
+                              {item.code_snippet && (
+                                <code className="font-mono text-[11px]">{item.code_snippet}</code>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )
+                  )}
+                  {groupedIssues.length > previewGroups.length && (
+                    <div className="text-xs text-muted-foreground">
                       ...{" "}
                       {t("skills.installedPage.andMore", {
-                        count: skippedFiles.length - skippedPreview.length,
+                        count: groupedIssues.length - previewGroups.length,
                       })}
                     </div>
                   )}
                 </div>
-              )}
+              </div>
+            )}
 
-              {report.issues.length > 0 && (
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">
-                    {t("skills.marketplace.install.issuesDetected")}:
-                  </div>
-                  <div className="flex gap-4 text-sm">
-                    {issueCounts.critical > 0 && (
-                      <span className="text-destructive">
-                        {t("skills.marketplace.install.critical")}: {issueCounts.critical}
-                      </span>
-                    )}
-                    {issueCounts.error > 0 && (
-                      <span className="text-warning">
-                        {t("skills.marketplace.install.highRisk")}: {issueCounts.error}
-                      </span>
-                    )}
-                    {issueCounts.warning > 0 && (
-                      <span className="text-warning">
-                        {t("skills.marketplace.install.mediumRisk")}: {issueCounts.warning}
-                      </span>
-                    )}
+            {isHighRisk && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-destructive" />
+                  <div>
+                    <strong className="mb-1 block">
+                      {t("skills.marketplace.install.warningTitle")}
+                    </strong>
+                    {report.blocked
+                      ? t("skills.marketplace.install.blocked")
+                      : t("skills.marketplace.install.warningMessage")}
                   </div>
                 </div>
-              )}
+              </div>
+            )}
 
-              {report.issues.length > 0 && (
-                <div
-                  className={`rounded-lg p-3 ${
-                    isHighRisk
-                      ? "border border-destructive/30 bg-destructive/10"
-                      : isMediumRisk
-                        ? "border border-warning/30 bg-warning/10"
-                        : "border border-success/30 bg-success/10"
-                  }`}
-                >
-                  <div className="space-y-2 text-sm">
-                    {previewGroups.map((group) =>
-                      group.items.length === 1 ? (
-                        <div key={group.key} className="text-xs">
-                          {group.summary.file_path && (
-                            <span className="mr-1.5 text-primary">[{group.summary.file_path}]</span>
-                          )}
-                          {group.summary.description}
-                          {typeof group.summary.line_number === "number" && (
-                            <span className="ml-2 text-muted-foreground">
-                              ({t("security.detail.lineNumber")} {group.summary.line_number})
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <details key={group.key} className="text-xs">
-                          <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
-                            <span className="min-w-0 truncate">
-                              {group.summary.file_path && (
-                                <span className="mr-1.5 text-primary">
-                                  [{group.summary.file_path}]
-                                </span>
-                              )}
-                              {group.summary.description}
-                            </span>
-                            <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
-                              {group.items.length}
-                            </span>
-                          </summary>
-                          <ul className="mt-2 space-y-1 border-l border-border/60 pl-3">
-                            {group.items.map((item, itemIdx) => (
-                              <li key={`${group.key}-${itemIdx}`} className="text-muted-foreground">
-                                <span className="mr-1">#{itemIdx + 1}</span>
-                                {typeof item.line_number === "number" && (
-                                  <span className="mr-1">({t("security.detail.lineNumber")} {item.line_number})</span>
-                                )}
-                                {item.code_snippet && (
-                                  <code className="font-mono text-[11px]">{item.code_snippet}</code>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
-                        </details>
-                      )
-                    )}
-                    {groupedIssues.length > previewGroups.length && (
-                      <div className="text-xs text-muted-foreground">
-                        ...{" "}
-                        {t("skills.installedPage.andMore", {
-                          count: groupedIssues.length - previewGroups.length,
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+            {extraContent}
+          </div>
+        </div>
 
-              {isHighRisk && (
-                <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-destructive" />
-                    <div>
-                      <strong className="mb-1 block">
-                        {t("skills.marketplace.install.warningTitle")}
-                      </strong>
-                      {report.blocked
-                        ? t("skills.marketplace.install.blocked")
-                        : t("skills.marketplace.install.warningMessage")}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {extraContent}
-            </div>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-
-        <AlertDialogFooter>{footer}</AlertDialogFooter>
+        <AlertDialogFooter
+          data-testid="skill-security-footer"
+          className="flex-shrink-0 border-t border-border/60 px-6 py-4"
+        >
+          {footer}
+        </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
   );
@@ -272,13 +313,15 @@ interface SkillSecurityDialogConfirmButtonProps {
   tone?: "primary" | "warning" | "destructive" | "success";
 }
 
-const confirmButtonClassName: Record<NonNullable<SkillSecurityDialogConfirmButtonProps["tone"]>, string> =
-  {
-    primary: "apple-button-primary",
-    warning: "bg-warning text-white hover:bg-warning/90",
-    destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-    success: "bg-success text-white hover:bg-success/90",
-  };
+const confirmButtonClassName: Record<
+  NonNullable<SkillSecurityDialogConfirmButtonProps["tone"]>,
+  string
+> = {
+  primary: "apple-button-primary",
+  warning: "bg-warning text-white hover:bg-warning/90",
+  destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+  success: "bg-success text-white hover:bg-success/90",
+};
 
 export function SkillSecurityDialogConfirmButton({
   disabled,
