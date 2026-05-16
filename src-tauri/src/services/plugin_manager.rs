@@ -43,6 +43,7 @@ enum MarketplacePluginSource {
         source: String,
         path: Option<String>,
         url: Option<String>,
+        repo: Option<String>,
     },
 }
 
@@ -54,9 +55,11 @@ impl MarketplacePluginSource {
                 source: kind,
                 path,
                 url,
+                repo,
             } => path
                 .clone()
                 .or_else(|| url.clone())
+                .or_else(|| repo.clone())
                 .unwrap_or_else(|| kind.clone()),
         }
     }
@@ -1275,7 +1278,6 @@ impl PluginManager {
         let claude_cli = ClaudeCli::new(cli_command);
 
         // 构建命令：1. marketplace add，2. 只安装选中的单个 plugin
-        let mut commands = Vec::new();
         let add_args = plugin
             .marketplace_add_command
             .as_deref()
@@ -1289,10 +1291,47 @@ impl PluginManager {
                 ]
             });
 
-        commands.push(ClaudeCommand {
+        let add_result = claude_cli.run(&[ClaudeCommand {
             args: add_args,
             timeout: Duration::from_secs(60),
-        });
+        }])?;
+
+        let marketplace_command_output = add_result.outputs.first();
+        let marketplace_output = marketplace_command_output
+            .map(|o| o.output.clone())
+            .unwrap_or_default();
+
+        let marketplace_outcome = apply_exit_success_to_outcome(
+            parse_marketplace_add_output(&marketplace_output),
+            &marketplace_output,
+            marketplace_command_output
+                .map(|o| o.exit_success)
+                .unwrap_or(add_result.exit_success),
+        );
+        let marketplace_status = if marketplace_outcome.success {
+            if marketplace_outcome.already {
+                "already_added"
+            } else {
+                "added"
+            }
+        } else {
+            "failed"
+        };
+
+        let mut raw_log = add_result.raw_log.clone();
+        if marketplace_outcome.success {
+            match rewrite_installed_marketplace_github_sources_to_https(&marketplace_name) {
+                Ok(true) => raw_log.push_str(
+                    "Rewrote marketplace GitHub plugin sources to HTTPS before plugin install.\n",
+                ),
+                Ok(false) => {}
+                Err(e) => log::warn!(
+                    "改写 marketplace GitHub source 为 HTTPS 失败: {} ({})",
+                    marketplace_name,
+                    e
+                ),
+            }
+        }
 
         let install_args = plugin
             .plugin_install_command
@@ -1307,33 +1346,27 @@ impl PluginManager {
             });
 
         // 只安装选中的单个 plugin
-        commands.push(ClaudeCommand {
+        let install_result = claude_cli.run(&[ClaudeCommand {
             args: install_args,
             timeout: Duration::from_secs(180),
-        });
-
-        let cli_result = claude_cli.run(&commands)?;
-        let mut outputs = cli_result.outputs.into_iter();
-
-        let marketplace_output = outputs.next().map(|o| o.output).unwrap_or_default();
-
-        let marketplace_outcome = parse_marketplace_add_output(&marketplace_output);
-        let marketplace_status = if marketplace_outcome.success {
-            if marketplace_outcome.already {
-                "already_added"
-            } else {
-                "added"
-            }
-        } else {
-            "failed"
-        };
+        }])?;
+        raw_log.push_str(&install_result.raw_log);
 
         let now = Utc::now();
         let mut plugin_statuses = Vec::new();
 
         // 只处理选中的单个 plugin
-        let output = outputs.next().map(|o| o.output).unwrap_or_default();
-        let outcome = parse_plugin_install_output(&output);
+        let install_command_output = install_result.outputs.first();
+        let output = install_command_output
+            .map(|o| o.output.clone())
+            .unwrap_or_default();
+        let outcome = apply_exit_success_to_outcome(
+            parse_plugin_install_output(&output),
+            &output,
+            install_command_output
+                .map(|o| o.exit_success)
+                .unwrap_or(install_result.exit_success),
+        );
         let status = if outcome.success {
             if outcome.already {
                 "already_installed"
@@ -1346,7 +1379,7 @@ impl PluginManager {
 
         let mut updated = plugin.clone();
         updated.install_status = Some(status.to_string());
-        updated.install_log = Some(cli_result.raw_log.clone());
+        updated.install_log = Some(raw_log.clone());
         updated.staging_path = None;
         if outcome.success {
             updated.installed = true;
@@ -1365,7 +1398,7 @@ impl PluginManager {
             marketplace_name,
             marketplace_repo,
             marketplace_status: marketplace_status.to_string(),
-            raw_log: cli_result.raw_log,
+            raw_log,
             plugin_statuses,
         })
     }
@@ -1648,6 +1681,21 @@ fn extract_marketplace_repo_from_command(command: &str) -> Option<String> {
         return Some(parts[3].clone());
     }
     None
+}
+
+fn apply_exit_success_to_outcome(
+    outcome: CommandOutcome,
+    output: &str,
+    exit_success: bool,
+) -> CommandOutcome {
+    if outcome.success || !exit_success || output_contains_failure_signal(output) {
+        return outcome;
+    }
+
+    CommandOutcome {
+        success: true,
+        already: outcome.already,
+    }
 }
 
 fn marketplace_repo_url(entry: &ClaudeMarketplaceListEntry) -> Option<String> {
@@ -2078,6 +2126,46 @@ noise after json..."#;
         assert!(outcome.success);
         assert!(!outcome.already);
     }
+
+    #[test]
+    fn parse_plugin_install_output_accepts_mangled_claude_success_line() {
+        let output = r#"Installing plugin "planning-with-files@planning-with-files"...
+✔ Successfuly staled plugn: planning-with-files@planning-with-files(scope:user)"#;
+
+        let outcome = parse_plugin_install_output(output);
+
+        assert!(outcome.success);
+        assert!(!outcome.already);
+    }
+
+    #[test]
+    fn rewrite_marketplace_manifest_converts_github_source_to_https_url() {
+        let input = r#"{
+          "name": "addy-agent-skills",
+          "plugins": [
+            {
+              "name": "agent-skills",
+              "source": {
+                "source": "github",
+                "repo": "addyosmani/agent-skills"
+              }
+            }
+          ]
+        }"#;
+
+        let rewritten = rewrite_marketplace_github_sources_to_https(input)
+            .unwrap()
+            .expect("expected github source to be rewritten");
+        let value: serde_json::Value = serde_json::from_str(&rewritten).unwrap();
+        let source = &value["plugins"][0]["source"];
+
+        assert_eq!(source["source"], "url");
+        assert_eq!(
+            source["url"],
+            "https://github.com/addyosmani/agent-skills.git"
+        );
+        assert!(source.get("repo").is_none());
+    }
 }
 
 fn parse_marketplace_list_text(output: &str) -> Vec<ClaudeMarketplace> {
@@ -2245,6 +2333,20 @@ fn parse_marketplace_add_output(output: &str) -> CommandOutcome {
     }
 }
 
+fn output_contains_failure_signal(output: &str) -> bool {
+    let text = strip_terminal_escapes(output).to_lowercase();
+    text.contains("error")
+        || text.contains("failed")
+        || text.contains("failure")
+        || text.contains("unable to")
+        || text.contains("could not")
+        || text.contains("permission denied")
+        || text.contains("fatal:")
+        || text.contains("unsupported interactive prompt")
+        || text.contains("not installed")
+        || text.contains("not found")
+}
+
 fn parse_plugin_install_output(output: &str) -> CommandOutcome {
     let text = strip_terminal_escapes(output).to_lowercase();
 
@@ -2265,12 +2367,17 @@ fn parse_plugin_install_output(output: &str) -> CommandOutcome {
         && (text.contains("installed plugin")
             || text.contains("stalled plugin")
             || text.contains("plugin:"));
+    let mangled_success_line = text.contains('✔')
+        && text.contains("success")
+        && text.contains('@')
+        && (text.contains("scope:") || text.contains("(scope"));
 
     // 检查成功情况（排除错误和否定情况）
     let success = !has_error
         && !not_installed
         && (already
         || success_plugin_line
+        || mangled_success_line
         || text.contains("successfully installed")
         || text.contains("installation complete")
         || text.contains("install success")
@@ -2345,8 +2452,118 @@ fn parse_marketplace_remove_output(output: &str) -> CommandOutcome {
     }
 }
 
+fn rewrite_installed_marketplace_github_sources_to_https(marketplace_name: &str) -> Result<bool> {
+    let Some(install_location) = default_marketplace_install_location(marketplace_name) else {
+        return Ok(false);
+    };
+
+    rewrite_marketplace_manifest_file_github_sources_to_https(Path::new(&install_location))
+}
+
+fn rewrite_marketplace_manifest_file_github_sources_to_https(repo_root: &Path) -> Result<bool> {
+    let manifest_path = marketplace_manifest_path(repo_root);
+    if !manifest_path.exists() {
+        return Ok(false);
+    }
+
+    let content = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("无法读取 marketplace.json: {:?}", manifest_path))?;
+    let Some(rewritten) = rewrite_marketplace_github_sources_to_https(&content)? else {
+        return Ok(false);
+    };
+
+    std::fs::write(&manifest_path, rewritten)
+        .with_context(|| format!("无法写入 marketplace.json: {:?}", manifest_path))?;
+    Ok(true)
+}
+
+fn rewrite_marketplace_github_sources_to_https(content: &str) -> Result<Option<String>> {
+    let mut value: serde_json::Value =
+        serde_json::from_str(content).context("解析 marketplace.json 失败")?;
+    let Some(plugins) = value.get_mut("plugins").and_then(|v| v.as_array_mut()) else {
+        return Ok(None);
+    };
+
+    let mut changed = false;
+    for plugin in plugins {
+        let Some(source) = plugin.get_mut("source").and_then(|v| v.as_object_mut()) else {
+            continue;
+        };
+        let is_github_source = source
+            .get("source")
+            .and_then(|v| v.as_str())
+            .map(|value| value.eq_ignore_ascii_case("github"))
+            .unwrap_or(false);
+        if !is_github_source {
+            continue;
+        }
+
+        let repo = source
+            .get("repo")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let Some(url) = github_repo_to_https_url(repo) else {
+            continue;
+        };
+
+        source.insert(
+            "source".to_string(),
+            serde_json::Value::String("url".to_string()),
+        );
+        source.insert("url".to_string(), serde_json::Value::String(url));
+        source.remove("repo");
+        changed = true;
+    }
+
+    if changed {
+        serde_json::to_string_pretty(&value)
+            .map(Some)
+            .context("序列化 marketplace.json 失败")
+    } else {
+        Ok(None)
+    }
+}
+
+fn github_repo_to_https_url(repo: &str) -> Option<String> {
+    let repo = repo.trim().trim_end_matches('/');
+    if repo.is_empty() {
+        return None;
+    }
+
+    if repo.starts_with("https://") || repo.starts_with("http://") {
+        return Some(ensure_git_suffix(repo));
+    }
+
+    if let Some(path) = repo.strip_prefix("git@github.com:") {
+        let path = path.trim_end_matches(".git");
+        if path.contains('/') {
+            return Some(format!("https://github.com/{}.git", path));
+        }
+        return None;
+    }
+
+    if repo.contains('/') {
+        let path = repo.trim_end_matches(".git");
+        return Some(format!("https://github.com/{}.git", path));
+    }
+
+    None
+}
+
+fn ensure_git_suffix(url: &str) -> String {
+    if url.ends_with(".git") {
+        url.to_string()
+    } else {
+        format!("{}.git", url)
+    }
+}
+
+fn marketplace_manifest_path(repo_root: &Path) -> PathBuf {
+    repo_root.join(".claude-plugin").join("marketplace.json")
+}
+
 fn read_marketplace_manifest(repo_root: &Path) -> Result<Option<MarketplaceManifest>> {
-    let manifest_path = repo_root.join(".claude-plugin").join("marketplace.json");
+    let manifest_path = marketplace_manifest_path(repo_root);
     if !manifest_path.exists() {
         return Ok(None);
     }
