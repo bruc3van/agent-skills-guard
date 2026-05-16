@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   RefreshCw,
   Loader2,
@@ -15,6 +16,7 @@ import {
   useCheckLocalCliUpdates,
   useUpdateLocalCliTool,
   useUninstallLocalCliTool,
+  LOCAL_CLI_QUERY_KEY,
 } from "../hooks/useLocalCli";
 import { managerLabel } from "../lib/local-cli";
 import { useTranslation } from "react-i18next";
@@ -22,6 +24,7 @@ import { PageBusyNotice } from "./ui/PageBusyNotice";
 import type { LocalCliTool } from "../types";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
+import { formatFailurePreview } from "../lib/utils";
 import { SkillUninstallConfirmDialog } from "./SkillUninstallConfirmDialog";
 
 type ManagerTab = "all" | string;
@@ -29,7 +32,7 @@ type ManagerTab = "all" | string;
 const VISIBLE_MANAGERS = ["npm", "pnpm", "pip", "brew", "scoop", "choco", "unknown"];
 
 export function LocalCliPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { data: tools = [], isLoading, refetch } = useLocalCliTools();
   const { mutate: rescanTools, isPending: isRescanning } = useRescanLocalCliTools();
   const { mutate: checkUpdates, isPending: isChecking } = useCheckLocalCliUpdates();
@@ -43,12 +46,17 @@ export function LocalCliPage() {
     isPending: isUninstalling,
     variables: uninstallingTool,
   } = useUninstallLocalCliTool();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<ManagerTab>("all");
   const [showUpdatesOnly, setShowUpdatesOnly] = useState(false);
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const [pendingUninstall, setPendingUninstall] = useState<LocalCliTool | null>(null);
+  const [bulkUpdateProgress, setBulkUpdateProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
 
   // Description cache: detected_path -> description
   const [descriptionMap, setDescriptionMap] = useState<Record<string, string>>({});
@@ -222,6 +230,49 @@ export function LocalCliPage() {
     updateTool(tool);
   };
 
+  const handleBulkUpdate = async () => {
+    if (bulkUpdateProgress || isChecking || isRescanning || isUpdating || isUninstalling) return;
+    const targets = tools.filter((tool) => tool.update_available);
+    const total = targets.length;
+    if (total === 0) return;
+
+    let done = 0;
+    let success = 0;
+    const failures: string[] = [];
+    setBulkUpdateProgress({ done, total });
+
+    for (const tool of targets) {
+      try {
+        await api.updateLocalCliTool(tool.detected_path);
+        success += 1;
+        queryClient.setQueryData(LOCAL_CLI_QUERY_KEY, (old: LocalCliTool[] | undefined) => {
+          if (!old) return old;
+          return old.map((t) =>
+            t.detected_path === tool.detected_path
+              ? { ...t, update_available: false, update_status: "success" }
+              : t
+          );
+        });
+      } catch {
+        failures.push(tool.id);
+      }
+      done += 1;
+      setBulkUpdateProgress({ done, total });
+    }
+
+    await queryClient.invalidateQueries({ queryKey: LOCAL_CLI_QUERY_KEY });
+    setBulkUpdateProgress(null);
+
+    const failed = failures.length;
+    if (failed === 0) {
+      appToast.success(t("localCli.updatesFocus.bulkAllSuccess", { success }));
+    } else {
+      const summary = t("localCli.updatesFocus.bulkSummary", { success, failed });
+      const names = formatFailurePreview(failures, i18n.language);
+      appToast.error(`${summary} · ${t("localCli.updatesFocus.bulkFailedItems", { names })}`);
+    }
+  };
+
   const handleOpenFolder = async (tool: LocalCliTool) => {
     try {
       await api.openLocalCliFolder(tool.detected_path);
@@ -371,15 +422,41 @@ export function LocalCliPage() {
                       </button>
                     );
                   })}
-                <button
-                  type="button"
-                  onClick={() => setShowUpdatesOnly((v) => !v)}
-                  className="ml-auto h-8 rounded-full border border-border bg-card px-3 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  {showUpdatesOnly
-                    ? t("localCli.updatesFocus.showAll")
-                    : t("localCli.updatesFocus.showOnly")}
-                </button>
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleBulkUpdate}
+                    disabled={
+                      bulkUpdateProgress !== null ||
+                      isChecking ||
+                      isRescanning ||
+                      isUpdating ||
+                      isUninstalling
+                    }
+                    className="h-8 rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                  >
+                    {bulkUpdateProgress ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        {t("localCli.updatesFocus.bulkUpdating", {
+                          done: bulkUpdateProgress.done,
+                          total: bulkUpdateProgress.total,
+                        })}
+                      </>
+                    ) : (
+                      t("localCli.updatesFocus.bulkUpdate")
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowUpdatesOnly((v) => !v)}
+                    className="h-8 rounded-full border border-border bg-card px-3 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    {showUpdatesOnly
+                      ? t("localCli.updatesFocus.showAll")
+                      : t("localCli.updatesFocus.showOnly")}
+                  </button>
+                </div>
               </div>
             )}
 
@@ -423,7 +500,7 @@ export function LocalCliPage() {
                   isUninstalling={
                     isUninstalling && uninstallingTool?.detected_path === tool.detected_path
                   }
-                  isAnyOperationPending={isUpdating || isChecking || isUninstalling}
+                  isAnyOperationPending={isUpdating || isChecking || isUninstalling || bulkUpdateProgress !== null}
                 />
               ))}
             </div>

@@ -102,7 +102,14 @@
       "plugins": "插件 {{count}}",
       "marketplaces": "市场 {{count}}",
       "showOnly": "仅看可更新",
-      "showAll": "查看全部"
+      "showAll": "查看全部",
+      "bulkUpdate": "一键更新",
+      "bulkUpdating": "更新中 {{done}}/{{total}}",
+      "bulkSummary": "一键更新完成：成功 {{success}}，跳过 {{skipped}}，失败 {{failed}}",
+      "bulkSummaryNoSkip": "一键更新完成：成功 {{success}}，失败 {{failed}}",
+      "bulkAllSuccess": "一键更新完成：{{success}} 项已全部更新",
+      "bulkSkippedHint": "跳过 {{count}} 个有安全风险或冲突的技能，请手动处理",
+      "bulkFailedItems": "失败：{{names}}"
     },
     "busy": {
       "checkUpdates": "正在检查已安装内容的状态...",
@@ -741,7 +748,12 @@
     "updatesFocus": {
       "title": "{{count}} 个工具可更新",
       "showOnly": "仅显示可更新",
-      "showAll": "显示全部"
+      "showAll": "显示全部",
+      "bulkUpdate": "一键更新",
+      "bulkUpdating": "更新中 {{done}}/{{total}}",
+      "bulkAllSuccess": "一键更新完成：{{success}} 项已全部更新",
+      "bulkSummary": "一键更新完成：成功 {{success}}，失败 {{failed}}",
+      "bulkFailedItems": "失败：{{names}}"
     },
     "empty": {
       "noResults": "没有找到「{{query}}」相关的工具",

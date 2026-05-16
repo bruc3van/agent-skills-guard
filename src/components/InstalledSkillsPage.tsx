@@ -23,7 +23,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { formatRepositoryTag } from "../lib/utils";
+import { formatRepositoryTag, formatFailurePreview } from "../lib/utils";
 import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -224,6 +224,10 @@ export function InstalledSkillsPage() {
   const [isCheckingMarketplaceUpdates, setIsCheckingMarketplaceUpdates] = useState(false);
   const [updatingMarketplaceName, setUpdatingMarketplaceName] = useState<string | null>(null);
   const [isCheckingAllUpdates, setIsCheckingAllUpdates] = useState(false);
+  const [bulkUpdateProgress, setBulkUpdateProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
 
   const getLocalizedText = (text?: { en: string; zh: string }) => {
     if (!text) return "";
@@ -565,6 +569,134 @@ export function InstalledSkillsPage() {
       );
     } finally {
       setUpdatingMarketplaceName(null);
+    }
+  };
+
+  const bulkUpdateAll = async () => {
+    if (bulkUpdateProgress) return;
+
+    const marketplaceTargets = Array.from(availableMarketplaceUpdates.keys());
+    const pluginTargets = Array.from(availablePluginUpdates.keys());
+    const skillTargets = Array.from(availableUpdates.keys());
+    const total = marketplaceTargets.length + pluginTargets.length + skillTargets.length;
+    if (total === 0) return;
+
+    let done = 0;
+    let success = 0;
+    let skipped = 0;
+    const failures: string[] = [];
+
+    setBulkUpdateProgress({ done, total });
+
+    const advance = () => {
+      done += 1;
+      setBulkUpdateProgress({ done, total });
+    };
+
+    const pluginById = new Map(allPlugins.map((p) => [p.id, p]));
+    const skillById = new Map(normalizedInstalledSkills.map((s) => [s.id, s]));
+
+    for (const name of marketplaceTargets) {
+      try {
+        const result = await api.updateMarketplace(name);
+        if (result.success) {
+          success += 1;
+          setAvailableMarketplaceUpdates((prev) => {
+            const next = new Map(prev);
+            next.delete(name);
+            return next;
+          });
+        } else {
+          failures.push(name);
+        }
+      } catch {
+        failures.push(name);
+      }
+      advance();
+    }
+
+    for (const pluginId of pluginTargets) {
+      const displayName = pluginById.get(pluginId)?.name ?? pluginId;
+      try {
+        const result = await api.updatePlugin(pluginId);
+        if (result.status === "updated" || result.status === "already_latest") {
+          success += 1;
+          setAvailablePluginUpdates((prev) => {
+            const next = new Map(prev);
+            next.delete(pluginId);
+            return next;
+          });
+        } else {
+          failures.push(displayName);
+        }
+      } catch {
+        failures.push(displayName);
+      }
+      advance();
+    }
+
+    // Skills: only auto-update items with no security risk and no conflicts; the rest stay marked for manual review.
+    for (const skillId of skillTargets) {
+      const displayName = skillById.get(skillId)?.name ?? skillId;
+      try {
+        const [report, conflicts] = await api.prepareSkillUpdate(skillId, i18n.language);
+        const isClean =
+          report.level === "Safe" &&
+          !report.blocked &&
+          (report.hard_trigger_issues?.length ?? 0) === 0 &&
+          !report.partial_scan &&
+          conflicts.length === 0;
+        if (isClean) {
+          try {
+            await api.confirmSkillUpdate(skillId, false, false);
+            success += 1;
+            setAvailableUpdates((prev) => {
+              const next = new Map(prev);
+              next.delete(skillId);
+              return next;
+            });
+          } catch {
+            failures.push(displayName);
+          }
+        } else {
+          // Release backend state held by prepareSkillUpdate; the update marker stays so the user can handle it manually.
+          await api.cancelSkillUpdate(skillId).catch(() => {});
+          skipped += 1;
+        }
+      } catch {
+        failures.push(displayName);
+      }
+      advance();
+    }
+
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["plugins"] }),
+      queryClient.invalidateQueries({ queryKey: ["claudeMarketplaces"] }),
+      queryClient.refetchQueries({ queryKey: ["skills"] }),
+      queryClient.refetchQueries({ queryKey: ["skills", "installed"] }),
+      queryClient.refetchQueries({ queryKey: ["scanResults"] }),
+    ]);
+
+    setBulkUpdateProgress(null);
+
+    const failed = failures.length;
+    if (failed === 0 && skipped === 0) {
+      appToast.success(t("installed.updatesFocus.bulkAllSuccess", { success }));
+    } else if (failed === 0) {
+      appToast.success(
+        t("installed.updatesFocus.bulkSummary", { success, skipped, failed })
+      );
+      appToast.info(t("installed.updatesFocus.bulkSkippedHint", { count: skipped }));
+    } else {
+      const summary =
+        skipped > 0
+          ? t("installed.updatesFocus.bulkSummary", { success, skipped, failed })
+          : t("installed.updatesFocus.bulkSummaryNoSkip", { success, failed });
+      const names = formatFailurePreview(failures, i18n.language);
+      appToast.error(`${summary} · ${t("installed.updatesFocus.bulkFailedItems", { names })}`);
+      if (skipped > 0) {
+        appToast.info(t("installed.updatesFocus.bulkSkippedHint", { count: skipped }));
+      }
     }
   };
 
@@ -1020,6 +1152,14 @@ export function InstalledSkillsPage() {
     }
   };
 
+  const baseOperationPending =
+    uninstallMutation.isPending ||
+    uninstallPathMutation.isPending ||
+    uninstallingPluginId !== null ||
+    updatingPluginId !== null ||
+    updatingMarketplaceName !== null ||
+    bulkUpdateProgress !== null;
+
   const renderSkillCard = (skill: Skill, index: number) => {
     const upgradeCandidate = skillPluginUpgradeByName.get(skill.name.toLowerCase());
     return (
@@ -1099,13 +1239,9 @@ export function InstalledSkillsPage() {
         isPreparingUpdate={preparingUpdateSkillId === skill.id}
         isApplyingUpdate={confirmingUpdateSkillId === skill.id}
         isAnyOperationPending={
-          uninstallMutation.isPending ||
-          uninstallPathMutation.isPending ||
+          baseOperationPending ||
           preparingUpdateSkillId !== null ||
           confirmingUpdateSkillId !== null ||
-          uninstallingPluginId !== null ||
-          updatingPluginId !== null ||
-          updatingMarketplaceName !== null ||
           syncSkillMutation.isPending ||
           syncAllMutation.isPending ||
           pendingToggleTarget !== null
@@ -1123,14 +1259,10 @@ export function InstalledSkillsPage() {
       isUpdating={updatingPluginId === plugin.id}
       isUninstalling={uninstallingPluginId === plugin.id}
       isAnyOperationPending={
-        uninstallMutation.isPending ||
-        uninstallPathMutation.isPending ||
+        baseOperationPending ||
         preparingUpdateSkillId !== null ||
         confirmingUpdateSkillId !== null ||
-        uninstallingPluginId !== null ||
-        removingMarketplaceName !== null ||
-        updatingPluginId !== null ||
-        updatingMarketplaceName !== null
+        removingMarketplaceName !== null
       }
       onUpdate={() => updatePlugin(plugin.id)}
       onUninstall={async () => {
@@ -1163,14 +1295,7 @@ export function InstalledSkillsPage() {
       latestHead={availableMarketplaceUpdates.get(marketplace.name)}
       isUpdating={updatingMarketplaceName === marketplace.name}
       isRemoving={removingMarketplaceName === marketplace.name}
-      isAnyOperationPending={
-        uninstallingPluginId !== null ||
-        uninstallMutation.isPending ||
-        uninstallPathMutation.isPending ||
-        removingMarketplaceName !== null ||
-        updatingPluginId !== null ||
-        updatingMarketplaceName !== null
-      }
+      isAnyOperationPending={baseOperationPending || removingMarketplaceName !== null}
       onUpdate={() => updateMarketplace(marketplace.name)}
       onRemove={() => {
         const installedPluginNames = marketplace.plugins
@@ -1403,15 +1528,45 @@ export function InstalledSkillsPage() {
                     count: updateCounts.marketplaces,
                   })}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setShowUpdatesOnly((value) => !value)}
-                  className="ml-auto h-8 rounded-full border border-border bg-card px-3 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  {showUpdatesOnly
-                    ? t("installed.updatesFocus.showAll")
-                    : t("installed.updatesFocus.showOnly")}
-                </button>
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={bulkUpdateAll}
+                    disabled={
+                      bulkUpdateProgress !== null ||
+                      isCheckingAllUpdates ||
+                      isCheckingUpdates ||
+                      isCheckingPluginUpdates ||
+                      isCheckingMarketplaceUpdates ||
+                      preparingUpdateSkillId !== null ||
+                      confirmingUpdateSkillId !== null ||
+                      updatingPluginId !== null ||
+                      updatingMarketplaceName !== null
+                    }
+                    className="h-8 rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                  >
+                    {bulkUpdateProgress ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        {t("installed.updatesFocus.bulkUpdating", {
+                          done: bulkUpdateProgress.done,
+                          total: bulkUpdateProgress.total,
+                        })}
+                      </>
+                    ) : (
+                      t("installed.updatesFocus.bulkUpdate")
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowUpdatesOnly((value) => !value)}
+                    className="h-8 rounded-full border border-border bg-card px-3 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    {showUpdatesOnly
+                      ? t("installed.updatesFocus.showAll")
+                      : t("installed.updatesFocus.showOnly")}
+                  </button>
+                </div>
               </div>
             )}
 

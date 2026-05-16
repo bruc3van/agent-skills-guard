@@ -102,7 +102,14 @@
       "plugins": "Plugins {{count}}",
       "marketplaces": "Marketplaces {{count}}",
       "showOnly": "Only updates",
-      "showAll": "Show all"
+      "showAll": "Show all",
+      "bulkUpdate": "Update all",
+      "bulkUpdating": "Updating {{done}}/{{total}}",
+      "bulkSummary": "Bulk update complete: {{success}} succeeded, {{skipped}} skipped, {{failed}} failed",
+      "bulkSummaryNoSkip": "Bulk update complete: {{success}} succeeded, {{failed}} failed",
+      "bulkAllSuccess": "Bulk update complete: all {{success}} items updated",
+      "bulkSkippedHint": "Skipped {{count}} skill(s) with security risks or conflicts — please update them manually",
+      "bulkFailedItems": "Failed: {{names}}"
     },
     "busy": {
       "checkUpdates": "Checking installed item status...",
@@ -741,7 +748,12 @@
     "updatesFocus": {
       "title": "{{count}} updates available",
       "showOnly": "Show updates only",
-      "showAll": "Show all"
+      "showAll": "Show all",
+      "bulkUpdate": "Update all",
+      "bulkUpdating": "Updating {{done}}/{{total}}",
+      "bulkAllSuccess": "Bulk update complete: all {{success}} items updated",
+      "bulkSummary": "Bulk update complete: {{success}} succeeded, {{failed}} failed",
+      "bulkFailedItems": "Failed: {{names}}"
     },
     "empty": {
       "noResults": "No tools found for \"{{query}}\"",

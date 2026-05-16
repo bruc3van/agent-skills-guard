@@ -29,3 +29,14 @@ export function getRepositoryDisplayName(owner: string): string {
   if (owner === "local") return "本地";
   return `@${owner}`;
 }
+
+/**
+ * 把失败项名单格式化为 "a, b, c and N more" / "a、b、c 等 N 项"
+ */
+export function formatFailurePreview(failures: string[], language: string): string {
+  const isZh = language === "zh" || language.startsWith("zh");
+  const sep = isZh ? "、" : ", ";
+  const preview = failures.slice(0, 3).join(sep);
+  if (failures.length <= 3) return preview;
+  return preview + (isZh ? ` 等 ${failures.length} 项` : ` and ${failures.length} more`);
+}
