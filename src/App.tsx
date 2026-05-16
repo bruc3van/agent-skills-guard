@@ -363,7 +363,7 @@ function AppContent() {
 
         {/* 右侧：更新徽章 */}
         <div className="flex items-center gap-3">
-          <UpdateBadge />
+          <UpdateBadge onOpenSettings={() => setCurrentTab("settings")} />
           {/* Windows/Linux: 右侧窗口控件 */}
           {platform !== "macos" && platform !== null && <WindowControls />}
         </div>

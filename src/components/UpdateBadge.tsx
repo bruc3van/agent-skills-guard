@@ -2,7 +2,11 @@ import { X } from "lucide-react";
 import { useUpdate } from "../contexts/UpdateContext";
 import { useTranslation } from "react-i18next";
 
-export function UpdateBadge() {
+interface UpdateBadgeProps {
+  onOpenSettings?: () => void;
+}
+
+export function UpdateBadge({ onOpenSettings }: UpdateBadgeProps) {
   const { hasUpdate, updateInfo, isDismissed, dismissUpdate } = useUpdate();
   const { t } = useTranslation();
 
@@ -12,10 +16,15 @@ export function UpdateBadge() {
 
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 border border-primary/30 rounded-md">
-      <span className="text-xs text-primary">
-        {t("update.available")}: v{updateInfo.availableVersion}
-      </span>
       <button
+        type="button"
+        onClick={onOpenSettings}
+        className="text-xs text-primary transition-colors hover:text-primary/80"
+      >
+        {t("update.available")}: v{updateInfo.availableVersion}
+      </button>
+      <button
+        type="button"
         onClick={(e) => {
           e.stopPropagation();
           dismissUpdate();
