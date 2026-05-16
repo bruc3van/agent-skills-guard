@@ -442,7 +442,7 @@
     },
     "addRepo": "ADD_REPO",
     "cancel": "CANCEL",
-    "newRepository": "NEW_REPOSITORY(It is not recommended to install plugins in this way. submit issue to apply for inclusion instead.)",
+    "newRepository": "NEW_REPOSITORY",
     "repoName": "repo_name:",
     "githubUrl": "github_url:",
     "urlHint": "Enter the full GitHub repository URL",

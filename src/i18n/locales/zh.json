@@ -442,7 +442,7 @@
     },
     "addRepo": "添加仓库",
     "cancel": "取消",
-    "newRepository": "新仓库（不建议Plugin通过此方式安装，可以通过issue提交录入申请）",
+    "newRepository": "新仓库",
     "repoName": "仓库名称：",
     "githubUrl": "GitHub 链接：",
     "urlHint": "输入完整的 GitHub 仓库链接",
