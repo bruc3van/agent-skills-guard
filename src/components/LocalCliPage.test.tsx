@@ -6,6 +6,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import type { LocalCliTool } from "../types";
 
+const toastMocks = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+}));
+
 let mockTools: LocalCliTool[] = [
   {
     id: "bruce-doc-converter",
@@ -55,6 +60,12 @@ vi.mock("../lib/api", () => ({
     uninstallLocalCliTool,
   },
 }));
+vi.mock("../lib/toast", () => ({
+  appToast: {
+    success: toastMocks.success,
+    error: toastMocks.error,
+  },
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -79,6 +90,8 @@ afterEach(() => {
   refetchLocalCliTools.mockReset();
   rescanLocalCliTools.mockReset();
   checkLocalCliUpdates.mockReset();
+  toastMocks.success.mockReset();
+  toastMocks.error.mockReset();
   isRescanning = false;
   isChecking = false;
 });
@@ -268,5 +281,19 @@ describe("LocalCliPage", () => {
     expect(
       (screen.getByRole("button", { name: "localCli.checkUpdates" }) as HTMLButtonElement).disabled
     ).toBe(true);
+  });
+
+  it("检查更新没有可更新工具时显示提示", async () => {
+    fetchLocalCliDescriptions.mockResolvedValue([]);
+    checkLocalCliUpdates.mockImplementation((_vars, options) => {
+      options?.onSuccess?.([{ ...mockTools[0], update_available: false }]);
+    });
+    const user = userEvent.setup();
+    const { LocalCliPage } = await import("./LocalCliPage");
+    render(<LocalCliPage />, { wrapper });
+
+    await user.click(screen.getByRole("button", { name: "localCli.checkUpdates" }));
+
+    expect(toastMocks.success).toHaveBeenCalledWith("localCli.noUpdates");
   });
 });

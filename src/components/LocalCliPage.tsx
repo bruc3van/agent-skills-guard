@@ -188,8 +188,21 @@ export function LocalCliPage() {
 
   const handleCheckUpdates = () => {
     checkUpdates(undefined, {
-      onSuccess: () => {
+      onSuccess: (updatedTools) => {
         void refetch();
+        const updates = updatedTools.filter((tool) => tool.update_available).length;
+        if (updates > 0) {
+          setActiveTab("all");
+          setShowUpdatesOnly(true);
+          appToast.success(t("localCli.updatesFound", { count: updates }));
+        } else {
+          setShowUpdatesOnly(false);
+          appToast.success(t("localCli.noUpdates"));
+        }
+      },
+      onError: (error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        appToast.error(t("localCli.checkUpdatesFailed", { error: message }));
       },
     });
   };
