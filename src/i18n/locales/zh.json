@@ -291,6 +291,7 @@
     },
     "toast": {
       "installed": "[成功] 技能已安装",
+      "installedWithSyncWarning": "[提示] 技能已安装，但部分工具同步失败",
       "installFailed": "[错误] 安装失败",
       "uninstalled": "[成功] 技能已卸载",
       "uninstallFailed": "[错误] 卸载失败",

@@ -47,6 +47,65 @@ fn build_synced_tool_state(
     (linked_tool_ids, paths)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ToolLinkFailure {
+    tool_id: String,
+    reason: String,
+}
+
+impl ToolLinkFailure {
+    fn new(tool_id: &str, reason: impl Into<String>) -> Self {
+        Self {
+            tool_id: tool_id.to_string(),
+            reason: reason.into(),
+        }
+    }
+}
+
+fn format_tool_link_failures(failures: &[ToolLinkFailure]) -> String {
+    failures
+        .iter()
+        .map(|failure| format!("{} ({})", failure.tool_id, failure.reason))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn create_or_reuse_tool_link(
+    source: &Path,
+    link_path: &Path,
+    tool_id: &str,
+    source_checksum: Option<&str>,
+    linked_tool_ids: &mut Vec<String>,
+    link_failures: &mut Vec<ToolLinkFailure>,
+) {
+    if link_path.exists() || link_fs::is_dir_link(link_path) {
+        if tool_skill_path_is_compatible_with_source(source, link_path, source_checksum) {
+            log::info!("复用已存在的兼容工具路径 [{:?}]", link_path);
+            push_unique_value(linked_tool_ids, tool_id.to_string());
+        } else {
+            let reason = format!("目标已存在同名但内容不同的技能: {:?}", link_path);
+            log::warn!(
+                "工具 '{}' 下已存在同名但内容不同的技能，不覆盖: {:?}",
+                tool_id,
+                link_path
+            );
+            link_failures.push(ToolLinkFailure::new(tool_id, reason));
+        }
+        return;
+    }
+
+    match link_fs::create_dir_link(source, link_path) {
+        Ok(()) => {
+            log::info!("链接创建成功 [{}]: {:?}", tool_id, link_path);
+            push_unique_value(linked_tool_ids, tool_id.to_string());
+        }
+        Err(e) => {
+            log::warn!("链接创建失败 [{}]: {}", tool_id, e);
+            link_failures.push(ToolLinkFailure::new(tool_id, e.to_string()));
+        }
+    }
+}
+
 fn build_local_skill_id(checksum: &str, local_path: &Path) -> String {
     use sha2::{Digest, Sha256};
 
@@ -933,6 +992,7 @@ impl SkillManager {
 
         // 为其他工具创建 Junction/symlink 链接
         let mut linked_tool_ids: Vec<String> = Vec::new();
+        let mut link_failures: Vec<ToolLinkFailure> = Vec::new();
         let non_agent_tools: Vec<AgentTool> = target_tools
             .iter()
             .filter_map(|id| AgentTool::from_id(id))
@@ -942,47 +1002,22 @@ impl SkillManager {
         for tool in &non_agent_tools {
             if let Some(tool_dir) = tool.default_skills_dir() {
                 let link_path = tool_dir.join(skill_dir_name.as_str());
-
-                // 兼容性检查：如果目标已存在且内容不同，不覆盖（与 sync_skill_to_tools 一致）
-                if link_path.exists() || link_fs::is_dir_link(&link_path) {
-                    if tool_skill_path_is_compatible_with_source(
-                        &final_install_dir,
-                        &link_path,
-                        None,
-                    ) {
-                        log::info!("复用已存在的兼容工具路径 [{:?}]", link_path);
-                        linked_tool_ids.push(tool.id().to_string());
-                        continue;
-                    } else {
-                        log::warn!(
-                            "工具 '{}' 下已存在同名但内容不同的技能，不覆盖: {:?}",
-                            tool.id(),
-                            link_path
-                        );
-                        continue;
-                    }
-                }
-
-                match link_fs::create_dir_link(&final_install_dir, &link_path) {
-                    Ok(()) => {
-                        log::info!("链接创建成功 [{:?}]: {:?}", tool.id(), link_path);
-                        // Don't add to linked_tool_ids if source and link are the same location
-                        if !paths_point_to_same_location(&final_install_dir, &link_path) {
-                            linked_tool_ids.push(tool.id().to_string());
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("链接创建失败 [{:?}]: {}", tool.id(), e);
-                    }
-                }
+                create_or_reuse_tool_link(
+                    &final_install_dir,
+                    &link_path,
+                    tool.id(),
+                    None,
+                    &mut linked_tool_ids,
+                    &mut link_failures,
+                );
             }
         }
 
         // 更新 local_path（向后兼容）
         skill.local_path = Some(source_path_str.clone());
 
-        // 如果用户选择了非 agents 工具但全部失败，保存源路径后返回错误让前端提示
-        // 此时源目录已创建，DB 记录已更新，用户可通过 sync_skill_to_tools 重试链接
+        // 用户选择了非 agents 工具但全部失败时，安装主体仍已完成。
+        // 保存源路径后返回部分成功错误，让前端刷新状态并提示用户稍后重试同步。
         if !non_agent_tools.is_empty() && linked_tool_ids.is_empty() {
             skill.source_path = Some(source_path_str.clone());
             skill.local_paths = Some(vec![source_path_str.clone()]);
@@ -991,11 +1026,22 @@ impl SkillManager {
             skill.installed = true;
             skill.installed_at = Some(Utc::now());
             skill.installed_commit_sha = commit_sha;
+            skill.staging_path = None;
             Self::apply_scan_report(&mut skill, &scan_report);
             self.db.save_skill(&skill)?;
+            self.invalidate_installed_cache();
+            let detail = if link_failures.is_empty() {
+                non_agent_tools
+                    .iter()
+                    .map(|tool| tool.id())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            } else {
+                format_tool_link_failures(&link_failures)
+            };
             anyhow::bail!(
-                "LINK_CREATION_ALL_FAILED: {:?}",
-                non_agent_tools.iter().map(|t| t.id()).collect::<Vec<_>>()
+                "LINK_CREATION_ALL_FAILED: {}",
+                detail
             );
         }
         skill.local_path = Some(source_path_str.clone());
@@ -2697,7 +2743,8 @@ impl SkillManager {
             .to_string();
 
         // 先创建新链接，再删除不再需要的旧链接（原子性：新链接创建失败不影响已有链接）
-        let mut sync_errors: Vec<String> = Vec::new();
+        let mut linked_tool_ids: Vec<String> = Vec::new();
+        let mut link_failures: Vec<ToolLinkFailure> = Vec::new();
         for tool_id in &target_tools {
             let tool = match AgentTool::from_id(tool_id) {
                 Some(t) if t != AgentTool::Agents => t,
@@ -2705,30 +2752,14 @@ impl SkillManager {
             };
             if let Some(tool_dir) = tool.default_skills_dir() {
                 let link = tool_dir.join(&skill_dir_name);
-                if link.exists() || link_fs::is_dir_link(&link) {
-                    if tool_skill_path_is_compatible_with_source(
-                        &source,
-                        &link,
-                        skill.checksum.as_deref(),
-                    ) {
-                        log::info!("复用已存在的兼容工具路径 [{:?}]", link);
-                    } else {
-                        let msg =
-                            format!("工具 '{}' 下已存在同名但内容不同的技能，不覆盖", tool.id());
-                        log::warn!("{}", msg);
-                        sync_errors.push(msg);
-                    }
-                    continue;
-                }
-
-                match link_fs::create_dir_link(&source, &link) {
-                    Ok(()) => {}
-                    Err(e) => {
-                        let msg = format!("创建链接到工具 '{}' 失败: {}", tool.id(), e);
-                        log::warn!("{}", msg);
-                        sync_errors.push(msg);
-                    }
-                }
+                create_or_reuse_tool_link(
+                    &source,
+                    &link,
+                    tool.id(),
+                    skill.checksum.as_deref(),
+                    &mut linked_tool_ids,
+                    &mut link_failures,
+                );
             }
         }
 
@@ -2764,10 +2795,13 @@ impl SkillManager {
 
         log::info!("Synced skill '{}' to tools: {:?}", skill.name, target_tools);
         self.invalidate_installed_cache();
-        if sync_errors.is_empty() {
+        if link_failures.is_empty() {
             Ok(())
         } else {
-            anyhow::bail!("SYNC_PARTIAL_FAILURE: {}", sync_errors.join("; "))
+            anyhow::bail!(
+                "SYNC_PARTIAL_FAILURE: {}",
+                format_tool_link_failures(&link_failures)
+            )
         }
     }
 
@@ -2829,7 +2863,8 @@ fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_local_skill_id, build_synced_tool_state, find_tool_id_for_scan_dir,
+        build_local_skill_id, build_synced_tool_state, create_or_reuse_tool_link,
+        find_tool_id_for_scan_dir,
         install_base_conflicting_tool, paths_point_to_same_location,
         refresh_existing_tool_links_for_skill,
         resolve_update_install_paths, resolve_update_target_install_dir,
@@ -2866,6 +2901,47 @@ mod tests {
 
         assert!(linked_tools.is_empty());
         assert_eq!(local_paths, vec!["/tmp/.agents/skills/example".to_string()]);
+    }
+
+    #[test]
+    fn tool_link_failures_are_formatted_with_tool_ids_and_reasons() {
+        let failures = vec![super::ToolLinkFailure::new(
+            "codex",
+            "无法创建符号链接: permission denied",
+        )];
+
+        assert_eq!(
+            super::format_tool_link_failures(&failures),
+            "codex (无法创建符号链接: permission denied)"
+        );
+    }
+
+    #[test]
+    fn successful_directory_link_counts_as_linked_tool_even_when_it_resolves_to_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join(".agents").join("skills").join("example");
+        let link = temp.path().join(".codex").join("skills").join("example");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "test").unwrap();
+
+        let mut linked_tool_ids = Vec::new();
+        let mut link_failures = Vec::new();
+        create_or_reuse_tool_link(
+            &source,
+            &link,
+            "codex",
+            None,
+            &mut linked_tool_ids,
+            &mut link_failures,
+        );
+
+        assert!(link.exists());
+        assert!(
+            paths_point_to_same_location(&source, &link),
+            "created tool link should resolve to the source directory"
+        );
+        assert_eq!(linked_tool_ids, vec!["codex".to_string()]);
+        assert!(link_failures.is_empty());
     }
 
     #[test]

@@ -291,6 +291,7 @@
     },
     "toast": {
       "installed": "[SUCCESS] SKILL_INSTALLED",
+      "installedWithSyncWarning": "[WARNING] SKILL_INSTALLED_BUT_TOOL_SYNC_FAILED",
       "installFailed": "[ERROR] INSTALL_FAILED",
       "uninstalled": "[SUCCESS] SKILL_UNINSTALLED",
       "uninstallFailed": "[ERROR] UNINSTALL_FAILED",

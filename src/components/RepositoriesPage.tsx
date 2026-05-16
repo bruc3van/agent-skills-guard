@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
+import { translateError } from "../lib/error-codes";
 import { FeaturedRepositories } from "./FeaturedRepositories";
 import type { FeaturedMarketplacesConfig, Skill } from "../types";
 import type { SecurityReport } from "../types/security";
@@ -41,6 +42,11 @@ import {
 import { SkillSecurityDialog, SkillSecurityDialogConfirmButton } from "./ui/SkillSecurityDialog";
 import { getDefaultInstallTargetToolIds, useAgentTools } from "@/lib/agent-tools";
 import { pluginsCachedQueryKey } from "../hooks/usePlugins";
+
+function isLinkCreationAllFailed(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.startsWith("LINK_CREATION_ALL_FAILED");
+}
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -1000,7 +1006,27 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
             });
             appToast.success(t("skills.toast.installed"));
           } catch (error: any) {
-            appToast.error(`${t("skills.toast.installFailed")}: ${error.message || error}`);
+            const message = error?.message || String(error);
+            if (isLinkCreationAllFailed(message)) {
+              addRecentInstallPath(selectedPath);
+              await queryClient.refetchQueries({ queryKey: ["skills"] });
+              await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
+              await queryClient.refetchQueries({ queryKey: ["scanResults"] });
+              setPreview((prev) => {
+                if (!prev) return prev;
+                return {
+                  ...prev,
+                  skills: prev.skills.map((skill) =>
+                    skill.id === skillId ? { ...skill, installed: true } : skill
+                  ),
+                };
+              });
+              appToast.warning(
+                `${t("skills.toast.installedWithSyncWarning")}: ${translateError(message)}`
+              );
+            } else {
+              appToast.error(`${t("skills.toast.installFailed")}: ${translateError(message)}`);
+            }
           } finally {
             setInstallingSkillId(null);
           }
