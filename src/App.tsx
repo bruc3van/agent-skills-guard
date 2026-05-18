@@ -8,6 +8,7 @@ import { Toaster } from "sonner";
 import { getPlatform, type Platform } from "./lib/platform";
 import { api } from "./lib/api";
 import { appToast } from "./lib/toast";
+import { reconcileSkillStateAfterAppVersionChange } from "./lib/app-update-refresh";
 import appIconUrl from "../app-icon.png";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
@@ -25,6 +26,8 @@ import { pluginsCachedQueryKey } from "./hooks/usePlugins";
 
 const reactQueryClient = new QueryClient();
 type MarketplacePreset = { marketplaceName?: string } | null;
+
+declare const __APP_VERSION__: string;
 
 const OverviewPage = lazy(() =>
   import("./components/OverviewPage").then((module) => ({ default: module.OverviewPage }))
@@ -71,6 +74,7 @@ function AppContent() {
   const [isImportingFeatured, setIsImportingFeatured] = useState(false);
   const didRunStartupTasksRef = useRef(false);
   const didRunOnboardingCheckRef = useRef(false);
+  const didRunVersionSkillRefreshRef = useRef(false);
   const langRef = useRef(i18n.language);
   langRef.current = i18n.language;
 
@@ -81,6 +85,19 @@ function AppContent() {
   useEffect(() => {
     getPlatform().then(setPlatform);
   }, []);
+
+  useEffect(() => {
+    if (didRunVersionSkillRefreshRef.current) return;
+    didRunVersionSkillRefreshRef.current = true;
+
+    const timer = setTimeout(() => {
+      reconcileSkillStateAfterAppVersionChange(queryClient, __APP_VERSION__).catch((error) => {
+        console.debug("Failed to reconcile local skills after app version change:", error);
+      });
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [queryClient]);
 
   useEffect(() => {
     if (platform === null) return;
