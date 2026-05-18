@@ -659,6 +659,8 @@
     "downloading": "下载中...",
     "installing": "安装中...",
     "restartRequired": "更新已完成，请重启应用生效",
+    "restartNow": "立即重启",
+    "restarting": "正在重启...",
     "failed": "更新失败，请稍后重试",
     "checkFailed": "检查更新失败"
   },

@@ -1,6 +1,18 @@
 import { useTranslation } from "react-i18next";
-import { Info, Github, RefreshCw, ExternalLink, Hash, Languages, Trash2, ShieldCheck, Gauge } from "lucide-react";
+import {
+  Info,
+  Github,
+  RefreshCw,
+  ExternalLink,
+  Hash,
+  Languages,
+  Trash2,
+  ShieldCheck,
+  Gauge,
+  Power,
+} from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { appToast } from "@/lib/toast";
 import { useUpdate } from "../contexts/UpdateContext";
 import { GroupCard, GroupCardItem } from "./ui/GroupCard";
@@ -18,6 +30,7 @@ import {
 import { clearWebPersistedData } from "@/lib/reset";
 import { api } from "@/lib/api";
 import { relaunchApp } from "@/lib/updater";
+import { refetchSkillStateAfterAppUpdate } from "@/lib/app-update-refresh";
 import {
   getDefaultScanConcurrency,
   getMaxScanConcurrency,
@@ -126,7 +139,10 @@ function renderInlineMarkdown(text: string) {
       nodes.push(text.slice(lastIndex, match.index));
     }
     nodes.push(
-      <strong key={`bold-${match.index}-${match[1].length}`} className="font-semibold text-foreground">
+      <strong
+        key={`bold-${match.index}-${match[1].length}`}
+        className="font-semibold text-foreground"
+      >
         {match[1]}
       </strong>
     );
@@ -186,6 +202,7 @@ function renderUpdateNotes(markdown: string) {
 
 export function SettingsPage() {
   const { t, i18n } = useTranslation();
+  const queryClient = useQueryClient();
   const updateContext = useUpdate();
   const currentLang = i18n.language;
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
@@ -234,6 +251,19 @@ export function SettingsPage() {
 
     const ok = await updateContext.installUpdate();
     if (!ok) {
+      appToast.error(t("update.failed"));
+      return;
+    }
+
+    await refetchSkillStateAfterAppUpdate(queryClient);
+  };
+
+  const handleRestartApp = async () => {
+    try {
+      appToast.info(t("update.restarting"));
+      await relaunchApp();
+    } catch (error) {
+      console.error("Restart app error:", error);
       appToast.error(t("update.failed"));
     }
   };
@@ -359,6 +389,15 @@ export function SettingsPage() {
                   {t("update.restartRequired")}
                 </span>
               )}
+              {isRestartRequired && (
+                <button
+                  onClick={handleRestartApp}
+                  className="apple-button-primary h-8 px-3 text-xs flex items-center gap-1.5"
+                >
+                  <Power className="w-3.5 h-3.5" />
+                  {t("update.restartNow")}
+                </button>
+              )}
               <button
                 onClick={handleCheckUpdate}
                 disabled={updateContext.isChecking || isUpdating}
@@ -411,7 +450,9 @@ export function SettingsPage() {
                 <ShieldCheck className="w-4 h-4 text-white" />
               </div>
               <div className="space-y-1">
-                <div className="text-sm font-medium">{t("settings.preferences.scanPrompt.title")}</div>
+                <div className="text-sm font-medium">
+                  {t("settings.preferences.scanPrompt.title")}
+                </div>
                 <div className="text-xs text-muted-foreground">
                   {t("settings.preferences.scanPrompt.description")}
                 </div>
@@ -525,7 +566,9 @@ export function SettingsPage() {
               </div>
               <div className="space-y-1">
                 <div className="text-sm font-medium">{t("settings.reset.label")}</div>
-                <div className="text-xs text-muted-foreground">{t("settings.reset.description")}</div>
+                <div className="text-xs text-muted-foreground">
+                  {t("settings.reset.description")}
+                </div>
               </div>
             </div>
 
@@ -542,7 +585,9 @@ export function SettingsPage() {
               <AlertDialogContent className="max-w-xl">
                 <AlertDialogHeader>
                   <AlertDialogTitle>{t("settings.reset.confirmTitle")}</AlertDialogTitle>
-                  <AlertDialogDescription>{t("settings.reset.confirmDescription")}</AlertDialogDescription>
+                  <AlertDialogDescription>
+                    {t("settings.reset.confirmDescription")}
+                  </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel disabled={isResetting}>
@@ -557,7 +602,7 @@ export function SettingsPage() {
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
-              </AlertDialog>
+            </AlertDialog>
           </div>
         </GroupCardItem>
       </GroupCard>

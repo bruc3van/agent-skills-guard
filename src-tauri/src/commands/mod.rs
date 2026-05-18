@@ -1421,7 +1421,10 @@ pub async fn list_agent_tools(
 ) -> Result<Vec<crate::services::AgentToolInfo>, String> {
     use crate::services::agent_tools::{AgentTool, AgentToolInfo};
 
-    let skills = state.db.get_skills().map_err(|e| e.to_string())?;
+    let skills = {
+        let manager = state.skill_manager.lock().await;
+        manager.get_installed_skills().map_err(|e| e.to_string())?
+    };
 
     let tool_list = AgentTool::all()
         .into_iter()

@@ -1409,6 +1409,43 @@ impl SkillManager {
 
     /// 获取所有 skills
     pub fn get_all_skills(&self) -> Result<Vec<Skill>> {
+        self.get_all_skills_from_dirs(&default_tool_skill_dirs())
+    }
+
+    fn cleanup_stale_prepare_paths_once(&self) {
+        if self.cleanup_done.load(Ordering::Relaxed) {
+            return;
+        }
+
+        if let Err(e) = self.cleanup_stale_prepare_paths() {
+            log::warn!("清理残留临时路径时出错（忽略）: {}", e);
+        }
+        self.cleanup_done.store(true, Ordering::Relaxed);
+    }
+
+    fn get_all_skills_from_dirs(&self, tool_skill_dirs: &[ToolSkillDir]) -> Result<Vec<Skill>> {
+        self.cleanup_stale_prepare_paths_once();
+
+        let tool_dirs = tool_skill_dirs
+            .iter()
+            .map(|tool_dir| (tool_dir.path.clone(), tool_dir.tool_id.clone()))
+            .collect::<Vec<_>>();
+
+        self.refresh_installed_tool_links_from_dirs(&tool_dirs)?;
+
+        let adoption_summary = self.adopt_existing_skills_for_scan(tool_skill_dirs)?;
+        if adoption_summary.discovered > 0
+            || adoption_summary.created > 0
+            || adoption_summary.updated > 0
+        {
+            log::info!(
+                "All skills refresh adopted existing skills: discovered={}, created={}, updated={}",
+                adoption_summary.discovered,
+                adoption_summary.created,
+                adoption_summary.updated
+            );
+        }
+
         self.db.get_skills()
     }
 
@@ -1422,12 +1459,7 @@ impl SkillManager {
         tool_skill_dirs: &[ToolSkillDir],
     ) -> Result<Vec<Skill>> {
         // 清理残留的 __cache__: / __staging__: 临时路径（仅首次调用时执行）
-        if !self.cleanup_done.load(Ordering::Relaxed) {
-            if let Err(e) = self.cleanup_stale_prepare_paths() {
-                log::warn!("清理残留临时路径时出错（忽略）: {}", e);
-            }
-            self.cleanup_done.store(true, Ordering::Relaxed);
-        }
+        self.cleanup_stale_prepare_paths_once();
 
         let tool_dirs = tool_skill_dirs
             .iter()
@@ -3386,6 +3418,54 @@ mod tests {
             .as_ref()
             .unwrap()
             .contains(&codex_link.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn all_skills_refresh_detects_new_tool_link_without_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let agents_dir = temp.path().join(".agents").join("skills");
+        let claude_dir = temp.path().join(".claude").join("skills");
+        let source = agents_dir.join("example");
+        let claude_link = claude_dir.join("example");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "---\nname: example\n---\n").unwrap();
+
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            crate::models::LOCAL_REPOSITORY_URL.to_string(),
+            source.to_string_lossy().to_string(),
+        );
+        skill.id = "skill-1".to_string();
+        skill.installed = true;
+        skill.is_local_only = false;
+        skill.source_path = Some(source.to_string_lossy().to_string());
+        skill.local_path = Some(source.to_string_lossy().to_string());
+        skill.local_paths = Some(vec![source.to_string_lossy().to_string()]);
+        db.save_skill(&skill).unwrap();
+
+        link_fs::create_dir_link(&source, &claude_link).unwrap();
+
+        let refreshed = manager
+            .get_all_skills_from_dirs(&[
+                ToolSkillDir {
+                    tool_id: "agents".to_string(),
+                    path: agents_dir,
+                },
+                ToolSkillDir {
+                    tool_id: "claude-code".to_string(),
+                    path: claude_dir,
+                },
+            ])
+            .unwrap();
+
+        assert_eq!(refreshed[0].linked_tools, vec!["claude-code".to_string()]);
+        assert!(refreshed[0]
+            .local_paths
+            .as_ref()
+            .unwrap()
+            .contains(&claude_link.to_string_lossy().to_string()));
     }
 
     #[test]
