@@ -65,9 +65,53 @@ struct SkillFrontmatter {
     description: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct GitHubRepositoryMetadata {
+    default_branch: Option<String>,
+}
+
 pub struct GitHubService {
     client: Client,
     api_base: String,
+}
+
+fn push_unique_branch(branches: &mut Vec<String>, branch: &str) {
+    let branch = branch.trim();
+    if !branch.is_empty() && !branches.iter().any(|existing| existing == branch) {
+        branches.push(branch.to_string());
+    }
+}
+
+fn archive_branch_candidates(default_branch: Option<&str>) -> Vec<String> {
+    let mut branches = Vec::new();
+
+    if let Some(default_branch) = default_branch {
+        push_unique_branch(&mut branches, default_branch);
+    }
+
+    for branch in DEFAULT_BRANCHES {
+        push_unique_branch(&mut branches, branch);
+    }
+
+    branches
+}
+
+fn format_archive_download_error(errors: &[(String, String)]) -> String {
+    if errors.is_empty() {
+        return "所有分支均下载失败".to_string();
+    }
+
+    if errors.iter().all(|(_, error)| error.contains("404")) {
+        return "PRIVATE_REPOSITORY_UNSUPPORTED".to_string();
+    }
+
+    let details = errors
+        .iter()
+        .map(|(branch, error)| format!("{}: {}", branch, error))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    format!("尝试的分支均下载失败: {}", details)
 }
 
 impl GitHubService {
@@ -131,7 +175,13 @@ impl GitHubService {
                     // 递归扫描子目录
                     let api_calls_remaining = std::sync::atomic::AtomicUsize::new(200);
                     match self
-                        .scan_directory(&owner, &repo_name, &item.path, &repo.url, &api_calls_remaining)
+                        .scan_directory(
+                            &owner,
+                            &repo_name,
+                            &item.path,
+                            &repo.url,
+                            &api_calls_remaining,
+                        )
                         .await
                     {
                         Ok(mut sub_skills) => skills.append(&mut sub_skills),
@@ -155,7 +205,10 @@ impl GitHubService {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<Skill>>> + Send + 'a>> {
         Box::pin(async move {
             if api_calls_remaining.load(std::sync::atomic::Ordering::Relaxed) == 0 {
-                log::warn!("scan_directory: API 调用次数已达上限，停止扫描 path={}", path);
+                log::warn!(
+                    "scan_directory: API 调用次数已达上限，停止扫描 path={}",
+                    path
+                );
                 return Ok(Vec::new());
             }
             api_calls_remaining.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
@@ -195,11 +248,17 @@ impl GitHubService {
                     } else if path.split('/').count() < 5 {
                         // 递归扫描（限制深度避免无限递归）
                         if api_calls_remaining.load(std::sync::atomic::Ordering::Relaxed) == 0 {
-                            log::warn!("scan_directory: API 调用次数已达上限，跳过子目录 {}", item.path);
+                            log::warn!(
+                                "scan_directory: API 调用次数已达上限，跳过子目录 {}",
+                                item.path
+                            );
                             continue;
                         }
                         api_calls_remaining.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                        match self.scan_directory(owner, repo, &item.path, repo_url, api_calls_remaining).await {
+                        match self
+                            .scan_directory(owner, repo, &item.path, repo_url, api_calls_remaining)
+                            .await
+                        {
                             Ok(mut sub_skills) => skills.append(&mut sub_skills),
                             Err(e) => {
                                 log::warn!("Failed to scan subdirectory {}: {}", item.path, e)
@@ -258,10 +317,7 @@ impl GitHubService {
 
                                         if wait_seconds > 0 {
                                             let wait_minutes = (wait_seconds + 59) / 60; // 向上取整
-                                            anyhow::bail!(
-                                                "GITHUB_RATE_LIMITED: {}",
-                                                wait_minutes
-                                            );
+                                            anyhow::bail!("GITHUB_RATE_LIMITED: {}", wait_minutes);
                                         }
                                     }
                                 }
@@ -398,9 +454,7 @@ impl GitHubService {
     /// 解析 SKILL.md 的 frontmatter
     pub fn parse_skill_frontmatter(&self, content: &str) -> Result<(String, Option<String>)> {
         // 兼容 BOM 和前导空白（Windows 克隆常见）
-        let content = content
-            .trim_start_matches('\u{feff}')
-            .trim_start();
+        let content = content.trim_start_matches('\u{feff}').trim_start();
 
         // 查找 frontmatter 的边界（--- ... ---）
         let lines: Vec<&str> = content.lines().collect();
@@ -457,11 +511,13 @@ impl GitHubService {
         let repo_cache_dir = cache_base_dir.join(format!("{}_{}", owner, repo));
         fs::create_dir_all(&repo_cache_dir).context("无法创建缓存目录")?;
 
-        // 2. 尝试下载压缩包（先尝试 main，如果 404 则尝试 master）
-        let mut last_error = None;
+        // 2. 尝试下载压缩包：优先使用 GitHub 返回的默认分支，再回退到常见分支名。
+        let default_branch = self.fetch_repository_default_branch(owner, repo).await?;
+        let branches = archive_branch_candidates(default_branch.as_deref());
+        let mut errors = Vec::new();
         let mut response = None;
 
-        for branch in DEFAULT_BRANCHES {
+        for branch in branches {
             let url = format!(
                 "{}/repos/{}/{}/zipball/{}",
                 self.api_base, owner, repo, branch
@@ -481,24 +537,23 @@ impl GitHubService {
                         break;
                     } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
                         log::info!("分支 {} 不存在，尝试下一个分支", branch);
-                        last_error = Some(anyhow::anyhow!("分支 {} 不存在", branch));
+                        errors.push((branch, "404 Not Found".to_string()));
                         continue;
                     } else {
-                        last_error =
-                            Some(anyhow::anyhow!("下载失败，HTTP状态码: {}", resp.status()));
+                        errors.push((branch, format!("HTTP {}", resp.status())));
                         continue;
                     }
                 }
                 Err(e) => {
                     log::warn!("请求分支 {} 时发生错误: {}", branch, e);
-                    last_error = Some(anyhow::anyhow!("请求失败: {}", e));
+                    errors.push((branch, format!("请求失败: {}", e)));
                     continue;
                 }
             }
         }
 
-        let response = response
-            .ok_or_else(|| last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支均下载失败")))?;
+        let response =
+            response.ok_or_else(|| anyhow::anyhow!(format_archive_download_error(&errors)))?;
 
         // 3. 保存压缩包到本地（先检查大小限制）
         if let Some(content_length) = response.content_length() {
@@ -597,6 +652,54 @@ impl GitHubService {
         }
 
         Ok(())
+    }
+
+    async fn fetch_repository_default_branch(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Option<String>> {
+        let url = format!("{}/repos/{}/{}", self.api_base, owner, repo);
+        let response = match self
+            .client
+            .get(&url)
+            .header("Accept", "application/vnd.github.v3+json")
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(e) => {
+                log::warn!("获取仓库默认分支失败: {}", e);
+                return Ok(None);
+            }
+        };
+
+        if let Err(e) = self.check_rate_limit(&response) {
+            return Err(e);
+        }
+
+        let status = response.status();
+        if !status.is_success() {
+            log::warn!(
+                "无法获取仓库默认分支: {}/{}, HTTP状态码: {}",
+                owner,
+                repo,
+                status
+            );
+            return Ok(None);
+        }
+
+        let metadata: GitHubRepositoryMetadata = match response.json().await {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                log::warn!("解析仓库默认分支失败: {}", e);
+                return Ok(None);
+            }
+        };
+
+        Ok(metadata
+            .default_branch
+            .filter(|branch| !branch.trim().is_empty()))
     }
 
     /// 获取仓库默认分支的最新 commit SHA（使用 1 次 API 调用）
@@ -925,5 +1028,51 @@ impl GitHubService {
 impl Default for GitHubService {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archive_branch_candidates_puts_default_branch_first_without_duplicates() {
+        assert_eq!(
+            archive_branch_candidates(Some("main")),
+            vec!["main".to_string(), "master".to_string()]
+        );
+
+        assert_eq!(
+            archive_branch_candidates(Some("release")),
+            vec![
+                "release".to_string(),
+                "main".to_string(),
+                "master".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn archive_download_error_includes_every_attempted_branch_for_non_404_errors() {
+        let error = format_archive_download_error(&[
+            ("main".to_string(), "HTTP 500 Internal Server Error".to_string()),
+            ("master".to_string(), "HTTP 500 Internal Server Error".to_string()),
+        ]);
+
+        assert!(error.contains("尝试的分支均下载失败"));
+        assert!(error.contains("main: HTTP 500 Internal Server Error"));
+        assert!(error.contains("master: HTTP 500 Internal Server Error"));
+    }
+
+    #[test]
+    fn archive_download_error_reports_private_repo_unsupported_for_404s() {
+        let error = format_archive_download_error(&[
+            ("main".to_string(), "404 Not Found".to_string()),
+            ("master".to_string(), "404 Not Found".to_string()),
+        ]);
+
+        assert_eq!(error, "PRIVATE_REPOSITORY_UNSUPPORTED");
+        assert!(!error.contains("main"));
+        assert!(!error.contains("master"));
     }
 }

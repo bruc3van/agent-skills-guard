@@ -2024,9 +2024,11 @@ fn detect_pip_version(path: &Path) -> Option<String> {
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(not(windows))]
     use std::sync::Mutex;
     use std::time::Duration;
 
+    #[cfg(not(windows))]
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
@@ -2123,10 +2125,12 @@ mod tests {
         }
     }
 
+    #[cfg(not(windows))]
     struct PathEnvGuard {
         original_path: Option<std::ffi::OsString>,
     }
 
+    #[cfg(not(windows))]
     impl PathEnvGuard {
         fn prepend(bin_dir: &Path) -> Self {
             let original_path = std::env::var_os("PATH");
@@ -2143,6 +2147,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(windows))]
     impl Drop for PathEnvGuard {
         fn drop(&mut self) {
             if let Some(value) = self.original_path.take() {

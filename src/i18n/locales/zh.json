@@ -18,6 +18,7 @@
     "GITHUB_REPO_FORBIDDEN": "无权限访问该仓库",
     "GITHUB_REPO_NOT_FOUND": "仓库或路径不存在",
     "GITHUB_UNAUTHORIZED": "未授权访问，请配置 GitHub Token",
+    "PRIVATE_REPOSITORY_UNSUPPORTED": "这是私有仓库，暂不支持获取",
     "GITHUB_SERVER_ERROR": "GitHub 服务器错误",
     "NETWORK_ERROR": "网络请求失败",
     "INSTALL_PATH_CONFLICT": "安装路径与工具技能目录冲突，请选择其他路径",

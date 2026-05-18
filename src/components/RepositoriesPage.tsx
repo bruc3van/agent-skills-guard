@@ -357,6 +357,8 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
     return i18n.language === "zh" ? text.zh : text.en;
   };
 
+  const getErrorMessage = (error: any) => translateError(error?.message || String(error));
+
   const openRepositoryPreview = async (repoUrl: string, repoName: string) => {
     try {
       const [skills] = await Promise.all([api.getSkills()]);
@@ -406,7 +408,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
               },
               onError: (error: any) => {
                 setScanningRepoId(null);
-                appToast.error(`${t("repositories.toast.scanError")}${error.message || error}`);
+                appToast.error(`${t("repositories.toast.scanError")}${getErrorMessage(error)}`);
               },
             });
           },
@@ -681,7 +683,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
                   const skills = await scanMutation.mutateAsync(repoId);
                   appToast.success(t("repositories.toast.foundSkills", { count: skills.length }));
                 } catch (error: any) {
-                  appToast.error(`${t("repositories.toast.scanError")}${error.message || error}`);
+                  appToast.error(`${t("repositories.toast.scanError")}${getErrorMessage(error)}`);
                 }
 
                 void openRepositoryPreview(url, name);
@@ -878,7 +880,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
                               onError: (error: any) => {
                                 setRefreshingRepoId(null);
                                 appToast.error(
-                                  `${t("repositories.toast.scanError")}${error.message || error}`
+                                  `${t("repositories.toast.scanError")}${getErrorMessage(error)}`
                                 );
                               },
                             });
@@ -895,7 +897,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
                               onError: (error: any) => {
                                 setScanningRepoId(null);
                                 appToast.error(
-                                  `${t("repositories.toast.scanError")}${error.message || error}`
+                                  `${t("repositories.toast.scanError")}${getErrorMessage(error)}`
                                 );
                               },
                             });

@@ -18,6 +18,7 @@
     "GITHUB_REPO_FORBIDDEN": "No permission to access this repository",
     "GITHUB_REPO_NOT_FOUND": "Repository or path not found",
     "GITHUB_UNAUTHORIZED": "Unauthorized access, please configure GitHub Token",
+    "PRIVATE_REPOSITORY_UNSUPPORTED": "This is a private repository and cannot be fetched",
     "GITHUB_SERVER_ERROR": "GitHub server error",
     "NETWORK_ERROR": "Network request failed",
     "INSTALL_PATH_CONFLICT": "Install path conflicts with tool skills directory, please choose another path",
