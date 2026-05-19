@@ -32,11 +32,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./ui/alert-dialog";
-import {
-  SkillSecurityDialog,
-  SkillSecurityDialogConfirmButton,
-} from "./ui/SkillSecurityDialog";
+import { SkillSecurityDialog, SkillSecurityDialogConfirmButton } from "./ui/SkillSecurityDialog";
 import { getDefaultInstallTargetToolIds, useAgentTools } from "@/lib/agent-tools";
+import { MARKETPLACE_INSTALL_STATUS_KEY } from "@/hooks/useNavigationProtection";
 
 function isLinkCreationAllFailed(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -112,7 +110,6 @@ export function MarketplacePage({
   const { data: plugins = [], isLoading: isPluginsLoading } = usePlugins();
   const installMutation = useInstallSkill();
 
-  const installStatusQueryKey = ["marketplace", "install-status"];
   const defaultInstallStatus: MarketplaceInstallStatus = {
     pendingInstall: null,
     preparingSkillId: null,
@@ -121,15 +118,17 @@ export function MarketplacePage({
     scanPromptPlugin: null,
   };
   const { data: installStatus = defaultInstallStatus } = useQuery<MarketplaceInstallStatus>({
-    queryKey: installStatusQueryKey,
+    queryKey: MARKETPLACE_INSTALL_STATUS_KEY,
     queryFn: () => defaultInstallStatus,
     initialData: defaultInstallStatus,
     staleTime: Infinity,
     gcTime: Infinity,
   });
 
-  const setInstallStatus = (updater: (prev: MarketplaceInstallStatus) => MarketplaceInstallStatus) => {
-    queryClient.setQueryData(installStatusQueryKey, (prev?: MarketplaceInstallStatus) =>
+  const setInstallStatus = (
+    updater: (prev: MarketplaceInstallStatus) => MarketplaceInstallStatus
+  ) => {
+    queryClient.setQueryData(MARKETPLACE_INSTALL_STATUS_KEY, (prev?: MarketplaceInstallStatus) =>
       updater(prev ?? defaultInstallStatus)
     );
   };
@@ -141,9 +140,15 @@ export function MarketplacePage({
   const [logPlugin, setLogPlugin] = useState<Plugin | null>(null);
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
   const listContainerRef = useRef<HTMLDivElement | null>(null);
+  const prepareGenerationRef = useRef(0);
 
-  const { pendingInstall, preparingSkillId, installingSkillId, installingPluginId, scanPromptPlugin } =
-    installStatus;
+  const {
+    pendingInstall,
+    preparingSkillId,
+    installingSkillId,
+    installingPluginId,
+    scanPromptPlugin,
+  } = installStatus;
 
   const isInstallInProgress =
     installMutation.isPending ||
@@ -187,6 +192,29 @@ export function MarketplacePage({
     }
     onPresetApplied?.();
   }, [presetFilter, onPresetApplied]);
+
+  useEffect(() => {
+    return () => {
+      prepareGenerationRef.current += 1;
+      const status = queryClient.getQueryData<MarketplaceInstallStatus>(
+        MARKETPLACE_INSTALL_STATUS_KEY
+      );
+      const pendingSkillId = status?.pendingInstall?.skill.id;
+      const shouldCancelPending = pendingSkillId && status?.installingSkillId !== pendingSkillId;
+      if (shouldCancelPending) {
+        void invoke("cancel_skill_installation", { skillId: pendingSkillId }).catch(console.error);
+      }
+      queryClient.setQueryData(MARKETPLACE_INSTALL_STATUS_KEY, (prev?: MarketplaceInstallStatus) =>
+        prev && (prev.pendingInstall !== null || prev.preparingSkillId !== null)
+          ? {
+              ...prev,
+              pendingInstall: null,
+              preparingSkillId: null,
+            }
+          : prev
+      );
+    };
+  }, [queryClient]);
 
   const marketplaceItems = useMemo<MarketplaceItem[]>(() => {
     const skillItems = allSkills
@@ -398,7 +426,11 @@ export function MarketplacePage({
               />
             </div>
 
-            {pageBusyMessage && <div className="mt-4"><PageBusyNotice message={pageBusyMessage} /></div>}
+            {pageBusyMessage && (
+              <div className="mt-4">
+                <PageBusyNotice message={pageBusyMessage} />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -427,6 +459,7 @@ export function MarketplacePage({
                     key={entry.item.id}
                     skill={entry.item}
                     onInstall={async () => {
+                      const requestId = ++prepareGenerationRef.current;
                       try {
                         setInstallStatus((prev) => ({
                           ...prev,
@@ -436,12 +469,19 @@ export function MarketplacePage({
                           entry.item.id,
                           i18n.language
                         );
+                        if (prepareGenerationRef.current !== requestId) {
+                          void invoke("cancel_skill_installation", {
+                            skillId: entry.item.id,
+                          }).catch(console.error);
+                          return;
+                        }
                         setInstallStatus((prev) => ({
                           ...prev,
                           preparingSkillId: null,
                           pendingInstall: { skill: entry.item, report },
                         }));
                       } catch (error: any) {
+                        if (prepareGenerationRef.current !== requestId) return;
                         setInstallStatus((prev) => ({
                           ...prev,
                           preparingSkillId: null,
@@ -486,10 +526,13 @@ export function MarketplacePage({
                           ...prev,
                           installingPluginId: entry.item.id,
                         }));
-                        const result = await invoke<PluginInstallResult>("confirm_plugin_installation", {
-                          pluginId: entry.item.id,
-                          claudeCommand: null,
-                        });
+                        const result = await invoke<PluginInstallResult>(
+                          "confirm_plugin_installation",
+                          {
+                            pluginId: entry.item.id,
+                            claudeCommand: null,
+                          }
+                        );
                         await queryClient.refetchQueries({ queryKey: ["plugins"] });
                         const hasFailed =
                           result.marketplace_status === "failed" ||
@@ -585,6 +628,7 @@ export function MarketplacePage({
       <InstallConfirmDialog
         open={pendingInstall !== null}
         onClose={() => {
+          prepareGenerationRef.current += 1;
           const skillId = pendingInstall?.skill.id;
           const shouldCancel = skillId && installingSkillId === null;
           setInstallStatus((prev) => ({
@@ -599,6 +643,7 @@ export function MarketplacePage({
         onConfirm={async (selectedPath, targetTools) => {
           if (!pendingInstall) return;
           const skillId = pendingInstall.skill.id;
+          prepareGenerationRef.current += 1;
           setInstallStatus((prev) => ({
             ...prev,
             installingSkillId: skillId,
@@ -959,9 +1004,7 @@ function PluginCard({
             ) : isInstalling ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span className="hidden sm:inline">
-                  {t("plugins.installing")}
-                </span>
+                <span className="hidden sm:inline">{t("plugins.installing")}</span>
               </>
             ) : (
               <>
@@ -1013,7 +1056,6 @@ function PluginCard({
     </div>
   );
 }
-
 
 interface PluginLogDialogProps {
   open: boolean;
@@ -1183,19 +1225,26 @@ function InstallConfirmDialog({
           <InstallPathSelector onSelect={setSelectedPath} />
           {agentTools.filter((t) => t.id !== "agents").length > 0 && (
             <div>
-              <p className="text-xs text-muted-foreground mb-2 font-medium">同时同步到其他编程工具（可选）</p>
+              <p className="text-xs text-muted-foreground mb-2 font-medium">
+                同时同步到其他编程工具（可选）
+              </p>
               <div className="flex flex-wrap gap-2">
-                {agentTools.filter((t) => t.id !== "agents").map((tool) => (
-                  <label key={tool.id} className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={selectedTools.has(tool.id)}
-                      onChange={() => toggleTool(tool.id)}
-                      className="accent-primary"
-                    />
-                    {tool.label}
-                  </label>
-                ))}
+                {agentTools
+                  .filter((t) => t.id !== "agents")
+                  .map((tool) => (
+                    <label
+                      key={tool.id}
+                      className="flex items-center gap-1.5 text-xs cursor-pointer select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedTools.has(tool.id)}
+                        onChange={() => toggleTool(tool.id)}
+                        className="accent-primary"
+                      />
+                      {tool.label}
+                    </label>
+                  ))}
               </div>
             </div>
           )}
@@ -1214,8 +1263,8 @@ function InstallConfirmDialog({
               report?.partial_scan
                 ? t("skills.marketplace.install.installCautiously")
                 : report && (report.score < 50 || report.blocked)
-                ? t("skills.marketplace.install.installAnyway")
-                : t("skills.marketplace.install.confirmInstall")
+                  ? t("skills.marketplace.install.installAnyway")
+                  : t("skills.marketplace.install.confirmInstall")
             }
             tone={confirmTone}
           />

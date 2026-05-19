@@ -23,6 +23,7 @@ import {
 } from "./components/ui/alert-dialog";
 import type { TabType } from "./types";
 import { pluginsCachedQueryKey } from "./hooks/usePlugins";
+import { useNavigationProtection } from "./hooks/useNavigationProtection";
 
 const reactQueryClient = new QueryClient();
 type MarketplacePreset = { marketplaceName?: string } | null;
@@ -67,6 +68,7 @@ function PageFallback() {
 function AppContent() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
+  const { isBusy } = useNavigationProtection();
   const [currentTab, setCurrentTab] = useState<TabType>("overview");
   const [marketplacePreset, setMarketplacePreset] = useState<MarketplacePreset>(null);
   const [platform, setPlatform] = useState<Platform | null>(null);
@@ -81,6 +83,15 @@ function AppContent() {
   const clearMarketplacePreset = useCallback(() => {
     setMarketplacePreset(null);
   }, []);
+
+  const requestTabChange = useCallback(
+    (tab: TabType) => {
+      if (isBusy) return false;
+      setCurrentTab(tab);
+      return true;
+    },
+    [isBusy]
+  );
 
   useEffect(() => {
     getPlatform().then(setPlatform);
@@ -123,7 +134,10 @@ function AppContent() {
       const tasks: Promise<void>[] = [];
 
       if (
-        isThrottleDue(FEATURED_REPOSITORIES_REFRESHED_AT_KEY, FEATURED_RESOURCES_REFRESH_INTERVAL_MS)
+        isThrottleDue(
+          FEATURED_REPOSITORIES_REFRESHED_AT_KEY,
+          FEATURED_RESOURCES_REFRESH_INTERVAL_MS
+        )
       ) {
         tasks.push(
           api
@@ -140,7 +154,10 @@ function AppContent() {
       }
 
       if (
-        isThrottleDue(FEATURED_MARKETPLACES_REFRESHED_AT_KEY, FEATURED_RESOURCES_REFRESH_INTERVAL_MS)
+        isThrottleDue(
+          FEATURED_MARKETPLACES_REFRESHED_AT_KEY,
+          FEATURED_RESOURCES_REFRESH_INTERVAL_MS
+        )
       ) {
         tasks.push(
           api
@@ -276,7 +293,7 @@ function AppContent() {
       }
 
       setImportDialogOpen(false);
-      setCurrentTab("marketplace");
+      requestTabChange("marketplace");
       queryClient.invalidateQueries({ queryKey: ["repositories"] });
 
       if (result.added_count > 0) {
@@ -380,7 +397,7 @@ function AppContent() {
 
         {/* 右侧：更新徽章 */}
         <div className="flex items-center gap-3">
-          <UpdateBadge onOpenSettings={() => setCurrentTab("settings")} />
+          <UpdateBadge onOpenSettings={() => requestTabChange("settings")} />
           {/* Windows/Linux: 右侧窗口控件 */}
           {platform !== "macos" && platform !== null && <WindowControls />}
         </div>
@@ -389,68 +406,71 @@ function AppContent() {
       {/* Main Area: Sidebar + Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar */}
-        <Sidebar currentTab={currentTab} onTabChange={setCurrentTab} />
+        <Sidebar currentTab={currentTab} onTabChange={requestTabChange} />
 
         {/* Content Area - 更大的内边距，更宽敞的感觉 */}
         <main className="flex-1 overflow-hidden">
           <ErrorBoundary>
-          <Suspense fallback={<PageFallback />}>
-            {currentTab === "overview" && (
-              <div className="h-full overflow-y-auto">
-                <div className="p-8 animate-fade-in">
-                  <div className="max-w-6xl mx-auto">
-                    <OverviewPage />
+            <Suspense fallback={<PageFallback />}>
+              {currentTab === "overview" && (
+                <div className="h-full overflow-y-auto">
+                  <div className="p-8 animate-fade-in">
+                    <div className="max-w-6xl mx-auto">
+                      <OverviewPage />
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-            {currentTab === "installed" && (
-              <div className="h-full overflow-hidden">
-                <InstalledSkillsPage />
-              </div>
-            )}
-            {currentTab === "marketplace" && (
-              <div className="h-full overflow-hidden">
-                <MarketplacePage
-                  onNavigateToRepositories={() => setCurrentTab("repositories")}
-                  onNavigateToOverview={() => setCurrentTab("overview")}
-                  presetFilter={marketplacePreset ?? undefined}
-                  onPresetApplied={clearMarketplacePreset}
-                />
-              </div>
-            )}
-            {currentTab === "repositories" && (
-              <div className="h-full overflow-y-auto">
-                <div className="p-8 animate-fade-in">
-                  <div className="max-w-6xl mx-auto">
-                    <RepositoriesPage
-                      onNavigateToMarket={(options) => {
-                        setMarketplacePreset(
-                          options?.marketplaceName
-                            ? { marketplaceName: options.marketplaceName }
-                            : null
-                        );
-                        setCurrentTab("marketplace");
-                      }}
-                    />
+              )}
+              {currentTab === "installed" && (
+                <div className="h-full overflow-hidden">
+                  <InstalledSkillsPage />
+                </div>
+              )}
+              {currentTab === "marketplace" && (
+                <div className="h-full overflow-hidden">
+                  <MarketplacePage
+                    onNavigateToRepositories={() => requestTabChange("repositories")}
+                    onNavigateToOverview={() => requestTabChange("overview")}
+                    presetFilter={marketplacePreset ?? undefined}
+                    onPresetApplied={clearMarketplacePreset}
+                  />
+                </div>
+              )}
+              {currentTab === "repositories" && (
+                <div className="h-full overflow-y-auto">
+                  <div className="p-8 animate-fade-in">
+                    <div className="max-w-6xl mx-auto">
+                      <RepositoriesPage
+                        onNavigateToMarket={(options) => {
+                          if (!requestTabChange("marketplace")) return;
+                          setMarketplacePreset(
+                            options?.marketplaceName
+                              ? { marketplaceName: options.marketplaceName }
+                              : null
+                          );
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-            {currentTab === "settings" && (
-              <div className="h-full overflow-y-auto">
-                <div className="p-8 animate-fade-in">
-                  <div className="max-w-6xl mx-auto">
-                    <SettingsPage />
+              )}
+              {currentTab === "settings" && (
+                <div className="h-full overflow-y-auto">
+                  <div className="p-8 animate-fade-in">
+                    <div className="max-w-6xl mx-auto">
+                      <SettingsPage />
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </Suspense>
-          {/* LocalCliPage 保持挂载，避免切换标签页时丢失状态和重复扫描 */}
-          <div style={{ display: currentTab === "local-cli" ? "block" : "none" }} className="h-full overflow-hidden">
-            <LocalCliPage />
-          </div>
+              )}
+            </Suspense>
+            {/* LocalCliPage 保持挂载，避免切换标签页时丢失状态和重复扫描 */}
+            <div
+              style={{ display: currentTab === "local-cli" ? "block" : "none" }}
+              className="h-full overflow-hidden"
+            >
+              <LocalCliPage />
+            </div>
           </ErrorBoundary>
         </main>
       </div>

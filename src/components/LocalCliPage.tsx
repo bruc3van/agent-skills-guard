@@ -216,7 +216,7 @@ export function LocalCliPage() {
   };
 
   const handleRescan = () => {
-    if (isChecking || isUpdating || isUninstalling) return;
+    if (isChecking || isUpdating || isUninstalling || bulkUpdateProgress !== null) return;
     setDescriptionMap({});
     attemptedDescriptionPathsRef.current.clear();
     setFetchProgress(null);
@@ -226,7 +226,8 @@ export function LocalCliPage() {
   };
 
   const handleUpdateTool = (tool: LocalCliTool) => {
-    if (isChecking || isRescanning || isUninstalling) return;
+    if (isChecking || isRescanning || isUninstalling || isUpdating || bulkUpdateProgress !== null)
+      return;
     updateTool(tool);
   };
 
@@ -316,7 +317,12 @@ export function LocalCliPage() {
                   <button
                     onClick={handleRescan}
                     disabled={
-                      isLoading || isRescanning || isChecking || isUpdating || isUninstalling
+                      isLoading ||
+                      isRescanning ||
+                      isChecking ||
+                      isUpdating ||
+                      isUninstalling ||
+                      bulkUpdateProgress !== null
                     }
                     className="apple-button-secondary h-10 px-4 flex items-center gap-2 disabled:opacity-50 text-sm"
                   >
@@ -500,7 +506,9 @@ export function LocalCliPage() {
                   isUninstalling={
                     isUninstalling && uninstallingTool?.detected_path === tool.detected_path
                   }
-                  isAnyOperationPending={isUpdating || isChecking || isUninstalling || bulkUpdateProgress !== null}
+                  isAnyOperationPending={
+                    isUpdating || isChecking || isUninstalling || bulkUpdateProgress !== null
+                  }
                 />
               ))}
             </div>

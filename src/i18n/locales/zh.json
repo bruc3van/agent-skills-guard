@@ -40,6 +40,9 @@
     "localCli": "CLI管理",
     "settings": "设置"
   },
+  "sidebar": {
+    "busy": "后台操作进行中"
+  },
   "market": {
     "search": "搜索技能/插件...",
     "refresh": "立即同步",

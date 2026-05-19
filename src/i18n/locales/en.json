@@ -40,6 +40,9 @@
     "localCli": "CLI",
     "settings": "SETTINGS"
   },
+  "sidebar": {
+    "busy": "Operation in progress"
+  },
   "market": {
     "search": "SEARCH_SKILLS_PLUGINS...",
     "refresh": "REFRESH",

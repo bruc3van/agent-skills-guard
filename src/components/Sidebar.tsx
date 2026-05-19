@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { LayoutDashboard, Package, ShoppingCart, Database, Settings, Terminal } from "lucide-react";
+import { useNavigationProtection } from "../hooks/useNavigationProtection";
 import type { TabType } from "../types";
 
 interface SidebarProps {
@@ -19,6 +20,12 @@ const settingsItem = { id: "settings" as TabType, icon: Settings, labelKey: "nav
 
 export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
   const { t } = useTranslation();
+  const { isBusy } = useNavigationProtection();
+
+  const handleTabChange = (tab: TabType) => {
+    if (isBusy) return;
+    onTabChange(tab);
+  };
 
   return (
     <aside className="w-[240px] flex-shrink-0 bg-sidebar flex flex-col">
@@ -31,7 +38,8 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
           return (
             <button
               key={item.id}
-              onClick={() => onTabChange(item.id)}
+              onClick={() => handleTabChange(item.id)}
+              disabled={isBusy}
               className={`
                 sidebar-item w-full
                 ${isActive ? "sidebar-item-active" : ""}
@@ -44,10 +52,22 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
         })}
       </nav>
 
+      {/* 操作进行中指示器 */}
+      {isBusy && (
+        <div className="px-4 pb-2 flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary/80" />
+          </span>
+          <span>{t("sidebar.busy")}</span>
+        </div>
+      )}
+
       {/* Settings at Bottom */}
       <div className="p-4 border-t border-border/50">
         <button
-          onClick={() => onTabChange(settingsItem.id)}
+          onClick={() => handleTabChange(settingsItem.id)}
+          disabled={isBusy}
           className={`
             sidebar-item w-full
             ${currentTab === settingsItem.id ? "sidebar-item-active" : ""}

@@ -42,11 +42,30 @@ import {
 import { SkillSecurityDialog, SkillSecurityDialogConfirmButton } from "./ui/SkillSecurityDialog";
 import { getDefaultInstallTargetToolIds, useAgentTools } from "@/lib/agent-tools";
 import { pluginsCachedQueryKey } from "../hooks/usePlugins";
+import { REPOSITORIES_PAGE_STATUS_KEY } from "../hooks/useNavigationProtection";
 
 function isLinkCreationAllFailed(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.startsWith("LINK_CREATION_ALL_FAILED");
 }
+
+type RepositoriesPageStatus = {
+  scanningRepoId: string | null;
+  refreshingRepoId: string | null;
+  deletingRepoId: string | null;
+  preparingSkillId: string | null;
+  installingSkillId: string | null;
+  pendingSkillInstall: { skill: Skill; report: SecurityReport } | null;
+};
+
+const defaultPageStatus: RepositoriesPageStatus = {
+  scanningRepoId: null,
+  refreshingRepoId: null,
+  deletingRepoId: null,
+  preparingSkillId: null,
+  installingSkillId: null,
+  pendingSkillInstall: null,
+};
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -230,20 +249,46 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
   const [showAddForm, setShowAddForm] = useState(false);
   const [newRepoUrl, setNewRepoUrl] = useState("");
   const [newRepoName, setNewRepoName] = useState("");
-  const [scanningRepoId, setScanningRepoId] = useState<string | null>(null);
-  const [refreshingRepoId, setRefreshingRepoId] = useState<string | null>(null);
-  const [deletingRepoId, setDeletingRepoId] = useState<string | null>(null);
   const addFormRef = useRef<HTMLDivElement | null>(null);
   const urlInputRef = useRef<HTMLInputElement | null>(null);
 
   const [preview, setPreview] = useState<RepositoryPreview | null>(null);
 
-  const [pendingSkillInstall, setPendingSkillInstall] = useState<{
-    skill: Skill;
-    report: SecurityReport;
-  } | null>(null);
-  const [preparingSkillId, setPreparingSkillId] = useState<string | null>(null);
-  const [installingSkillId, setInstallingSkillId] = useState<string | null>(null);
+  const { data: pageStatus = defaultPageStatus } = useQuery<RepositoriesPageStatus>({
+    queryKey: REPOSITORIES_PAGE_STATUS_KEY,
+    queryFn: () => defaultPageStatus,
+    initialData: defaultPageStatus,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+
+  const setPageStatus = (updater: (prev: RepositoriesPageStatus) => RepositoriesPageStatus) => {
+    queryClient.setQueryData(REPOSITORIES_PAGE_STATUS_KEY, (prev?: RepositoriesPageStatus) =>
+      updater(prev ?? defaultPageStatus)
+    );
+  };
+
+  const {
+    scanningRepoId,
+    refreshingRepoId,
+    deletingRepoId,
+    preparingSkillId,
+    installingSkillId,
+    pendingSkillInstall,
+  } = pageStatus;
+  const setScanningRepoId = (id: string | null) =>
+    setPageStatus((prev) => ({ ...prev, scanningRepoId: id }));
+  const setRefreshingRepoId = (id: string | null) =>
+    setPageStatus((prev) => ({ ...prev, refreshingRepoId: id }));
+  const setDeletingRepoId = (id: string | null) =>
+    setPageStatus((prev) => ({ ...prev, deletingRepoId: id }));
+  const setPreparingSkillId = (id: string | null) =>
+    setPageStatus((prev) => ({ ...prev, preparingSkillId: id }));
+  const setInstallingSkillId = (id: string | null) =>
+    setPageStatus((prev) => ({ ...prev, installingSkillId: id }));
+  const setPendingSkillInstall = (val: { skill: Skill; report: SecurityReport } | null) =>
+    setPageStatus((prev) => ({ ...prev, pendingSkillInstall: val }));
+  const prepareGenerationRef = useRef(0);
 
   const { data: cacheStats } = useQuery({
     queryKey: ["cache-stats"],
@@ -375,13 +420,20 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
 
   const prepareSkillInstall = async (skill: Skill) => {
     if (preparingSkillId || installingSkillId) return;
+    const requestId = ++prepareGenerationRef.current;
     try {
       setPreparingSkillId(skill.id);
       const report = await api.prepareSkillInstallation(skill.id, i18n.language);
+      if (prepareGenerationRef.current !== requestId) {
+        void invoke("cancel_skill_installation", { skillId: skill.id }).catch(console.error);
+        return;
+      }
       setPendingSkillInstall({ skill, report });
     } catch (error: any) {
+      if (prepareGenerationRef.current !== requestId) return;
       appToast.error(`${t("skills.toast.installFailed")}: ${error.message || error}`);
     } finally {
+      if (prepareGenerationRef.current !== requestId) return;
       setPreparingSkillId(null);
     }
   };
@@ -427,6 +479,32 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
       urlInputRef.current?.focus();
     });
   }, [activeTab, showAddForm]);
+
+  // 组件卸载时，若安全确认对话框处于打开状态（用户切走页面），取消后端安装准备
+  useEffect(() => {
+    return () => {
+      prepareGenerationRef.current += 1;
+      const status = queryClient.getQueryData<RepositoriesPageStatus>(REPOSITORIES_PAGE_STATUS_KEY);
+      const pendingSkillId = status?.pendingSkillInstall?.skill.id;
+      const currentPreparingId = status?.preparingSkillId;
+      const shouldCancelPending = pendingSkillId && status?.installingSkillId !== pendingSkillId;
+      if (shouldCancelPending) {
+        void invoke("cancel_skill_installation", { skillId: pendingSkillId }).catch(console.error);
+      }
+      queryClient.setQueryData(REPOSITORIES_PAGE_STATUS_KEY, (prev?: RepositoriesPageStatus) =>
+        prev && (prev.pendingSkillInstall !== null || prev.preparingSkillId !== null)
+          ? {
+              ...prev,
+              pendingSkillInstall: null,
+              preparingSkillId:
+                currentPreparingId && prev.preparingSkillId === currentPreparingId
+                  ? null
+                  : prev.preparingSkillId,
+            }
+          : prev
+      );
+    };
+  }, [queryClient]);
 
   const pageBusyMessage = useMemo(() => {
     if (refreshFeaturedMarketplacesMutation.isPending) {
@@ -1016,6 +1094,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
         report={pendingSkillInstall?.report || null}
         skillName={pendingSkillInstall?.skill.name || ""}
         onClose={() => {
+          prepareGenerationRef.current += 1;
           const skillId = pendingSkillInstall?.skill.id;
           const shouldCancel = skillId && installingSkillId !== skillId;
           setPendingSkillInstall(null);
@@ -1027,6 +1106,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
         onConfirm={async (selectedPath, targetTools) => {
           if (!pendingSkillInstall) return;
           const skillId = pendingSkillInstall.skill.id;
+          prepareGenerationRef.current += 1;
           setInstallingSkillId(skillId);
           setPendingSkillInstall(null);
           try {
