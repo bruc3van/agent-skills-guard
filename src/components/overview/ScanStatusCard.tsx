@@ -29,8 +29,7 @@ export function ScanStatusCard({
   const rawProgress = totalCount > 0 ? Math.min(100, (scannedCount / totalCount) * 100) : 0;
   const progress = isScanning ? Math.min(rawProgress, 99) : rawProgress;
   const isComplete = totalCount > 0 && scannedCount >= totalCount;
-  const fileProgressDisplay =
-    fileProgress && fileProgress.total > 0 ? fileProgress : null;
+  const fileProgressDisplay = fileProgress && fileProgress.total > 0 ? fileProgress : null;
   const noIssueDisplay = fileProgressDisplay ?? { scanned: scannedCount, total: totalCount };
   const noIssueLabel = fileProgressDisplay ? t("overview.scanStatus.files") : countLabel;
   const showIndeterminate = isScanning && (totalCount === 0 || scannedCount === 0);
@@ -51,7 +50,9 @@ export function ScanStatusCard({
 
   const status = getStatusInfo();
   const countClass = "text-2xl font-semibold text-foreground tabular-nums";
-  const labelClass = isScanning ? "text-[11px] text-muted-foreground" : "text-xs text-muted-foreground";
+  const labelClass = isScanning
+    ? "text-[11px] text-muted-foreground"
+    : "text-xs text-muted-foreground";
 
   return (
     <div className="apple-card p-6 h-full">

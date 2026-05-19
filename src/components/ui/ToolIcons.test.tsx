@@ -35,24 +35,13 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 
 describe("ToolIcons", () => {
   it("always shows the universal folder button when the agents path is available", () => {
-    render(
-      <ToolIcons
-        activeToolIds={[]}
-        isLocalOnly
-        onToggle={() => undefined}
-      />
-    );
+    render(<ToolIcons activeToolIds={[]} isLocalOnly onToggle={() => undefined} />);
 
     expect(screen.getByTitle("打开目录: C:/Users/Bruce/.agents/skills")).not.toBeNull();
   });
 
   it("does not show a folder button for missing tool directories", () => {
-    render(
-      <ToolIcons
-        activeToolIds={["codex"]}
-        onToggle={() => undefined}
-      />
-    );
+    render(<ToolIcons activeToolIds={["codex"]} onToggle={() => undefined} />);
 
     expect(screen.queryByTitle("打开目录: C:/Users/Bruce/.codex/skills")).toBeNull();
   });

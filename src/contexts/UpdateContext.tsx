@@ -187,9 +187,11 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     if (!isThrottleDue(AUTO_CHECKED_AT_KEY, AUTO_CHECK_INTERVAL_MS)) return;
 
     const timer = setTimeout(() => {
-      checkUpdate().then(() => {
-        markThrottleCompleted(AUTO_CHECKED_AT_KEY);
-      }).catch(console.error);
+      checkUpdate()
+        .then(() => {
+          markThrottleCompleted(AUTO_CHECKED_AT_KEY);
+        })
+        .catch(console.error);
     }, 4000);
 
     return () => clearTimeout(timer);

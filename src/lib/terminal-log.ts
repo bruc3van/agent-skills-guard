@@ -3,7 +3,8 @@ const ANSI_RE =
   /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
 
 const PROGRESS_FRAME_RE = /^[\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f\-\\|/]$/;
-const ASCII_ART_CHAR_RE = /[\u2500-\u257f\u2580-\u259f\u25a0-\u25ff\u2800-\u28ff\u2b00-\u2bff\/\\|_=#@*~^+]/g;
+const ASCII_ART_CHAR_RE =
+  /[\u2500-\u257f\u2580-\u259f\u25a0-\u25ff\u2800-\u28ff\u2b00-\u2bff\/\\|_=#@*~^+]/g;
 
 export function sanitizeTerminalText(value: string): string {
   const stripped = value.replace(ANSI_RE, "");

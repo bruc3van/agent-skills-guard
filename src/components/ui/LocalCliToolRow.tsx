@@ -24,9 +24,7 @@ export function LocalCliToolRow({ tool, onUpdate, isUpdating }: Props) {
         <div className="flex items-center gap-2">
           <span className="text-sm font-mono font-medium truncate">{tool.id}</span>
           {tool.current_version && (
-            <span className="text-xs text-muted-foreground font-mono">
-              v{tool.current_version}
-            </span>
+            <span className="text-xs text-muted-foreground font-mono">v{tool.current_version}</span>
           )}
           {hasUpdate && tool.latest_version && (
             <span className="text-[10px] bg-amber-500/15 text-amber-600 border border-amber-500/40 px-1.5 py-0.5 rounded font-mono">

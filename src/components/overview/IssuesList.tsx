@@ -20,7 +20,9 @@ import { appToast } from "@/lib/toast";
 
 interface IssuesListProps {
   issues: Array<SkillScanResult & { kind: "skill" | "plugin"; local_path?: string }>;
-  onOpenDirectory: (item: SkillScanResult & { kind: "skill" | "plugin"; local_path?: string }) => void;
+  onOpenDirectory: (
+    item: SkillScanResult & { kind: "skill" | "plugin"; local_path?: string }
+  ) => void;
 }
 
 const levelConfig = {
@@ -100,7 +102,12 @@ export function IssuesList({ issues, onOpenDirectory }: IssuesListProps) {
           if (!prev) return prev;
           return prev.map((plugin) =>
             plugin.id === pluginId
-              ? { ...plugin, installed: false, installed_at: undefined, install_status: "uninstalled" }
+              ? {
+                  ...plugin,
+                  installed: false,
+                  installed_at: undefined,
+                  install_status: "uninstalled",
+                }
               : plugin
           );
         });

@@ -48,4 +48,3 @@ export async function clearWebPersistedData(): Promise<void> {
     // ignore
   }
 }
-

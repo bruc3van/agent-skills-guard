@@ -24,8 +24,7 @@ describe("sanitizeTerminalText", () => {
   });
 
   it("removes block-character banner lines", () => {
-    const raw =
-      "opencode\r\n█▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█\r\nopencode installed\r\n";
+    const raw = "opencode\r\n█▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█\r\nopencode installed\r\n";
 
     expect(sanitizeTerminalText(raw)).toBe("opencode\nopencode installed");
   });

@@ -1,6 +1,12 @@
 import type { SecurityIssue, SecurityReport } from "./security";
 
-export type TabType = "overview" | "marketplace" | "installed" | "repositories" | "local-cli" | "settings";
+export type TabType =
+  | "overview"
+  | "marketplace"
+  | "installed"
+  | "repositories"
+  | "local-cli"
+  | "settings";
 
 export interface Repository {
   id: string;
@@ -41,9 +47,9 @@ export interface Skill {
   security_issues?: SecurityIssue[];
   security_report?: SecurityReport;
   installed_commit_sha?: string;
-  source_path?: string;       // 统一源路径 (~/.agents/skills/<name>)
-  linked_tools?: string[];    // 已链接的工具 id 列表
-  is_local_only?: boolean;    // true = 用户手动放入，未经本工具安装
+  source_path?: string; // 统一源路径 (~/.agents/skills/<name>)
+  linked_tools?: string[]; // 已链接的工具 id 列表
+  is_local_only?: boolean; // true = 用户手动放入，未经本工具安装
 }
 
 export interface AgentToolInfo {

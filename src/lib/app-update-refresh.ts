@@ -2,8 +2,7 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { AGENT_TOOLS_KEY } from "./agent-tools";
 import { api } from "./api";
 
-export const APP_VERSION_SKILL_REFRESH_KEY =
-  "agent-skills-guard:skill-state-refreshed-version";
+export const APP_VERSION_SKILL_REFRESH_KEY = "agent-skills-guard:skill-state-refreshed-version";
 
 const SKILL_STATE_QUERY_KEYS: QueryKey[] = [
   ["skills"],

@@ -91,9 +91,7 @@ export function ToolIcons({
   const [confirmTarget, setConfirmTarget] = useState<ToolDef | null>(null);
   const { data: agentTools = [] } = useAgentTools();
   const toolPathMap = new Map(
-    agentTools
-      .filter((t) => t.present && t.path)
-      .map((t) => [t.id, t.path])
+    agentTools.filter((t) => t.present && t.path).map((t) => [t.id, t.path])
   );
   const agentsPath = toolPathMap.get("agents");
 
@@ -111,9 +109,7 @@ export function ToolIcons({
   return (
     <>
       <div className="pt-4 border-t border-border/60">
-        <div className="text-xs font-medium text-muted-foreground mb-3">
-          编程工具
-        </div>
+        <div className="text-xs font-medium text-muted-foreground mb-3">编程工具</div>
         <div className="flex flex-wrap gap-2">
           {activeToolIds.includes("agents") ? (
             /* 已在通用目录 — 静态徽章 + 始终显示打开目录按钮 */
@@ -189,8 +185,8 @@ export function ToolIcons({
                       ? `已在 ${tool.label}，点击取消`
                       : `点击同步到 ${tool.label}（将移至通用目录）`
                     : active
-                    ? `已同步到 ${tool.label}，点击取消`
-                    : `点击同步到 ${tool.label}`
+                      ? `已同步到 ${tool.label}，点击取消`
+                      : `点击同步到 ${tool.label}`
                 }
                 className={`
                   flex items-center px-2 py-1.5 border transition-all cursor-pointer
@@ -224,11 +220,12 @@ export function ToolIcons({
                   onClick={() => openToolDir(toolPath!)}
                   title={`打开目录: ${toolPath}`}
                   className={`h-full px-1.5 py-1.5 rounded-r-lg border transition-colors
-                    ${active
-                      ? ""
-                      : "border-border/60 opacity-50 hover:opacity-80"
-                    }`}
-                  style={active ? { borderColor: tool.color, backgroundColor: tool.bg, color: tool.color } : undefined}
+                    ${active ? "" : "border-border/60 opacity-50 hover:opacity-80"}`}
+                  style={
+                    active
+                      ? { borderColor: tool.color, backgroundColor: tool.bg, color: tool.color }
+                      : undefined
+                  }
                 >
                   <FolderOpen className="w-3 h-3" />
                 </button>
