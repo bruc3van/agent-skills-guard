@@ -11,7 +11,7 @@ pub mod skill_manager;
 
 pub use agent_tools::{AgentTool, AgentToolInfo};
 pub use database::Database;
-pub use github::GitHubService;
+pub use github::{GitHubService, SkillUpdateStatus};
 pub use local_cli_scanner::{
     detect_version as detect_cli_version, discover_local_cli_tools, resolve_description_for_path,
 };

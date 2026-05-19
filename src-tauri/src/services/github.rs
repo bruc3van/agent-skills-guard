@@ -925,50 +925,50 @@ impl GitHubService {
         hex::encode(result)
     }
 
-    /// 检查技能是否有更新
-    /// 返回 Option<String>：如果有更新，返回最新的 commit SHA；如果没有更新或出错，返回 None
-    pub async fn check_skill_update(
+    /// 查询某仓库路径下最新一次（在可选的 ref_sha 之前或包含 ref_sha）的提交 SHA。
+    ///
+    /// - `skill_path` 为 "." 或空时不带 path 过滤，等价于查询仓库最新提交。
+    /// - `ref_sha` 为 Some 时，结果是「在该提交（含）之前最近一次触及该路径的提交」。
+    /// - `ref_sha` 为 None 时，结果是「当前 HEAD 上最近一次触及该路径的提交」。
+    ///
+    /// 找不到任何提交时返回 Ok(None)；遇到 403/网络错误时返回 Err 让调用方决定。
+    pub async fn fetch_latest_commit_sha_for_path(
         &self,
         owner: &str,
         repo: &str,
         skill_path: &str,
-        installed_commit_sha: Option<&str>,
+        ref_sha: Option<&str>,
     ) -> Result<Option<String>> {
-        // 如果没有安装的 commit SHA，无法判断是否更新
-        let installed_sha = match installed_commit_sha {
-            Some(sha) => sha,
-            None => {
-                log::warn!("技能没有 installed_commit_sha，无法检查更新");
-                return Ok(None);
-            }
-        };
-
-        // 构建 API URL
+        let url = format!("{}/repos/{}/{}/commits", self.api_base, owner, repo);
         let path_param = if skill_path == "." { "" } else { skill_path };
-        let url = if path_param.is_empty() {
-            format!(
-                "{}/repos/{}/{}/commits?per_page=1",
-                self.api_base, owner, repo
-            )
-        } else {
-            format!(
-                "{}/repos/{}/{}/commits?path={}&per_page=1",
-                self.api_base, owner, repo, path_param
-            )
-        };
 
-        log::info!("检查技能更新: {}", url);
+        // 用 reqwest 的 .query() 自动 percent-encode，避免 path/sha 含空格、`#` 等字符时拼接出错
+        let mut query: Vec<(&str, &str)> = vec![("per_page", "1")];
+        if !path_param.is_empty() {
+            query.push(("path", path_param));
+        }
+        if let Some(s) = ref_sha {
+            if !s.is_empty() {
+                query.push(("sha", s));
+            }
+        }
 
-        // 发送请求
+        log::info!(
+            "查询提交 SHA: {} (path={:?}, sha={:?})",
+            url,
+            path_param,
+            ref_sha
+        );
+
         let response = self
             .client
             .get(&url)
+            .query(&query)
             .send()
             .await
-            .context("检查更新时网络请求失败")?;
+            .context("查询提交信息时网络请求失败")?;
 
         let status = response.status();
-
         if !status.is_success() {
             match status.as_u16() {
                 403 => {
@@ -978,7 +978,7 @@ impl GitHubService {
                     return Err(anyhow::anyhow!("GITHUB_REPO_FORBIDDEN"));
                 }
                 404 => {
-                    log::warn!("技能路径不存在: {}/{}/{}", owner, repo, skill_path);
+                    log::warn!("仓库或路径不存在: {}/{}/{}", owner, repo, skill_path);
                     return Ok(None);
                 }
                 _ => {
@@ -987,42 +987,125 @@ impl GitHubService {
             }
         }
 
-        // 解析响应
         let commits: Vec<GitHubCommit> =
             response.json().await.context("解析 GitHub 提交信息失败")?;
 
-        if let Some(latest_commit) = commits.first() {
-            let latest_sha = &latest_commit.sha;
+        Ok(commits.into_iter().next().map(|c| c.sha))
+    }
 
-            log::info!(
-                "技能 {}/{}/{} - 已安装: {}，最新: {}",
-                owner,
-                repo,
-                skill_path,
-                installed_sha,
-                latest_sha
-            );
+    /// 检查技能是否有更新。
+    ///
+    /// 子目录 skill 兼容策略：installed_commit_sha 历史上可能记录的是「仓库 HEAD」而非
+    /// 「最近触及该子目录的提交」，会导致两者永不相等而误报更新。本函数在首轮比对未通过时
+    /// 追加一次「以 installed_sha 为参考」的查询，若两次结果一致说明用户实际内容已是最新；
+    /// 此时通过 `UpToDate { canonical_sha: Some(_) }` 把规范 SHA 回报给调用方，
+    /// 由调用方写回数据库完成「自愈」，避免每次检查都付出 2× API 调用。
+    pub async fn check_skill_update(
+        &self,
+        owner: &str,
+        repo: &str,
+        skill_path: &str,
+        installed_commit_sha: Option<&str>,
+    ) -> Result<SkillUpdateStatus> {
+        let installed_sha = match installed_commit_sha {
+            Some(sha) if !sha.is_empty() => sha,
+            _ => {
+                log::warn!("技能没有 installed_commit_sha，无法检查更新");
+                return Ok(SkillUpdateStatus::Unknown);
+            }
+        };
 
-            // 全量比较；若已安装的是短 SHA，则用 starts_with 兼容
-            let has_update = if installed_sha.is_empty() {
-                true
-            } else if installed_sha.len() < latest_sha.len() {
-                !latest_sha.starts_with(&installed_sha[..])
-            } else {
-                installed_sha != *latest_sha
-            };
+        // Step 1: HEAD 上路径过滤后的最新提交
+        let path_latest = match self
+            .fetch_latest_commit_sha_for_path(owner, repo, skill_path, None)
+            .await?
+        {
+            Some(sha) => sha,
+            None => return Ok(SkillUpdateStatus::Unknown),
+        };
 
-            if has_update {
-                log::info!("检测到更新可用");
-                return Ok(Some(latest_sha.clone()));
-            } else {
-                log::info!("已是最新版本");
-                return Ok(None);
+        log::info!(
+            "技能 {}/{}/{} - 已安装: {}，路径最新: {}",
+            owner,
+            repo,
+            skill_path,
+            installed_sha,
+            path_latest
+        );
+
+        if shas_match(installed_sha, &path_latest) {
+            log::info!("已是最新版本");
+            return Ok(SkillUpdateStatus::UpToDate {
+                canonical_sha: None,
+            });
+        }
+
+        // Step 2: 容错。以 installed_sha 为参考查询「截至该提交时」路径上的最新提交。
+        // 若与 HEAD 上路径最新一致，说明 installed_sha 是不触及该路径的较新提交，
+        // 用户当前文件内容已等同 path_latest，无需更新。
+        match self
+            .fetch_latest_commit_sha_for_path(owner, repo, skill_path, Some(installed_sha))
+            .await
+        {
+            Ok(Some(historical_path_latest)) => {
+                if shas_match(&historical_path_latest, &path_latest) {
+                    log::info!(
+                        "已是最新版本 (installed_sha {} 未触及路径，建议回写为 {})",
+                        installed_sha,
+                        path_latest
+                    );
+                    // 把规范 SHA 报回去，调用方写回数据库后下次只需一次 API 调用即可判定。
+                    return Ok(SkillUpdateStatus::UpToDate {
+                        canonical_sha: Some(path_latest),
+                    });
+                }
+            }
+            Ok(None) => {
+                log::warn!("回退查询未返回提交，按有更新处理");
+            }
+            Err(e) => {
+                log::warn!("回退查询失败 (按有更新处理): {}", e);
             }
         }
 
-        Ok(None)
+        log::info!("检测到更新可用");
+        Ok(SkillUpdateStatus::UpdateAvailable {
+            latest_sha: path_latest,
+        })
     }
+}
+
+/// 技能更新检查结果。
+#[derive(Debug, Clone)]
+pub enum SkillUpdateStatus {
+    /// 已是最新版本。
+    /// `canonical_sha` 是 Some 时，表示 installed_sha 与规范的 path-aware SHA 等价但形态不同
+    /// （例如旧数据里记录的是仓库 HEAD），调用方应把它写回数据库以避免后续重复的回退查询。
+    UpToDate { canonical_sha: Option<String> },
+    /// 有更新可用。
+    UpdateAvailable { latest_sha: String },
+    /// 无法判断（installed_sha 缺失、仓库/路径不存在等）。
+    Unknown,
+}
+
+/// 短 SHA 前缀匹配的最小长度。Git 默认短 SHA 是 7 字符，低于此阈值前缀匹配
+/// 容易出现碰撞或误吞错误（例如 `installed_sha = "ab"` 会匹配任何以 ab 开头的提交）。
+const MIN_SHA_PREFIX_LEN: usize = 7;
+
+/// SHA 等价比较：兼容短 SHA（前缀），但短的一侧必须至少 [`MIN_SHA_PREFIX_LEN`] 字符。
+///
+/// - 任一侧为空：false
+/// - 等长：要求完全相等
+/// - 不等长：取短侧作前缀；短侧短于 7 字符时拒绝匹配，避免脏数据被静默接受
+fn shas_match(a: &str, b: &str) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    if short.len() < long.len() && short.len() < MIN_SHA_PREFIX_LEN {
+        return false;
+    }
+    long.starts_with(short)
 }
 
 impl Default for GitHubService {
@@ -1074,5 +1157,50 @@ mod tests {
         assert_eq!(error, "PRIVATE_REPOSITORY_UNSUPPORTED");
         assert!(!error.contains("main"));
         assert!(!error.contains("master"));
+    }
+
+    #[test]
+    fn shas_match_rejects_empty_inputs() {
+        assert!(!shas_match("", "abcdef1234"));
+        assert!(!shas_match("abcdef1234", ""));
+        assert!(!shas_match("", ""));
+    }
+
+    #[test]
+    fn shas_match_accepts_exact_equal_shas() {
+        let sha = "abcdef1234567890abcdef1234567890abcdef12";
+        assert!(shas_match(sha, sha));
+    }
+
+    #[test]
+    fn shas_match_rejects_equal_length_non_equal() {
+        let a = "abcdef1234567890abcdef1234567890abcdef12";
+        let b = "abcdef1234567890abcdef1234567890abcdef34";
+        assert!(!shas_match(a, b));
+    }
+
+    #[test]
+    fn shas_match_accepts_valid_short_sha_prefix() {
+        // 7 字符短 SHA 是 git 默认长度
+        let installed = "abcdef1";
+        let latest = "abcdef1234567890abcdef1234567890abcdef12";
+        assert!(shas_match(installed, latest));
+        assert!(shas_match(latest, installed)); // 顺序无关
+    }
+
+    #[test]
+    fn shas_match_rejects_too_short_prefix_even_if_matching() {
+        // 防止脏数据被静默吞掉：低于 7 字符的前缀不应触发匹配
+        let installed = "ab";
+        let latest = "abcdef1234567890abcdef1234567890abcdef12";
+        assert!(!shas_match(installed, latest));
+        assert!(!shas_match(latest, installed));
+    }
+
+    #[test]
+    fn shas_match_rejects_short_prefix_that_does_not_match() {
+        let installed = "deadbee";
+        let latest = "abcdef1234567890abcdef1234567890abcdef12";
+        assert!(!shas_match(installed, latest));
     }
 }

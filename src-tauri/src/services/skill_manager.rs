@@ -727,6 +727,25 @@ impl SkillManager {
         // 使用 staging_path 存储临时缓存路径，不污染 local_path
         skill.staging_path = Some(skill_cache_dir.to_string_lossy().to_string());
 
+        // 解析路径感知的 installed_commit_sha：以「上次仓库下载时记录的 commit SHA」
+        // （而非真实的当前远端 HEAD）为参考，查询最近触及该 skill 子目录的提交 SHA。
+        // 子目录 skill 若直接记录仓库 HEAD，会与后续 check_skill_update 用的路径过滤结果
+        // 不一致，导致永远报告有更新。此处在 confirm 之前写入，confirm 时优先使用；
+        // 不可用时回退到 cached_repo_sha 自身。
+        let cached_repo_sha = {
+            let repos = self.db.get_repositories()?;
+            repos
+                .iter()
+                .find(|r| r.url == skill.repository_url)
+                .and_then(|r| r.cached_commit_sha.clone())
+        };
+        if let Some(cached) = cached_repo_sha.as_deref() {
+            let resolved = self
+                .resolve_path_aware_commit_sha(&skill.repository_url, &skill.file_path, cached)
+                .await;
+            skill.installed_commit_sha = Some(resolved);
+        }
+
         // 保存安全信息到数据库，但不标记为已安装
         self.db.save_skill(&skill)?;
 
@@ -768,6 +787,118 @@ impl SkillManager {
         log::info!("Repository cached successfully: {}", cache_path_str);
 
         Ok(cache_path_str)
+    }
+
+    /// 解析「路径感知」commit SHA：以 `ref_sha` 为参考，查询该 skill 子目录最近一次
+    /// 被触及的提交 SHA。任意失败均回退为 `ref_sha` 本身，保证调用方拿到一个可用值。
+    ///
+    /// `ref_sha` 通常是「上次下载仓库时记录的 commit SHA」或刚刚下载得到的新 SHA，
+    /// 不一定等于真实的当前远端 HEAD —— 故参数名不再叫 `head_sha`。
+    ///
+    /// 这是 prepare/update 共用的单一事实源；blocking 包装见
+    /// [`resolve_path_aware_commit_sha_blocking`]。
+    async fn resolve_path_aware_commit_sha(
+        &self,
+        repository_url: &str,
+        file_path: &str,
+        ref_sha: &str,
+    ) -> String {
+        let (owner, repo_name) = match crate::models::Repository::from_github_url(repository_url)
+        {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("无法解析仓库 URL，回退为 ref={}：{}", ref_sha, e);
+                return ref_sha.to_string();
+            }
+        };
+
+        match self
+            .github
+            .fetch_latest_commit_sha_for_path(&owner, &repo_name, file_path, Some(ref_sha))
+            .await
+        {
+            Ok(Some(path_aware)) => {
+                log::info!(
+                    "解析路径感知 commit SHA: {} (ref={}, path={})",
+                    path_aware,
+                    ref_sha,
+                    file_path
+                );
+                path_aware
+            }
+            Ok(None) => {
+                log::warn!(
+                    "路径感知 SHA 查询无结果，回退为 ref={} (path={})",
+                    ref_sha,
+                    file_path
+                );
+                ref_sha.to_string()
+            }
+            Err(e) => {
+                log::warn!("路径感知 SHA 查询失败，回退为 ref={}：{}", ref_sha, e);
+                ref_sha.to_string()
+            }
+        }
+    }
+
+    /// [`resolve_path_aware_commit_sha`] 的 blocking 包装。
+    ///
+    /// 仅可用于 spawn_blocking 线程：`Handle::block_on` 在 tokio 运行时的 worker 上会 panic。
+    /// 拿不到运行时句柄时静默回退为 `ref_sha`。
+    fn resolve_path_aware_commit_sha_blocking(
+        &self,
+        repository_url: &str,
+        file_path: &str,
+        ref_sha: &str,
+    ) -> String {
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle.block_on(self.resolve_path_aware_commit_sha(
+                repository_url,
+                file_path,
+                ref_sha,
+            )),
+            Err(_) => {
+                log::warn!("无 tokio 运行时句柄，回退为 ref={}", ref_sha);
+                ref_sha.to_string()
+            }
+        }
+    }
+
+    /// 把 `installed_commit_sha` 写回为「规范的 path-aware SHA」。
+    ///
+    /// 用于 [`crate::services::github::SkillUpdateStatus::UpToDate`] 携带 `canonical_sha`
+    /// 时的自愈：旧版数据可能把仓库 HEAD 当作 installed SHA 存入，导致每次更新检查都需要
+    /// 额外的回退查询。命中即修，避免长期付出 2× API 成本。
+    ///
+    /// 注意：只有当 skill 已安装且本地记录的 SHA 与 `new_sha` 实际不同时才写回，
+    /// 避免无谓的 db 写。
+    pub fn migrate_installed_commit_sha(&self, skill_id: &str, new_sha: &str) -> Result<bool> {
+        use anyhow::Context;
+
+        if new_sha.is_empty() {
+            return Ok(false);
+        }
+
+        let mut skill = self
+            .db
+            .get_skills()?
+            .into_iter()
+            .find(|s| s.id == skill_id)
+            .context("SKILL_NOT_FOUND")?;
+
+        if skill.installed_commit_sha.as_deref() == Some(new_sha) {
+            return Ok(false);
+        }
+
+        log::info!(
+            "迁移 skill {} 的 installed_commit_sha: {:?} -> {}",
+            skill_id,
+            skill.installed_commit_sha,
+            new_sha
+        );
+        skill.installed_commit_sha = Some(new_sha.to_string());
+        self.db.save_skill(&skill)?;
+        Ok(true)
     }
 
     /// 在仓库缓存中定位技能目录
@@ -933,10 +1064,14 @@ impl SkillManager {
             anyhow::bail!("SKILL_NO_INSTALL_PATH");
         };
 
-        // 获取仓库的 cached_commit_sha
+        // 优先使用 prepare 阶段写入的路径感知 SHA；缺失时回退到仓库 HEAD（向后兼容
+        // 旧路径与未经过 prepare 的极端情况）。
         let repositories = self.db.get_repositories()?;
         let repo = repositories.iter().find(|r| r.url == skill.repository_url);
-        let commit_sha = repo.and_then(|r| r.cached_commit_sha.clone());
+        let commit_sha = skill
+            .installed_commit_sha
+            .clone()
+            .or_else(|| repo.and_then(|r| r.cached_commit_sha.clone()));
 
         // 确定最终安装路径
         let install_base_dir = if let Some(user_path) = &install_path {
@@ -2529,7 +2664,15 @@ impl SkillManager {
 
                 match self.github.extract_commit_sha_from_cache(&extract_dir) {
                     Ok(new_sha) => {
-                        skill.installed_commit_sha = Some(new_sha.clone());
+                        // 将仓库 HEAD SHA 转换为「路径感知」SHA，避免子目录 skill 长期误报更新。
+                        // helper 内部已在失败时回退为 head_sha（read 侧 check_skill_update 仍能容错）。
+                        let recorded_sha = self.resolve_path_aware_commit_sha_blocking(
+                            &skill.repository_url,
+                            &skill.file_path,
+                            &new_sha,
+                        );
+
+                        skill.installed_commit_sha = Some(recorded_sha);
                         log::info!("更新 installed_commit_sha");
 
                         // 将 staging 下载的版本提升为“仓库缓存基线”，避免后续把已更新内容误判为“本地修改”
@@ -3563,6 +3706,86 @@ mod tests {
             std::fs::read_to_string(dst.join(".gitignore")).unwrap(),
             "target\n"
         );
+    }
+
+    #[test]
+    fn migrate_installed_commit_sha_writes_back_and_reports_change() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            "https://github.com/owner/repo".to_string(),
+            "skills/example".to_string(),
+        );
+        skill.id = "skill-migrate".to_string();
+        skill.installed = true;
+        skill.installed_commit_sha =
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string());
+        db.save_skill(&skill).unwrap();
+
+        let canonical = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let changed = manager
+            .migrate_installed_commit_sha(&skill.id, canonical)
+            .unwrap();
+        assert!(changed, "首次迁移应返回 true");
+
+        let reloaded = db
+            .get_skills()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == skill.id)
+            .unwrap();
+        assert_eq!(reloaded.installed_commit_sha.as_deref(), Some(canonical));
+    }
+
+    #[test]
+    fn migrate_installed_commit_sha_is_noop_when_already_canonical() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+
+        let canonical = "cccccccccccccccccccccccccccccccccccccccc";
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            "https://github.com/owner/repo".to_string(),
+            "skills/example".to_string(),
+        );
+        skill.id = "skill-noop".to_string();
+        skill.installed = true;
+        skill.installed_commit_sha = Some(canonical.to_string());
+        db.save_skill(&skill).unwrap();
+
+        let changed = manager
+            .migrate_installed_commit_sha(&skill.id, canonical)
+            .unwrap();
+        assert!(!changed, "已是规范 SHA 时不应写库");
+    }
+
+    #[test]
+    fn migrate_installed_commit_sha_rejects_empty_new_sha() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+
+        // 没有 skill 也应直接返回 false，不报错
+        let changed = manager
+            .migrate_installed_commit_sha("nonexistent", "")
+            .unwrap();
+        assert!(!changed);
+    }
+
+    #[test]
+    fn migrate_installed_commit_sha_errors_when_skill_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(db);
+
+        let err = manager
+            .migrate_installed_commit_sha("nonexistent", "abcdef1234")
+            .unwrap_err();
+        assert!(err.to_string().contains("SKILL_NOT_FOUND"));
     }
 
     #[test]

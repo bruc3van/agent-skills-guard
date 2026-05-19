@@ -4,7 +4,9 @@ pub mod plugins;
 pub mod security;
 
 use crate::models::{FeaturedRepositoriesConfig, Repository, Skill, LOCAL_REPOSITORY_URL};
-use crate::services::{AgentTool, Database, GitHubService, PluginManager, SkillManager};
+use crate::services::{
+    AgentTool, Database, GitHubService, PluginManager, SkillManager, SkillUpdateStatus,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -1300,21 +1302,56 @@ pub async fn check_skills_updates(
         .collect();
 
     let mut updates = Vec::new();
+    // 旧数据可能把仓库 HEAD 当作 installed SHA，导致每次都需要回退查询；
+    // 命中即修，避免长期付出 2× API 成本。
+    let mut canonical_corrections: Vec<(String, String)> = Vec::new();
     for task in tasks {
         match task.await {
-            Ok((skill_id, skill_name, Ok(Some(latest_sha)))) => {
-                log::info!("技能 {} 有更新可用: {}", skill_name, latest_sha);
-                updates.push((skill_id, latest_sha));
-            }
-            Ok((_, skill_name, Ok(None))) => {
-                log::debug!("技能 {} 无更新", skill_name);
-            }
+            Ok((skill_id, skill_name, Ok(status))) => match status {
+                SkillUpdateStatus::UpdateAvailable { latest_sha } => {
+                    log::info!("技能 {} 有更新可用: {}", skill_name, latest_sha);
+                    updates.push((skill_id, latest_sha));
+                }
+                SkillUpdateStatus::UpToDate {
+                    canonical_sha: Some(sha),
+                } => {
+                    log::info!(
+                        "技能 {} 已是最新；将把 installed_commit_sha 迁移为规范形态 {}",
+                        skill_name,
+                        sha
+                    );
+                    canonical_corrections.push((skill_id, sha));
+                }
+                SkillUpdateStatus::UpToDate {
+                    canonical_sha: None,
+                } => {
+                    log::debug!("技能 {} 无更新", skill_name);
+                }
+                SkillUpdateStatus::Unknown => {
+                    log::debug!("技能 {} 无法判断更新状态", skill_name);
+                }
+            },
             Ok((_, skill_name, Err(e))) => {
                 log::warn!("检查技能 {} 更新时出错: {}", skill_name, e);
             }
             Err(e) => {
                 log::warn!("检查更新任务 panic: {}", e);
             }
+        }
+    }
+
+    if !canonical_corrections.is_empty() {
+        let manager = state.skill_manager.lock().await;
+        let mut migrated = 0usize;
+        for (skill_id, sha) in &canonical_corrections {
+            match manager.migrate_installed_commit_sha(skill_id, sha) {
+                Ok(true) => migrated += 1,
+                Ok(false) => {}
+                Err(e) => log::warn!("写回 skill {} 的 installed_commit_sha 失败: {}", skill_id, e),
+            }
+        }
+        if migrated > 0 {
+            log::info!("已迁移 {} 个技能的 installed_commit_sha 为 path-aware 形态", migrated);
         }
     }
 
