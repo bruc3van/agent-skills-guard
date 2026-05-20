@@ -20,6 +20,9 @@ pub struct SkillManager {
     installing: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
+const CACHE_LOCAL_PATH_PREFIX: &str = "__cache__:";
+const STAGING_LOCAL_PATH_PREFIX: &str = "__staging__:";
+
 fn build_synced_tool_state(
     source: &Path,
     skill_dir_name: &str,
@@ -120,6 +123,24 @@ fn build_local_skill_id(checksum: &str, local_path: &Path) -> String {
     let digest = hex::encode(hasher.finalize());
 
     format!("local::{}", &digest[..16])
+}
+
+fn legacy_staging_path(local_path: &str) -> Option<&str> {
+    local_path.strip_prefix(STAGING_LOCAL_PATH_PREFIX)
+}
+
+fn resolve_staging_dir(skill: &Skill) -> Option<PathBuf> {
+    skill
+        .staging_path
+        .as_deref()
+        .map(PathBuf::from)
+        .or_else(|| {
+            skill
+                .local_path
+                .as_deref()
+                .and_then(legacy_staging_path)
+                .map(PathBuf::from)
+        })
 }
 
 fn normalize_path_for_compare(path: &Path) -> String {
@@ -1004,6 +1025,29 @@ impl SkillManager {
         Ok(())
     }
 
+    fn clear_update_staging_state_best_effort(&self, skill: &mut Skill) {
+        if skill
+            .local_path
+            .as_deref()
+            .and_then(legacy_staging_path)
+            .is_some()
+        {
+            skill.local_path = skill
+                .local_paths
+                .as_ref()
+                .and_then(|paths| paths.last().cloned());
+        }
+        skill.staging_path = None;
+
+        if let Err(error) = self.db.save_skill(skill) {
+            log::warn!(
+                "清理更新 staging 状态失败，skill={} error={}",
+                skill.name,
+                error
+            );
+        }
+    }
+
     /// 确认安装技能：从缓存复制到目标路径，标记为已安装
     /// target_tools: 要同步链接的工具 id 列表（除 "agents" 外的工具）
     pub fn confirm_skill_installation(
@@ -1055,7 +1099,7 @@ impl SkillManager {
         let cache_dir = if let Some(staging) = &skill.staging_path {
             PathBuf::from(staging)
         } else if let Some(local_path) = &skill.local_path {
-            if let Some(path) = local_path.strip_prefix("__cache__:") {
+            if let Some(path) = local_path.strip_prefix(CACHE_LOCAL_PATH_PREFIX) {
                 PathBuf::from(path)
             } else {
                 PathBuf::from(local_path)
@@ -1257,12 +1301,12 @@ impl SkillManager {
 
             // 检查 local_path 是否为残留临时路径
             if let Some(local_path) = &skill.local_path {
-                let is_temp = local_path.starts_with("__cache__:")
-                    || local_path.starts_with("__staging__:");
+                let is_temp = local_path.starts_with(CACHE_LOCAL_PATH_PREFIX)
+                    || local_path.starts_with(STAGING_LOCAL_PATH_PREFIX);
                 if is_temp {
                     let actual_path = local_path
-                        .strip_prefix("__cache__:")
-                        .or_else(|| local_path.strip_prefix("__staging__:"))
+                        .strip_prefix(CACHE_LOCAL_PATH_PREFIX)
+                        .or_else(|| local_path.strip_prefix(STAGING_LOCAL_PATH_PREFIX))
                         .unwrap_or(local_path);
 
                     if !PathBuf::from(actual_path).exists() {
@@ -1313,14 +1357,14 @@ impl SkillManager {
                 let cleaned_paths: Vec<String> = local_paths
                     .iter()
                     .filter(|p| {
-                        let is_temp = p.starts_with("__cache__:")
-                            || p.starts_with("__staging__:");
+                        let is_temp = p.starts_with(CACHE_LOCAL_PATH_PREFIX)
+                            || p.starts_with(STAGING_LOCAL_PATH_PREFIX);
                         if !is_temp {
                             return true; // 保留非临时路径
                         }
                         let actual = p
-                            .strip_prefix("__cache__:")
-                            .or_else(|| p.strip_prefix("__staging__:"))
+                            .strip_prefix(CACHE_LOCAL_PATH_PREFIX)
+                            .or_else(|| p.strip_prefix(STAGING_LOCAL_PATH_PREFIX))
                             .unwrap_or(p.as_str());
                         let keep = PathBuf::from(actual).exists();
                         if !keep {
@@ -1356,10 +1400,10 @@ impl SkillManager {
                 }
                 // 向后兼容：检查 __cache__:/__staging__: 前缀
                 if let Some(local_path) = &s.local_path {
-                    if local_path.starts_with("__cache__:") || local_path.starts_with("__staging__:") {
+                    if local_path.starts_with(CACHE_LOCAL_PATH_PREFIX) || local_path.starts_with(STAGING_LOCAL_PATH_PREFIX) {
                         let actual_path = local_path
-                            .strip_prefix("__cache__:")
-                            .or_else(|| local_path.strip_prefix("__staging__:"))
+                            .strip_prefix(CACHE_LOCAL_PATH_PREFIX)
+                            .or_else(|| local_path.strip_prefix(STAGING_LOCAL_PATH_PREFIX))
                             .unwrap_or(local_path);
                         return !PathBuf::from(actual_path).exists();
                     }
@@ -1721,14 +1765,10 @@ impl SkillManager {
         // 1. 获取所有 unique 的 local_path 父目录
         let mut scan_dirs: HashSet<PathBuf> = HashSet::new();
 
-        // 从已安装技能的 local_path 提取父目录（跳过临时缓存/staging路径）
+        // 从已安装技能的 local_path 提取父目录（跳过旧版临时缓存/staging标记）
         for skill in &existing_skills {
-            // 跳过正在准备中的技能
-            if skill.staging_path.is_some() {
-                continue;
-            }
             if let Some(local_path) = &skill.local_path {
-                if local_path.starts_with("__cache__:") || local_path.starts_with("__staging__:") {
+                if local_path.starts_with(CACHE_LOCAL_PATH_PREFIX) || local_path.starts_with(STAGING_LOCAL_PATH_PREFIX) {
                     continue;
                 }
                 if let Some(parent) = PathBuf::from(local_path).parent() {
@@ -2442,14 +2482,10 @@ impl SkillManager {
 
         log::info!("检测到 {} 个本地修改", modified_files.len());
 
-        // 保存 staging 信息到数据库（临时）
-        // 我们使用一个特殊的字段来标记这是 staging 路径
+        // 保存 staging 信息到数据库（临时），不污染 local_path。
         let mut skill_update = skill.clone();
         Self::apply_scan_report(&mut skill_update, &scan_report);
-        skill_update.local_path = Some(format!(
-            "__staging__:{}",
-            staging_skill_dir.to_string_lossy()
-        ));
+        skill_update.staging_path = Some(staging_skill_dir.to_string_lossy().to_string());
 
         self.db.save_skill(&skill_update)?;
 
@@ -2474,15 +2510,7 @@ impl SkillManager {
             .find(|s| s.id == skill_id)
             .context("SKILL_NOT_FOUND")?;
 
-        // 获取 staging 路径
-        let staging_marker = skill.local_path.as_ref().context("技能尚未准备更新")?;
-
-        if !staging_marker.starts_with("__staging__:") {
-            anyhow::bail!("SKILL_NOT_PREPARED_FOR_UPDATE");
-        }
-
-        let staging_path_str = &staging_marker[12..]; // 去掉 "__staging__:" 前缀
-        let staging_dir = PathBuf::from(staging_path_str);
+        let staging_dir = resolve_staging_dir(&skill).context("技能尚未准备更新")?;
 
         if !staging_dir.exists() {
             anyhow::bail!("STAGING_DIR_NOT_FOUND");
@@ -2635,6 +2663,7 @@ impl SkillManager {
 
                 // 更新数据库：恢复 local_path，更新 installed_commit_sha
                 skill.local_path = Some(display_install_dir.to_string_lossy().to_string());
+                skill.staging_path = None;
                 Self::apply_scan_report(&mut skill, &scan_report);
 
                 // 从 staging 路径推导出 extracted 目录并提取 commit SHA
@@ -2771,6 +2800,7 @@ impl SkillManager {
                         }
                     }
                 }
+                self.clear_update_staging_state_best_effort(&mut skill);
                 Err(e)
             }
         }
@@ -2789,16 +2819,10 @@ impl SkillManager {
             .find(|s| s.id == skill_id)
             .context("SKILL_NOT_FOUND")?;
 
-        // 获取 staging 路径
-        let staging_marker = skill.local_path.as_ref().context("技能尚未准备更新")?;
-
-        if !staging_marker.starts_with("__staging__:") {
+        let Some(staging_dir) = resolve_staging_dir(&skill) else {
             log::warn!("技能没有处于更新准备状态");
             return Ok(());
-        }
-
-        let staging_path_str = &staging_marker[12..];
-        let staging_dir = PathBuf::from(staging_path_str);
+        };
 
         // 只删除该 skill 自身的 staging 目录，不上溯到父/祖父目录，
         // 避免误删同一仓库其他 skill 的 staging 数据。
@@ -2807,16 +2831,19 @@ impl SkillManager {
             log::info!("已删除 staging 目录: {:?}", staging_dir);
         }
 
-        // 恢复数据库中的 local_path
-        if let Some(local_paths) = &skill.local_paths {
-            if let Some(last_path) = local_paths.last() {
-                skill.local_path = Some(last_path.clone());
-            } else {
-                skill.local_path = None;
-            }
-        } else {
-            skill.local_path = None;
+        // 新流程下 local_path 已是真实安装路径；旧 __staging__: 记录才需要恢复。
+        let is_legacy_staging = skill
+            .local_path
+            .as_deref()
+            .and_then(legacy_staging_path)
+            .is_some();
+        if is_legacy_staging {
+            skill.local_path = skill
+                .local_paths
+                .as_ref()
+                .and_then(|paths| paths.last().cloned());
         }
+        skill.staging_path = None;
 
         self.db.save_skill(&skill)?;
 
@@ -3044,6 +3071,7 @@ mod tests {
         refresh_existing_tool_links_for_skill,
         resolve_update_install_paths, resolve_update_target_install_dir,
         restore_installation_backup, tool_skill_path_is_compatible_with_source, ToolSkillDir,
+        STAGING_LOCAL_PATH_PREFIX,
     };
     use crate::services::agent_tools::AgentTool;
     use crate::services::{link_fs, Database};
@@ -3706,6 +3734,253 @@ mod tests {
             std::fs::read_to_string(dst.join(".gitignore")).unwrap(),
             "target\n"
         );
+    }
+
+    #[test]
+    fn confirm_skill_update_uses_staging_path_without_polluting_local_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let install_dir = temp.path().join("installed").join("example");
+        let staging_dir = temp.path().join("staging").join("example");
+        std::fs::create_dir_all(install_dir.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&staging_dir).unwrap();
+        std::fs::write(staging_dir.join("SKILL.md"), "---\nname: example\n---\nnew").unwrap();
+
+        let install_path = install_dir.to_string_lossy().to_string();
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            "https://github.com/owner/repo".to_string(),
+            ".".to_string(),
+        );
+        skill.id = "skill-update".to_string();
+        skill.installed = true;
+        skill.local_path = Some(install_path.clone());
+        skill.local_paths = Some(vec![install_path.clone()]);
+        skill.staging_path = Some(staging_dir.to_string_lossy().to_string());
+        db.save_skill(&skill).unwrap();
+
+        manager
+            .confirm_skill_update(&skill.id, true, false)
+            .unwrap();
+
+        let reloaded = db
+            .get_skills()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == skill.id)
+            .unwrap();
+        assert_eq!(reloaded.local_path.as_deref(), Some(install_path.as_str()));
+        assert_eq!(reloaded.local_paths.as_deref(), Some(&[install_path][..]));
+        assert_eq!(reloaded.staging_path, None);
+        assert_eq!(
+            std::fs::read_to_string(install_dir.join("SKILL.md")).unwrap(),
+            "---\nname: example\n---\nnew"
+        );
+    }
+
+    #[test]
+    fn cancel_skill_update_uses_staging_path_and_preserves_local_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let install_dir = temp.path().join("installed").join("example");
+        let staging_dir = temp.path().join("staging").join("example");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        std::fs::create_dir_all(&staging_dir).unwrap();
+        std::fs::write(install_dir.join("SKILL.md"), "---\nname: example\n---\nold").unwrap();
+        std::fs::write(staging_dir.join("SKILL.md"), "---\nname: example\n---\nnew").unwrap();
+
+        let install_path = install_dir.to_string_lossy().to_string();
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            "https://github.com/owner/repo".to_string(),
+            ".".to_string(),
+        );
+        skill.id = "skill-cancel".to_string();
+        skill.installed = true;
+        skill.local_path = Some(install_path.clone());
+        skill.local_paths = Some(vec![install_path.clone()]);
+        skill.staging_path = Some(staging_dir.to_string_lossy().to_string());
+        db.save_skill(&skill).unwrap();
+
+        manager.cancel_skill_update(&skill.id).unwrap();
+
+        let reloaded = db
+            .get_skills()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == skill.id)
+            .unwrap();
+        assert_eq!(reloaded.local_path.as_deref(), Some(install_path.as_str()));
+        assert_eq!(reloaded.local_paths.as_deref(), Some(&[install_path][..]));
+        assert_eq!(reloaded.staging_path, None);
+        assert!(!staging_dir.exists());
+        assert_eq!(
+            std::fs::read_to_string(install_dir.join("SKILL.md")).unwrap(),
+            "---\nname: example\n---\nold"
+        );
+    }
+
+    #[test]
+    fn cancel_skill_update_does_not_rewrite_current_local_path_from_local_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let active_dir = temp.path().join("active").join("example");
+        let older_dir = temp.path().join("older").join("example");
+        let staging_dir = temp.path().join("staging").join("example");
+        std::fs::create_dir_all(&active_dir).unwrap();
+        std::fs::create_dir_all(&older_dir).unwrap();
+        std::fs::create_dir_all(&staging_dir).unwrap();
+        std::fs::write(active_dir.join("SKILL.md"), "---\nname: example\n---\nactive").unwrap();
+        std::fs::write(older_dir.join("SKILL.md"), "---\nname: example\n---\nolder").unwrap();
+        std::fs::write(staging_dir.join("SKILL.md"), "---\nname: example\n---\nnew").unwrap();
+
+        let active_path = active_dir.to_string_lossy().to_string();
+        let older_path = older_dir.to_string_lossy().to_string();
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            "https://github.com/owner/repo".to_string(),
+            ".".to_string(),
+        );
+        skill.id = "skill-cancel-active".to_string();
+        skill.installed = true;
+        skill.local_path = Some(active_path.clone());
+        skill.local_paths = Some(vec![older_path]);
+        skill.staging_path = Some(staging_dir.to_string_lossy().to_string());
+        db.save_skill(&skill).unwrap();
+
+        manager.cancel_skill_update(&skill.id).unwrap();
+
+        let reloaded = db
+            .get_skills()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == skill.id)
+            .unwrap();
+        assert_eq!(reloaded.local_path.as_deref(), Some(active_path.as_str()));
+        assert_eq!(reloaded.staging_path, None);
+        assert!(!staging_dir.exists());
+    }
+
+    #[test]
+    fn cancel_skill_update_clears_legacy_staging_local_path_without_local_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let staging_dir = temp.path().join("staging").join("example");
+        std::fs::create_dir_all(&staging_dir).unwrap();
+        std::fs::write(staging_dir.join("SKILL.md"), "---\nname: example\n---\nnew").unwrap();
+
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            "https://github.com/owner/repo".to_string(),
+            ".".to_string(),
+        );
+        skill.id = "skill-cancel-legacy".to_string();
+        skill.installed = true;
+        skill.local_path = Some(format!(
+            "{}{}",
+            STAGING_LOCAL_PATH_PREFIX,
+            staging_dir.to_string_lossy()
+        ));
+        skill.local_paths = None;
+        skill.staging_path = None;
+        db.save_skill(&skill).unwrap();
+
+        manager.cancel_skill_update(&skill.id).unwrap();
+
+        let reloaded = db
+            .get_skills()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == skill.id)
+            .unwrap();
+        assert_eq!(reloaded.local_path, None);
+        assert_eq!(reloaded.staging_path, None);
+        assert!(!staging_dir.exists());
+    }
+
+    #[test]
+    fn confirm_skill_update_supports_legacy_staging_local_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let install_dir = temp.path().join("installed").join("example");
+        let staging_dir = temp.path().join("staging").join("example");
+        std::fs::create_dir_all(install_dir.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&staging_dir).unwrap();
+        std::fs::write(staging_dir.join("SKILL.md"), "---\nname: example\n---\nnew").unwrap();
+
+        let install_path = install_dir.to_string_lossy().to_string();
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            "https://github.com/owner/repo".to_string(),
+            ".".to_string(),
+        );
+        skill.id = "skill-confirm-legacy".to_string();
+        skill.installed = true;
+        skill.local_path = Some(format!(
+            "{}{}",
+            STAGING_LOCAL_PATH_PREFIX,
+            staging_dir.to_string_lossy()
+        ));
+        skill.local_paths = Some(vec![install_path.clone()]);
+        skill.staging_path = None;
+        db.save_skill(&skill).unwrap();
+
+        manager
+            .confirm_skill_update(&skill.id, true, false)
+            .unwrap();
+
+        let reloaded = db
+            .get_skills()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == skill.id)
+            .unwrap();
+        assert_eq!(reloaded.local_path.as_deref(), Some(install_path.as_str()));
+        assert_eq!(reloaded.staging_path, None);
+        assert_eq!(
+            std::fs::read_to_string(install_dir.join("SKILL.md")).unwrap(),
+            "---\nname: example\n---\nnew"
+        );
+    }
+
+    #[test]
+    fn clear_update_staging_state_best_effort_clears_persisted_staging_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let install_dir = temp.path().join("installed").join("example");
+        let staging_dir = temp.path().join("staging").join("example");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        std::fs::create_dir_all(&staging_dir).unwrap();
+
+        let install_path = install_dir.to_string_lossy().to_string();
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            "https://github.com/owner/repo".to_string(),
+            ".".to_string(),
+        );
+        skill.id = "skill-clear-staging".to_string();
+        skill.installed = true;
+        skill.local_path = Some(install_path.clone());
+        skill.local_paths = Some(vec![install_path.clone()]);
+        skill.staging_path = Some(staging_dir.to_string_lossy().to_string());
+        db.save_skill(&skill).unwrap();
+
+        manager.clear_update_staging_state_best_effort(&mut skill);
+
+        let reloaded = db
+            .get_skills()
+            .unwrap()
+            .into_iter()
+            .find(|s| s.id == skill.id)
+            .unwrap();
+        assert_eq!(reloaded.local_path.as_deref(), Some(install_path.as_str()));
+        assert_eq!(reloaded.staging_path, None);
     }
 
     #[test]

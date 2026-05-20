@@ -132,7 +132,8 @@
     "operational": "OPERATIONAL"
   },
   "common": {
-    "delete": "DELETE"
+    "delete": "DELETE",
+    "pageLoading": "Loading..."
   },
   "scan": {
     "initializing": "INITIALIZING_SKILL_SCANNER...",

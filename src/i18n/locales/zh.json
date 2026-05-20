@@ -132,7 +132,8 @@
     "operational": "运行中"
   },
   "common": {
-    "delete": "删除"
+    "delete": "删除",
+    "pageLoading": "加载中..."
   },
   "scan": {
     "initializing": "初始化技能扫描器...",

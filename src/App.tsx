@@ -57,10 +57,12 @@ const FEATURED_MARKETPLACES_REFRESHED_AT_KEY = "asguard.featuredMarketplaces.ref
 const FEATURED_RESOURCES_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 function PageFallback() {
+  const { t } = useTranslation();
+
   return (
     <div className="h-full flex items-center justify-center gap-3 text-sm text-muted-foreground">
       <Loader2 className="w-4 h-4 animate-spin" />
-      <span>加载中...</span>
+      <span>{t("common.pageLoading")}</span>
     </div>
   );
 }
