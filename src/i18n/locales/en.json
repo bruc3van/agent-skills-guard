@@ -15,6 +15,7 @@
     "SECURITY_CHECK_BLOCKED": "Security check blocked the operation",
     "SECURITY_PARTIAL_SCAN_BLOCKED": "Security scan did not fully cover all content, operation blocked",
     "GITHUB_RATE_LIMITED": "GitHub API rate limit reached",
+    "GITHUB_RATE_LIMITED_WITH_WAIT": "GitHub API rate limit reached, resets in {{minutes}} minutes",
     "GITHUB_REPO_FORBIDDEN": "No permission to access this repository",
     "GITHUB_REPO_NOT_FOUND": "Repository or path not found",
     "GITHUB_UNAUTHORIZED": "Unauthorized access, please configure GitHub Token",

@@ -13,6 +13,9 @@ describe("translateError", () => {
               errors: {
                 LINK_CREATION_ALL_FAILED: "所有目标工具的链接创建均失败",
                 PRIVATE_REPOSITORY_UNSUPPORTED: "私有仓库暂不支持获取",
+                GITHUB_RATE_LIMITED: "GitHub API 速率限制已达上限",
+                GITHUB_RATE_LIMITED_WITH_WAIT:
+                  "GitHub API 速率限制已达上限，将在 {{minutes}} 分钟后重置",
               },
             },
           },
@@ -44,6 +47,16 @@ describe("translateError", () => {
   it("translates private repository unsupported errors wrapped by backend context", () => {
     expect(translateError("下载仓库压缩包失败: PRIVATE_REPOSITORY_UNSUPPORTED")).toBe(
       "私有仓库暂不支持获取"
+    );
+  });
+
+  it("translates rate limit error without wait time", () => {
+    expect(translateError("GITHUB_RATE_LIMITED")).toBe("GitHub API 速率限制已达上限");
+  });
+
+  it("translates rate limit error with wait minutes", () => {
+    expect(translateError("GITHUB_RATE_LIMITED: 24")).toBe(
+      "GitHub API 速率限制已达上限，将在 24 分钟后重置"
     );
   });
 });

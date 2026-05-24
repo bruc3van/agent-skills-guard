@@ -41,8 +41,20 @@ impl Repository {
     ///   https://github.com/owner/repo
     ///   https://github.com/owner/repo.git
     ///   https://github.com/owner/repo/
+    ///   https://github.com/owner/repo/tree/branch
+    ///   https://github.com/owner/repo/blob/branch/file
     pub fn from_github_url(url: &str) -> Result<(String, String)> {
         let url = url.trim_end_matches('/');
+
+        // 去掉 /tree/... 或 /blob/... 后缀（GitHub 页面分享的 URL 格式）
+        let url = if let Some(pos) = url.find("/tree/") {
+            &url[..pos]
+        } else if let Some(pos) = url.find("/blob/") {
+            &url[..pos]
+        } else {
+            url
+        };
+
         let parts: Vec<&str> = url.split('/').collect();
 
         if parts.len() < 2 {
@@ -57,6 +69,46 @@ impl Repository {
         }
 
         Ok((owner, repo))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_github_url_handles_basic_url() {
+        let (owner, repo) = Repository::from_github_url("https://github.com/anthropics/skills").unwrap();
+        assert_eq!(owner, "anthropics");
+        assert_eq!(repo, "skills");
+    }
+
+    #[test]
+    fn from_github_url_strips_tree_branch() {
+        let (owner, repo) = Repository::from_github_url("https://github.com/anthropics/skills/tree/main").unwrap();
+        assert_eq!(owner, "anthropics");
+        assert_eq!(repo, "skills");
+    }
+
+    #[test]
+    fn from_github_url_strips_blob_path() {
+        let (owner, repo) = Repository::from_github_url("https://github.com/owner/repo/blob/main/README.md").unwrap();
+        assert_eq!(owner, "owner");
+        assert_eq!(repo, "repo");
+    }
+
+    #[test]
+    fn from_github_url_strips_git_suffix() {
+        let (owner, repo) = Repository::from_github_url("https://github.com/owner/repo.git").unwrap();
+        assert_eq!(owner, "owner");
+        assert_eq!(repo, "repo");
+    }
+
+    #[test]
+    fn from_github_url_strips_trailing_slash() {
+        let (owner, repo) = Repository::from_github_url("https://github.com/owner/repo/").unwrap();
+        assert_eq!(owner, "owner");
+        assert_eq!(repo, "repo");
     }
 }
 

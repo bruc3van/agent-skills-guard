@@ -23,6 +23,16 @@ export function translateError(message: string): string {
   const match = message.match(ERROR_CODE_PATTERN) ?? message.match(EMBEDDED_ERROR_CODE_PATTERN);
   if (match) {
     const [, code, detail] = match;
+
+    if (code === "GITHUB_RATE_LIMITED" && detail && /^\d+$/.test(detail.trim())) {
+      const withWait = i18next.t("errors.GITHUB_RATE_LIMITED_WITH_WAIT", {
+        minutes: detail.trim(),
+      });
+      if (withWait !== "errors.GITHUB_RATE_LIMITED_WITH_WAIT") {
+        return withWait;
+      }
+    }
+
     const translated = i18next.t(`errors.${code}`);
     if (translated !== `errors.${code}`) {
       return detail ? `${translated}: ${formatDetail(detail)}` : translated;

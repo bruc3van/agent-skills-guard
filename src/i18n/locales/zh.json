@@ -15,6 +15,7 @@
     "SECURITY_CHECK_BLOCKED": "安全检测发现威胁，已禁止操作",
     "SECURITY_PARTIAL_SCAN_BLOCKED": "安全扫描未完整覆盖全部内容，已禁止操作",
     "GITHUB_RATE_LIMITED": "GitHub API 速率限制已达上限",
+    "GITHUB_RATE_LIMITED_WITH_WAIT": "GitHub API 速率限制已达上限，将在 {{minutes}} 分钟后重置",
     "GITHUB_REPO_FORBIDDEN": "无权限访问该仓库",
     "GITHUB_REPO_NOT_FOUND": "仓库或路径不存在",
     "GITHUB_UNAUTHORIZED": "未授权访问，请配置 GitHub Token",
