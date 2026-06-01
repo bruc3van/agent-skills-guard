@@ -938,61 +938,19 @@ repositories:
         en: "High-quality community-contributed skill repositories"
         zh: "社区贡献的高质量技能仓库"
       repositories:
+        - url: "https://github.com/anthropics/skills"
+          name: "anthropics"
+          description:
+            en: "Anthropic's official Agent Skills repository with example skills for creative design, development, enterprise workflows, and document creation (Word/Excel/PPT/PDF). Also includes the Agent Skills specification and skill templates."
+            zh: "Anthropic 官方 Agent Skills 仓库，包含创意设计、开发、企业工作流与文档创建（Word/Excel/PPT/PDF）的示例技能，同时提供 Agent Skills 规范与技能模板。"
+          tags: ["official", "skills", "documents", "examples", "specification"]
+          featured: true
         - url: "https://github.com/bruc3van/bruce-doc-converter"
           name: "bruc3van"
           description:
             en: "Bidirectional document conversion skill for Claude Code. Converts Word/Excel/PPT/PDF to AI-friendly Markdown and exports Markdown to professionally formatted Word documents with auto-dependency installation."
             zh: "为 Claude Code 添加双向文档转换能力。将 Word/Excel/PPT/PDF 转换为 AI 友好的 Markdown 格式，并将 Markdown 导出为排版精美的 Word 文档，支持自动依赖安装。"
           tags: ["conversion", "office", "pdf", "markdown"]
-          featured: true
-        - url: "https://github.com/joeseesun/qiaomu-design-advisor"
-          name: "joeseesun"
-          description:
-            en: "Uncompromising UI/UX design advisor skill for Claude Code, combining Jobs-style product intuition with Rams-style functional purism. Delivers three-tiered design solutions through a structured diagnosis-proposal-implementation workflow."
-            zh: "偏执型设计顾问 Claude Code 技能，融合 Jobs 式产品直觉与 Rams 式功能纯粹主义。通过诊断、提案、实施三阶段工作流，提供渐进优化、结构重设计和理想方案三层设计解决方案。"
-          tags: ["design", "ui-ux", "product-design"]
-          featured: true
-        - url: "https://github.com/op7418/Humanizer-zh"
-          name: "op7418"
-          description:
-            en: "Chinese version of Humanizer - a Claude Code skill that removes AI-generated traces from text, making it sound more natural and human-written. Detects and fixes 24 AI writing patterns across content, language, style, and communication categories."
-            zh: "来自歸藏的 Humanizer 中文版 - 用于去除文本中 AI 生成的痕迹，使文本更自然、更像人类书写。可检测并修复 24 种 AI 写作模式，涵盖内容、语言、风格和交流四大类别。"
-          tags: ["writing", "text-processing", "humanizer"]
-          featured: true
-        - url: "https://github.com/GBSOSS/skill-from-masters"
-          name: "GBSOSS"
-          description:
-            en: "Create AI skills built on proven methodologies from domain experts across 15+ fields"
-            zh: "基于各领域专家经验方法论的 AI 技能创建工具，覆盖 15+ 专业领域"
-          tags: ["methodology", "experts", "framework"]
-          featured: true
-        - url: "https://github.com/zarazhangrui/frontend-slides"
-          name: "zarazhangrui"
-          description:
-            en: "Claude Code skill for creating animation-rich HTML presentations from scratch or by converting PowerPoint files."
-            zh: "用于从零创建或将 PowerPoint 转换为网页演示文稿的 Claude Code 技能，生成动画丰富的 HTML 幻灯片。"
-          tags: ["slides", "presentation", "design"]
-          featured: true
-        - url: "https://github.com/carmahhawwari/ui-design-brain"
-          name: "carmahhawwari"
-          description:
-            en: "UI component knowledge skill for AI agents with best practices, layout patterns, design-system conventions, aliases, and anti-patterns for 60+ interface components, grounded in component.gallery."
-            zh: "面向 AI 代理的 UI 组件知识技能，基于 component.gallery，覆盖 60+ 界面组件的最佳实践、布局模式、设计系统约定、别名与反模式。"
-          tags: ["design", "ui", "components", "cursor"]
-          featured: true
-        - url: "https://github.com/Leonxlnx/taste-skill"
-          name: "Leonxlnx"
-          description:
-            en: "Frontend design skill pack for AI tools with three focused skills: premium UI generation from scratch, redesign guidance for existing interfaces, and stricter output discipline to avoid incomplete code."
-            zh: "面向 AI 工具的前端设计技能包，包含三个重点技能：从零生成高质量界面、对现有界面做重设计指导，以及强化输出约束以避免半成品代码。"
-          tags: ["frontend", "design", "ui-ux", "output-quality"]
-          featured: true
-        - url: "https://github.com/lijigang/ljg-skills"
-          name: "lijigang"
-          description:
-            en: "A collection of 10 creative skills for Claude Code, including visual card generation (ljg-card), concept learning, academic paper reading, vocabulary analysis, writing engine, and structured roundtable discussion framework."
-            zh: "为 Claude Code 提供 10 个创意技能合集，包含图卡生成（ljg-card）、概念学习、学术论文解读、词汇深度分析、写作引擎及结构化圆桌讨论框架等。"
-          tags: ["card", "learning", "writing", "visualization", "analysis"]
           featured: true
         - url: "https://github.com/bruc3van/bruce-drawio"
           name: "bruc3van"
@@ -1001,12 +959,12 @@ repositories:
             zh: "跨平台 draw.io 图形生成技能，支持流程图、架构图、UML（时序/类图）、ER 图、思维导图及网络拓扑图，兼容 macOS、Windows 和 Linux。"
           tags: ["diagram", "drawio", "uml", "flowchart", "visualization"]
           featured: true
-        - url: "https://github.com/rookie-ricardo/erduo-skills"
-          name: "rookie-ricardo"
+        - url: "https://github.com/lijigang/ljg-skills"
+          name: "lijigang"
           description:
-            en: "A productivity skill pack for Claude Code with 5 skills: daily news report generation, RSS digest with scoring filter, voice transcript polishing, multilingual translation workflow (ZH↔EN/ZH↔JA), and Gemini watermark removal."
-            zh: "面向 Claude Code 的效率技能包，包含 5 个技能：每日资讯报告生成、RSS 精选摘要（带评分过滤）、语音转录润色、多语言翻译工作流（中英/中日互译）及 Gemini 水印去除。"
-          tags: ["news", "rss", "translation", "transcript", "productivity"]
+            en: "A collection of 10 creative skills for Claude Code, including visual card generation (ljg-card), concept learning, academic paper reading, vocabulary analysis, writing engine, and structured roundtable discussion framework."
+            zh: "为 Claude Code 提供 10 个创意技能合集，包含图卡生成（ljg-card）、概念学习、学术论文解读、词汇深度分析、写作引擎及结构化圆桌讨论框架等。"
+          tags: ["card", "learning", "writing", "visualization", "analysis"]
           featured: true
         - url: "https://github.com/dontbesilent2025/dbskill"
           name: "dontbesilent2025"
@@ -1029,19 +987,19 @@ repositories:
             zh: "YAO 的公开技能合集：把决策、商业分析、学习教程、研究取证和文档生成流程沉淀成可复用的 AI 资产。包含 12 个技能，涵盖贝叶斯分析、博弈论、Kelly 准则、Web 安全审计（275+ 检查项）与教程生成"
           tags: ["business", "analysis", "learning", "security", "bayesian"]
           featured: true
+          - url: "https://github.com/yaojingang/yao-doctor-skill"
+          name: "yaojingang"
+          description:
+            en: "Security-first audit skill for local skill libraries and AI workbench surfaces. Detects privacy theft, credential theft, covert data leakage, insecure execution chains, deceptive instructions, and persistence behaviors."
+            zh: "针对本地 skill 库与 AI 工作台界面的安全优先审计技能，检测隐私窃取、凭据盗取、隐秘数据泄露、不安全执行链与欺骗性指令"
+          tags: ["security", "audit", "skill-safety"]
+          featured: true
         - url: "https://github.com/op7418/guizang-ppt-skill"
           name: "op7418"
           description:
             en: "A Claude Code Skill that turns prompts into horizontal-swipe magazine-style HTML decks — 10 layouts, 5 curated themes, WebGL hero backgrounds, single-file output"
             zh: "将提示转化为横向滑动杂志风格 HTML 演示文稿的 Claude Code 技能，含 10 种布局、5 种主题、WebGL 主视觉背景，单文件输出"
           tags: ["slides", "presentation", "html", "design"]
-          featured: true
-        - url: "https://github.com/yaojingang/yao-doctor-skill"
-          name: "yaojingang"
-          description:
-            en: "Security-first audit skill for local skill libraries and AI workbench surfaces. Detects privacy theft, credential theft, covert data leakage, insecure execution chains, deceptive instructions, and persistence behaviors."
-            zh: "针对本地 skill 库与 AI 工作台界面的安全优先审计技能，检测隐私窃取、凭据盗取、隐秘数据泄露、不安全执行链与欺骗性指令"
-          tags: ["security", "audit", "skill-safety"]
           featured: true
         - url: "https://github.com/op7418/logo-generator-skill"
           name: "op7418"
