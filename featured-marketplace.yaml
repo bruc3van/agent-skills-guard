@@ -966,33 +966,12 @@ repositories:
             zh: "基于各领域专家经验方法论的 AI 技能创建工具，覆盖 15+ 专业领域"
           tags: ["methodology", "experts", "framework"]
           featured: true
-        - url: "https://github.com/vercel-labs/agent-skills"
-          name: "vercel-labs"
-          description:
-            en: "A collection of skills for AI coding agents that follow the Agent Skills format."
-            zh: "面向 AI 编程代理的技能集合，遵循 Agent Skills 格式。"
-          tags: ["agent-skills", "ai-agents", "collection"]
-          featured: true
-        - url: "https://github.com/yangliu2060/smith--skills"
-          name: "yangliu2060"
-          description:
-            en: "From Visual Workflows to AI-Native Skills: Empower your Claude Code with 14+ elite automation templates ported directly from n8n. Instantly equip your AI agent with expert-level capabilities in Marketing, SEO, and Market Research."
-            zh: "从可视化工作流到 AI 原生技能：一键将 14 款精选 n8n 自动化模板导入 Claude Code，让你的 AI 助手瞬间掌握营销、SEO 和市场调研的专家级实战能力。"
-          tags: ["n8n", "workflow", "automation"]
-          featured: true
         - url: "https://github.com/zarazhangrui/frontend-slides"
           name: "zarazhangrui"
           description:
             en: "Claude Code skill for creating animation-rich HTML presentations from scratch or by converting PowerPoint files."
             zh: "用于从零创建或将 PowerPoint 转换为网页演示文稿的 Claude Code 技能，生成动画丰富的 HTML 幻灯片。"
           tags: ["slides", "presentation", "design"]
-          featured: true
-        - url: "https://github.com/Shpigford/skills"
-          name: "Shpigford"
-          description:
-            en: "Agent Skills collection for common tasks, compatible with Claude Code and other Agent Skills Standard tools."
-            zh: "面向常见任务的 Agent Skills 合集，兼容 Claude Code 等符合 Agent Skills Standard 的工具。"
-          tags: ["agent-skills", "productivity", "automation"]
           featured: true
         - url: "https://github.com/carmahhawwari/ui-design-brain"
           name: "carmahhawwari"
@@ -1014,13 +993,6 @@ repositories:
             en: "A collection of 10 creative skills for Claude Code, including visual card generation (ljg-card), concept learning, academic paper reading, vocabulary analysis, writing engine, and structured roundtable discussion framework."
             zh: "为 Claude Code 提供 10 个创意技能合集，包含图卡生成（ljg-card）、概念学习、学术论文解读、词汇深度分析、写作引擎及结构化圆桌讨论框架等。"
           tags: ["card", "learning", "writing", "visualization", "analysis"]
-          featured: true
-        - url: "https://github.com/shaom/infocard-skills"
-          name: "shaom"
-          description:
-            en: "A Claude Code skill that generates editorial-style information cards from natural-language input, converting source material into screenshot-ready HTML cards with optional PNG output."
-            zh: "从自然语言输入生成编辑风格信息卡片的 Claude Code 技能，将原始内容转换为可截图的 HTML 卡片，支持导出为 PNG。"
-          tags: ["card", "infocard", "html", "design", "screenshot"]
           featured: true
         - url: "https://github.com/bruc3van/bruce-drawio"
           name: "bruc3van"
@@ -1056,13 +1028,6 @@ repositories:
             en: "YAO's open skill collection: decision-making, business analysis, learning, security auditing, and document generation workflows as reusable AI assets. Includes 12 skills covering Bayesian analysis, game theory, Kelly Criterion, web security (275+ checks), and tutorial generation."
             zh: "YAO 的公开技能合集：把决策、商业分析、学习教程、研究取证和文档生成流程沉淀成可复用的 AI 资产。包含 12 个技能，涵盖贝叶斯分析、博弈论、Kelly 准则、Web 安全审计（275+ 检查项）与教程生成"
           tags: ["business", "analysis", "learning", "security", "bayesian"]
-          featured: true
-        - url: "https://github.com/MiniMax-AI/skills"
-          name: "MiniMax-AI"
-          description:
-            en: "Official MiniMax development skills for AI coding agents. Covers frontend, fullstack, Android, iOS, React Native, Flutter, and shader development. Includes MiniMax API integration for multimodal content generation (image, video, audio, TTS)."
-            zh: "MiniMax 官方开发技能集，面向 AI 编程代理。涵盖前端、全栈、Android、iOS、React Native、Flutter 和着色器开发。集成 MiniMax API 用于多模态内容生成（图像、视频、音频、语音合成）。"
-          tags: ["minimax", "frontend", "mobile", "multimodal", "api"]
           featured: true
         - url: "https://github.com/op7418/guizang-ppt-skill"
           name: "op7418"
