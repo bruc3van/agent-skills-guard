@@ -571,6 +571,13 @@
       "close": "Close",
       "recommendations": "Recommendations",
       "lineNumber": "Line",
+      "remediation": "Remediation",
+      "confidenceLabel": "Confidence",
+      "confidence": {
+        "High": "High",
+        "Medium": "Medium",
+        "Low": "Low"
+      },
       "issues": {
         "critical": "Critical Issues",
         "high": "High Risk Issues",

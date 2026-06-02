@@ -96,6 +96,10 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
             line_number: None,
             code_snippet: None,
             file_path,
+            rule_id: None,
+            confidence: None,
+            remediation: None,
+            cwe_id: None,
         });
     }
 
@@ -106,6 +110,10 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
         line_number: None,
         code_snippet: None,
         file_path,
+        rule_id: None,
+        confidence: None,
+        remediation: None,
+        cwe_id: None,
     })
 }
 

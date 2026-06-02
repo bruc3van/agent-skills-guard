@@ -32,6 +32,25 @@ pub enum Confidence {
     Low,    // 低置信度，可能误报
 }
 
+impl Confidence {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Confidence::High => "High",
+            Confidence::Medium => "Medium",
+            Confidence::Low => "Low",
+        }
+    }
+
+    /// 评分扣分系数（硬触发规则不使用此系数，见 SecurityScanner::effective_rule_weight）
+    pub fn score_multiplier(&self) -> f32 {
+        match self {
+            Confidence::High => 1.0,
+            Confidence::Medium => 0.65,
+            Confidence::Low => 0.35,
+        }
+    }
+}
+
 /// 危险模式规则
 #[derive(Debug, Clone)]
 pub struct PatternRule {

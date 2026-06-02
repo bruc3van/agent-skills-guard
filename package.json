@@ -4,7 +4,7 @@
   "description": "A secure manager for agent skills with safety checks and cross-platform support",
   "type": "module",
   "scripts": {
-    "dev": "pnpm icon:sync-dev && pnpm tauri dev",
+    "dev": "pnpm icon:sync-dev && pnpm tauri dev --features devtools",
     "build": "pnpm tauri build",
     "tauri": "tauri",
     "icon:sync-dev": "node scripts/sync-dev-app-icon.mjs",

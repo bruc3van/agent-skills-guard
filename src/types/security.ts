@@ -5,6 +5,10 @@ export interface SecurityIssue {
   line_number?: number;
   code_snippet?: string;
   file_path?: string; // 记录哪个文件有风险
+  rule_id?: string;
+  confidence?: string;
+  remediation?: string;
+  cwe_id?: string;
 }
 
 export interface SecurityReport {

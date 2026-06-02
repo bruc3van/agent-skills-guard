@@ -12,6 +12,7 @@ import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { SkillScanResult, SecurityIssue } from "@/types/security";
 import { sortIssuesBySeverity } from "@/lib/security-utils";
+import { SecurityIssueMeta } from "@/components/SecurityIssueMeta";
 
 interface SecurityDetailDialogProps {
   result: SkillScanResult | null;
@@ -293,6 +294,7 @@ function IssueSection({
                   )}
                   {group.summary.description}
                 </div>
+                <SecurityIssueMeta issue={group.summary} />
                 {group.summary.code_snippet && (
                   <div className="mt-2">
                     {typeof group.summary.line_number === "number" && (
@@ -320,6 +322,7 @@ function IssueSection({
                       {group.items.length}
                     </span>
                   </div>
+                  <SecurityIssueMeta issue={group.summary} />
                 </summary>
                 <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
                   {group.items.map((item, idx) => (

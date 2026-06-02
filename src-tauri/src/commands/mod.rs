@@ -426,6 +426,10 @@ mod tests {
             line_number: None,
             code_snippet: None,
             file_path: None,
+            rule_id: None,
+            confidence: None,
+            remediation: None,
+            cwe_id: None,
         }]);
         existing.security_report = Some(crate::models::security::SecurityReport {
             skill_id: existing.id.clone(),

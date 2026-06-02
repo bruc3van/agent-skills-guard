@@ -71,6 +71,14 @@ pub struct SecurityIssue {
     pub line_number: Option<usize>,
     pub code_snippet: Option<String>,
     pub file_path: Option<String>, // 记录哪个文件有风险
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remediation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwe_id: Option<String>,
 }
 
 /// 问题严重程度

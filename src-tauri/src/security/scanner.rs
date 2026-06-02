@@ -1,6 +1,6 @@
 use crate::i18n::validate_locale;
 use crate::models::security::*;
-use crate::security::rules::{Category, SecurityRules, Severity};
+use crate::security::rules::{Category, Confidence, SecurityRules, Severity};
 use anyhow::Result;
 use lazy_static::lazy_static;
 use regex::{Regex, RegexSet};
@@ -20,13 +20,16 @@ enum Utf16Encoding {
 /// 匹配结果（包含规则信息）
 #[derive(Debug, Clone)]
 struct MatchResult {
-    _rule_id: String,
+    rule_id: String,
     rule_name: String,
     severity: Severity,
     category: Category,
     weight: i32,
     description: String,
     hard_trigger: bool,
+    confidence: Confidence,
+    remediation: String,
+    cwe_id: Option<&'static str>,
     line_number: usize,
     code_snippet: String,
     file_path: String,
@@ -76,6 +79,29 @@ impl Default for ScanOptions {
 impl SecurityScanner {
     pub fn new() -> Self {
         Self
+    }
+
+    fn effective_rule_weight(matched: &MatchResult) -> f32 {
+        let base = matched.weight as f32;
+        if matched.hard_trigger {
+            return base;
+        }
+        base * matched.confidence.score_multiplier()
+    }
+
+    fn issue_from_match(m: &MatchResult) -> SecurityIssue {
+        SecurityIssue {
+            severity: Self::map_severity(&m.severity),
+            category: Self::map_category(&m.category),
+            description: format!("{}: {}", m.rule_name, m.description),
+            line_number: Some(m.line_number),
+            code_snippet: Some(m.code_snippet.clone()),
+            file_path: Some(m.file_path.clone()),
+            rule_id: Some(m.rule_id.clone()),
+            confidence: Some(m.confidence.as_str().to_string()),
+            remediation: Some(m.remediation.clone()),
+            cwe_id: m.cwe_id.map(|id| id.to_string()),
+        }
     }
 
     fn normalized_extension(file_path: &str) -> Option<String> {
@@ -293,13 +319,16 @@ impl SecurityScanner {
                     }
 
                     matches.push(MatchResult {
-                        _rule_id: rule.id.to_string(),
+                        rule_id: rule.id.to_string(),
                         rule_name: rule.name.to_string(),
                         severity: rule.severity,
                         category: rule.category,
                         weight: rule.weight,
                         description: rule.description.to_string(),
                         hard_trigger: rule.hard_trigger,
+                        confidence: rule.confidence,
+                        remediation: rule.remediation.to_string(),
+                        cwe_id: rule.cwe_id,
                         line_number,
                         code_snippet: line.clone(),
                         file_path: file_path.to_string(),
@@ -745,6 +774,10 @@ impl SecurityScanner {
                     line_number: None,
                     code_snippet: None,
                     file_path: Some(rel_str),
+                    rule_id: Some("SYMLINK".to_string()),
+                    confidence: Some(Confidence::High.as_str().to_string()),
+                    remediation: None,
+                    cwe_id: Some("CWE-59".to_string()),
                 });
                 continue;
             }
@@ -764,6 +797,10 @@ impl SecurityScanner {
                     line_number: None,
                     code_snippet: None,
                     file_path: None,
+                    rule_id: None,
+                    confidence: None,
+                    remediation: None,
+                    cwe_id: None,
                 });
                 partial_scan = true;
                 break;
@@ -807,6 +844,10 @@ impl SecurityScanner {
                         line_number: None,
                         code_snippet: None,
                         file_path: Some(rel_str.clone()),
+                        rule_id: None,
+                        confidence: None,
+                        remediation: None,
+                        cwe_id: None,
                     });
                     skipped_files.push(rel_str.clone());
                     partial_scan = true;
@@ -826,6 +867,10 @@ impl SecurityScanner {
                         line_number: None,
                         code_snippet: None,
                         file_path: Some(rel_str.clone()),
+                        rule_id: None,
+                        confidence: None,
+                        remediation: None,
+                        cwe_id: None,
                     });
                     skipped_files.push(rel_str.clone());
                     partial_scan = true;
@@ -846,6 +891,10 @@ impl SecurityScanner {
                     line_number: None,
                     code_snippet: None,
                     file_path: Some(rel_str.clone()),
+                    rule_id: None,
+                    confidence: None,
+                    remediation: None,
+                    cwe_id: None,
                 });
                 partial_scan = true;
             }
@@ -896,17 +945,7 @@ impl SecurityScanner {
                 }
 
                 all_matches.push(match_result.clone());
-                all_issues.push(SecurityIssue {
-                    severity: self.map_severity(&match_result.severity),
-                    category: self.map_category(&match_result.category),
-                    description: format!(
-                        "{}: {}",
-                        match_result.rule_name, match_result.description
-                    ),
-                    line_number: Some(match_result.line_number),
-                    code_snippet: Some(match_result.code_snippet.clone()),
-                    file_path: Some(rel_str.clone()),
-                });
+                all_issues.push(Self::issue_from_match(&match_result));
             }
         }
 
@@ -959,18 +998,7 @@ impl SecurityScanner {
             &rules,
         ));
 
-        // 转换为 SecurityIssue
-        let issues: Vec<SecurityIssue> = matches
-            .iter()
-            .map(|m| SecurityIssue {
-                severity: self.map_severity(&m.severity),
-                category: self.map_category(&m.category),
-                description: format!("{}: {}", m.rule_name, m.description),
-                line_number: Some(m.line_number),
-                code_snippet: Some(m.code_snippet.clone()),
-                file_path: Some(file_path.to_string()),
-            })
-            .collect();
+        let issues: Vec<SecurityIssue> = matches.iter().map(Self::issue_from_match).collect();
 
         // 检查是否有硬触发规则匹配（阻止安装）
         let hard_trigger_matches: Vec<&MatchResult> =
@@ -1022,9 +1050,13 @@ impl SecurityScanner {
             if matched.weight <= 0 {
                 continue;
             }
+            let weight = Self::effective_rule_weight(matched).round() as i32;
+            if weight <= 0 {
+                continue;
+            }
             let entry = rule_hits
-                .entry(matched._rule_id.clone())
-                .or_insert((matched.weight, HashSet::new()));
+                .entry(matched.rule_id.clone())
+                .or_insert((weight, HashSet::new()));
             entry.1.insert(matched.file_path.clone());
         }
 
@@ -1042,7 +1074,7 @@ impl SecurityScanner {
     }
 
     /// 映射 Severity 到 IssueSeverity
-    fn map_severity(&self, severity: &Severity) -> IssueSeverity {
+    fn map_severity(severity: &Severity) -> IssueSeverity {
         match severity {
             Severity::Critical => IssueSeverity::Critical,
             Severity::High => IssueSeverity::Error,
@@ -1052,7 +1084,7 @@ impl SecurityScanner {
     }
 
     /// 映射 Category 到 IssueCategory
-    fn map_category(&self, category: &Category) -> IssueCategory {
+    fn map_category(category: &Category) -> IssueCategory {
         match category {
             Category::Destructive => IssueCategory::FileSystem,
             Category::RemoteExec => IssueCategory::ProcessExecution,
@@ -1605,6 +1637,43 @@ AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
     }
 
     #[test]
+    fn test_security_issue_carries_rule_metadata() {
+        let scanner = SecurityScanner::new();
+        let content = "eval(user_input)\n";
+        let report = scanner.scan_file(content, "test.py", "en").unwrap();
+
+        let issue = report
+            .issues
+            .iter()
+            .find(|i| i.rule_id.as_deref() == Some("PY_EVAL"))
+            .expect("PY_EVAL issue should be present");
+
+        assert_eq!(issue.confidence.as_deref(), Some("Low"));
+        assert!(
+            issue.remediation.as_ref().is_some_and(|s| !s.is_empty()),
+            "remediation should be populated"
+        );
+        assert_eq!(issue.cwe_id.as_deref(), Some("CWE-94"));
+    }
+
+    #[test]
+    fn test_confidence_multiplier_affects_score() {
+        let scanner = SecurityScanner::new();
+        let eval_only = "eval(user_input)\n";
+        let exec_only = "exec(user_input)\n";
+
+        let report_eval = scanner.scan_file(eval_only, "test.py", "en").unwrap();
+        let report_exec = scanner.scan_file(exec_only, "test.py", "en").unwrap();
+
+        assert!(
+            report_eval.score > report_exec.score,
+            "Low-confidence eval should deduct less than medium-confidence exec: eval={}, exec={}",
+            report_eval.score,
+            report_exec.score
+        );
+    }
+
+    #[test]
     fn test_eval_detection() {
         let scanner = SecurityScanner::new();
 
@@ -1615,7 +1684,10 @@ eval(user_input)
 
         let report = scanner.scan_file(content, "test.py", "en").unwrap();
 
-        assert!(report.score < 95, "eval() usage should reduce score");
+        assert!(
+            report.score < 100,
+            "eval() usage should reduce score (low-confidence weighting applies)"
+        );
         assert!(
             report
                 .issues

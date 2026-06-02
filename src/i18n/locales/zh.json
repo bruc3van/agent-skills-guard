@@ -571,6 +571,13 @@
       "close": "关闭",
       "recommendations": "建议",
       "lineNumber": "行号",
+      "remediation": "修复建议",
+      "confidenceLabel": "置信度",
+      "confidence": {
+        "High": "高",
+        "Medium": "中",
+        "Low": "低"
+      },
       "issues": {
         "critical": "严重问题",
         "high": "高风险问题",

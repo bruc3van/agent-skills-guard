@@ -1,5 +1,9 @@
 import type { SecurityIssue } from "@/types/security";
 
+export function hasIssueMetadata(issue: SecurityIssue): boolean {
+  return Boolean(issue.confidence || issue.remediation || issue.rule_id);
+}
+
 const severityOrder: Record<string, number> = {
   Critical: 0,
   Error: 1,

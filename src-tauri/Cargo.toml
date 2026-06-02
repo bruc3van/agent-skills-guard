@@ -15,7 +15,7 @@ rust-i18n = "3"
 
 [dependencies]
 # Tauri 核心
-tauri = { version = "~2.9.0", features = ["macos-private-api", "devtools", "tray-icon"] }
+tauri = { version = "~2.9.0", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-dialog = "~2.6.0"
 tauri-plugin-process = "~2.3.0"
 tauri-plugin-store = "~2.4.0"
@@ -85,3 +85,5 @@ which = "6.0"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+# 仅开发模式启用（pnpm dev）；发布构建勿带此 feature
+devtools = ["tauri/devtools"]

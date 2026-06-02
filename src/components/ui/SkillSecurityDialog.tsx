@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle, Loader2, XCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { SecurityReport } from "@/types/security";
 import { countIssuesBySeverity, groupIssuesBySignature } from "@/lib/security-utils";
+import { SecurityIssueMeta } from "@/components/SecurityIssueMeta";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -222,6 +223,7 @@ export function SkillSecurityDialog({
                           <span className="mr-1.5 text-primary">[{group.summary.file_path}]</span>
                         )}
                         {group.summary.description}
+                        <SecurityIssueMeta issue={group.summary} compact />
                         {typeof group.summary.line_number === "number" && (
                           <span className="ml-2 text-muted-foreground">
                             ({t("security.detail.lineNumber")} {group.summary.line_number})
