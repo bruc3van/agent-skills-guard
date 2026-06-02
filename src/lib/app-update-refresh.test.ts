@@ -2,7 +2,6 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { AGENT_TOOLS_KEY } from "./agent-tools";
 import {
-  APP_SESSION_SKILL_REFRESH_KEY,
   APP_VERSION_SKILL_REFRESH_KEY,
   reconcileSkillStateOnAppStartup,
   refetchSkillStateAfterAppUpdate,
@@ -45,7 +44,7 @@ async function prefetchSkillQueries(queryClient: QueryClient, calls: string[]) {
     queryKey: ["skills", "installed"],
     queryFn: async () => {
       calls.push("installed");
-      return [];
+      return [{ id: "stale", linked_tools: [] }];
     },
   });
   await queryClient.prefetchQuery({
@@ -65,7 +64,7 @@ async function prefetchSkillQueries(queryClient: QueryClient, calls: string[]) {
 }
 
 describe("refetchSkillStateAfterAppUpdate", () => {
-  it("rescans local skills before refetching cached queries", async () => {
+  it("rescans, hydrates installed cache, then refetches related queries", async () => {
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: {
@@ -80,23 +79,27 @@ describe("refetchSkillStateAfterAppUpdate", () => {
     let scanCount = 0;
     calls.length = 0;
 
-    const sessionStorage = createMemoryStorage();
     await refetchSkillStateAfterAppUpdate(queryClient, {
-      sessionStorage,
       scanLocalSkills: async () => {
         scanCount += 1;
         return [];
       },
+      getInstalledSkills: async () => {
+        calls.push("getInstalled");
+        return [{ id: "fresh", linked_tools: ["claude-code"] }];
+      },
     });
 
     expect(scanCount).toBe(1);
-    expect(calls.sort()).toEqual(["agentTools", "installed", "scanResults", "skills"]);
-    expect(sessionStorage.getItem(APP_SESSION_SKILL_REFRESH_KEY)).toBe("1");
+    expect(queryClient.getQueryData(["skills", "installed"])).toEqual([
+      { id: "fresh", linked_tools: ["claude-code"] },
+    ]);
+    expect(calls.sort()).toEqual(["agentTools", "getInstalled", "installed", "scanResults", "skills"]);
   });
 });
 
 describe("reconcileSkillStateOnAppStartup", () => {
-  it("rescans once per session even when the app version is unchanged", async () => {
+  it("always rescans on startup even when the stored version is unchanged", async () => {
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: {
@@ -111,69 +114,26 @@ describe("reconcileSkillStateOnAppStartup", () => {
     const storage = createMemoryStorage({
       [APP_VERSION_SKILL_REFRESH_KEY]: "1.2.5",
     });
-    const sessionStorage = createMemoryStorage();
     let scanCount = 0;
     calls.length = 0;
 
     const didRefresh = await reconcileSkillStateOnAppStartup(queryClient, "1.2.5", {
       storage,
-      sessionStorage,
       scanLocalSkills: async () => {
         scanCount += 1;
         return [];
       },
-    });
-
-    expect(didRefresh).toBe(true);
-    expect(scanCount).toBe(1);
-    expect(calls.sort()).toEqual(["agentTools", "installed", "scanResults", "skills"]);
-    expect(sessionStorage.getItem(APP_SESSION_SKILL_REFRESH_KEY)).toBe("1");
-
-    const didRefreshAgain = await reconcileSkillStateOnAppStartup(queryClient, "1.2.5", {
-      storage,
-      sessionStorage,
-      scanLocalSkills: async () => {
-        scanCount += 1;
-        return [];
-      },
-    });
-
-    expect(didRefreshAgain).toBe(false);
-    expect(scanCount).toBe(1);
-  });
-
-  it("rescans again when the app version changes within the same session", async () => {
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: {
-          retry: false,
-          staleTime: Infinity,
-        },
-      },
-    });
-    const calls: string[] = [];
-    await prefetchSkillQueries(queryClient, calls);
-
-    const storage = createMemoryStorage({
-      [APP_VERSION_SKILL_REFRESH_KEY]: "1.2.4",
-    });
-    const sessionStorage = createMemoryStorage({
-      [APP_SESSION_SKILL_REFRESH_KEY]: "1",
-    });
-    let scanCount = 0;
-    calls.length = 0;
-
-    const didRefresh = await reconcileSkillStateOnAppStartup(queryClient, "1.2.5", {
-      storage,
-      sessionStorage,
-      scanLocalSkills: async () => {
-        scanCount += 1;
-        return [];
+      getInstalledSkills: async () => {
+        calls.push("getInstalled");
+        return [{ id: "fresh", linked_tools: ["claude-code"] }];
       },
     });
 
     expect(didRefresh).toBe(true);
     expect(scanCount).toBe(1);
     expect(storage.getItem(APP_VERSION_SKILL_REFRESH_KEY)).toBe("1.2.5");
+    expect(queryClient.getQueryData(["skills", "installed"])).toEqual([
+      { id: "fresh", linked_tools: ["claude-code"] },
+    ]);
   });
 });

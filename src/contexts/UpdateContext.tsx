@@ -6,7 +6,6 @@ import {
   type UpdaterPhase,
   relaunchApp,
 } from "../lib/updater";
-import { getPlatform } from "../lib/platform";
 
 type UpdateProgress = {
   total: number;
@@ -157,15 +156,17 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
       setIsDismissed(false);
       setUpdateProgress(null);
 
-      const platform = await getPlatform();
-      if (platform === "windows") {
+      // Windows MSI 安装结束后需启动新进程才能加载新版本；与 macOS 一样自动 relaunch。
+      // 官方文档：install 完成后应 relaunch；仅当 relaunch 失败时才退回手动重启提示。
+      setUpdatePhaseSafe("restarting");
+      try {
+        await relaunchApp();
+        return true;
+      } catch (relaunchErr) {
+        console.error("[UpdateContext] Relaunch after update failed:", relaunchErr);
         setUpdatePhaseSafe("restartRequired");
         return true;
       }
-
-      setUpdatePhaseSafe("restarting");
-      await relaunchApp();
-      return true;
     } catch (err) {
       console.error("[UpdateContext] Install update failed:", err);
       setError(err instanceof Error ? err.message : String(err));

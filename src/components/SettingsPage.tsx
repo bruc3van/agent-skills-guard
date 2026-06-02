@@ -255,7 +255,11 @@ export function SettingsPage() {
       return;
     }
 
-    await refetchSkillStateAfterAppUpdate(queryClient);
+    // 自动 relaunch 成功时由新进程启动时的 reconcileSkillStateOnAppStartup 负责扫描链接。
+    // 仅当未能自动重启（restartRequired）时，在旧进程内做兜底同步。
+    if (updateContext.updatePhase === "restartRequired") {
+      await refetchSkillStateAfterAppUpdate(queryClient);
+    }
   };
 
   const handleRestartApp = async () => {
