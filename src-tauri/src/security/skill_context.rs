@@ -96,6 +96,16 @@ impl SkillFileType {
             .map(SkillFileType::from_extension)
             .unwrap_or(SkillFileType::Unknown)
     }
+
+    /// 是否为脚本文件类型
+    pub fn is_script(&self) -> bool {
+        matches!(self, SkillFileType::Script)
+    }
+
+    /// 是否为二进制文件类型（无法以文本方式扫描）
+    pub fn is_binary_type(&self) -> bool {
+        matches!(self, SkillFileType::Binary | SkillFileType::Asset)
+    }
 }
 
 // ── SkillManifest ──
@@ -146,35 +156,35 @@ pub struct SkillFile {
 pub struct SkillContext {
     /// 扫描模式
     pub scan_mode: ScanMode,
-    /// Skill 根目录（SingleFile 模式下为文件所在目录）
-    pub skill_dir: PathBuf,
+    /// Skill 根目录（SingleFile 模式下为 None）
+    pub skill_dir: Option<PathBuf>,
     /// skill.md 文件路径（SingleFile 模式下即为扫描目标）
     pub skill_md_path: Option<PathBuf>,
-    /// 解析后的清单元数据
-    pub manifest: SkillManifest,
+    /// 解析后的清单元数据（None 表示未找到 front-matter）
+    pub manifest: Option<SkillManifest>,
     /// skill.md 正文（去除 front-matter 后的指令体）
-    pub instruction_body: String,
+    pub instruction_body: Option<String>,
     /// 所有文件列表
     pub files: Vec<SkillFile>,
     /// 引用的文件（在 skill.md 中被提及的文件）
     pub referenced_files: Vec<PathBuf>,
-    /// 脚本文件子集
-    pub script_files: Vec<SkillFile>,
-    /// 资产文件子集
-    pub asset_files: Vec<SkillFile>,
+    /// 脚本文件路径列表
+    pub script_files: Vec<PathBuf>,
+    /// 资产文件路径列表
+    pub asset_files: Vec<PathBuf>,
     /// 扫描策略
     pub scan_policy: ScanPolicy,
 }
 
 impl SkillContext {
     /// 创建一个新的 SkillContext
-    pub fn new(scan_mode: ScanMode, skill_dir: PathBuf, scan_policy: ScanPolicy) -> Self {
+    pub fn new(scan_mode: ScanMode, skill_dir: Option<PathBuf>, scan_policy: ScanPolicy) -> Self {
         Self {
             scan_mode,
             skill_dir,
             skill_md_path: None,
-            manifest: SkillManifest::default(),
-            instruction_body: String::new(),
+            manifest: None,
+            instruction_body: None,
             files: Vec::new(),
             referenced_files: Vec::new(),
             script_files: Vec::new(),
@@ -185,11 +195,14 @@ impl SkillContext {
 
     /// 获取 Skill 名称（优先使用 manifest 中的名称，否则从目录名推断）
     pub fn skill_name(&self) -> String {
-        if !self.manifest.name.is_empty() {
-            return self.manifest.name.clone();
+        if let Some(ref manifest) = self.manifest {
+            if !manifest.name.is_empty() {
+                return manifest.name.clone();
+            }
         }
         self.skill_dir
-            .file_name()
+            .as_ref()
+            .and_then(|dir| dir.file_name())
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string()
@@ -217,7 +230,7 @@ impl SkillContext {
     pub fn script_paths(&self) -> Vec<&Path> {
         self.script_files
             .iter()
-            .map(|f| f.absolute_path.as_path())
+            .map(|p| p.as_path())
             .collect()
     }
 
@@ -225,7 +238,7 @@ impl SkillContext {
     pub fn asset_paths(&self) -> Vec<&Path> {
         self.asset_files
             .iter()
-            .map(|f| f.absolute_path.as_path())
+            .map(|p| p.as_path())
             .collect()
     }
 
@@ -258,6 +271,127 @@ impl SkillContext {
             Ok(manifest) => (Some(manifest), body),
             Err(_) => (None, content.to_string()),
         }
+    }
+
+    /// 为单文件扫描构建上下文
+    pub fn for_single_file(content: &str, file_path: &str, policy: ScanPolicy) -> Self {
+        let (manifest, instruction_body) = Self::parse_frontmatter(content);
+        Self {
+            scan_mode: ScanMode::SingleFile,
+            skill_dir: None,
+            skill_md_path: Some(PathBuf::from(file_path)),
+            manifest,
+            instruction_body: Some(instruction_body),
+            files: Vec::new(),
+            referenced_files: Vec::new(),
+            script_files: Vec::new(),
+            asset_files: Vec::new(),
+            scan_policy: policy,
+        }
+    }
+
+    /// 为目录扫描构建上下文
+    pub fn for_directory(dir_path: &str, policy: ScanPolicy) -> anyhow::Result<Self> {
+        use walkdir::WalkDir;
+
+        let path = Path::new(dir_path);
+        if !path.exists() || !path.is_dir() {
+            anyhow::bail!("Directory does not exist: {}", dir_path);
+        }
+
+        let mut files = Vec::new();
+        let mut skill_md_path = None;
+        let mut script_files = Vec::new();
+        let mut asset_files = Vec::new();
+
+        for entry in WalkDir::new(path)
+            .follow_links(false)
+            .max_depth(policy.file_limits.max_depth)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_dir() {
+                continue;
+            }
+
+            let abs_path = entry.path().to_path_buf();
+            let rel_path = abs_path
+                .strip_prefix(path)
+                .unwrap_or(&abs_path)
+                .to_string_lossy()
+                .to_string();
+
+            if entry
+                .file_name()
+                .to_str()
+                .map_or(false, |n| n.eq_ignore_ascii_case("skill.md"))
+            {
+                skill_md_path = Some(abs_path.clone());
+            }
+
+            let ext = abs_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            let file_type = SkillFileType::from_extension(ext);
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            let is_hidden = rel_path
+                .split('/')
+                .any(|seg| seg.starts_with('.'));
+
+            let is_binary = if let Ok(mut f) = std::fs::File::open(&abs_path) {
+                let mut sample = [0u8; 512];
+                if let Ok(n) = std::io::Read::read(&mut f, &mut sample) {
+                    sample[..n].contains(&0u8)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            let skill_file = SkillFile {
+                relative_path: PathBuf::from(rel_path.clone()),
+                absolute_path: abs_path,
+                file_type,
+                size_bytes: size,
+                is_binary,
+                is_hidden,
+            };
+
+            if file_type.is_script() {
+                script_files.push(PathBuf::from(rel_path.clone()));
+            }
+            if matches!(file_type, SkillFileType::Asset | SkillFileType::Binary) {
+                asset_files.push(PathBuf::from(rel_path.clone()));
+            }
+            files.push(skill_file);
+        }
+
+        let (manifest, instruction_body) = if let Some(ref md_path) = skill_md_path {
+            match std::fs::read_to_string(md_path) {
+                Ok(content) => {
+                    let (m, b) = Self::parse_frontmatter(&content);
+                    (m, Some(b))
+                }
+                Err(_) => (None, None),
+            }
+        } else {
+            (None, None)
+        };
+
+        Ok(Self {
+            scan_mode: ScanMode::Directory,
+            skill_dir: Some(path.to_path_buf()),
+            skill_md_path,
+            manifest,
+            instruction_body,
+            files,
+            referenced_files: Vec::new(),
+            script_files,
+            asset_files,
+            scan_policy: policy,
+        })
     }
 }
 
@@ -310,9 +444,16 @@ mod tests {
     #[test]
     fn test_skill_context_new() {
         let policy = ScanPolicy::builtin_default().clone();
-        let ctx = SkillContext::new(ScanMode::Directory, PathBuf::from("/tmp/test-skill"), policy);
+        let ctx = SkillContext::new(
+            ScanMode::Directory,
+            Some(PathBuf::from("/tmp/test-skill")),
+            policy,
+        );
         assert_eq!(ctx.scan_mode, ScanMode::Directory);
-        assert_eq!(ctx.skill_dir, PathBuf::from("/tmp/test-skill"));
+        assert_eq!(
+            ctx.skill_dir,
+            Some(PathBuf::from("/tmp/test-skill"))
+        );
         assert_eq!(ctx.skill_name(), "test-skill");
         assert_eq!(ctx.file_count(), 0);
         assert_eq!(ctx.total_size_bytes(), 0);
@@ -321,18 +462,29 @@ mod tests {
     #[test]
     fn test_skill_context_name_fallback() {
         let policy = ScanPolicy::builtin_default().clone();
-        let mut ctx = SkillContext::new(ScanMode::SingleFile, PathBuf::from("/tmp/my-skill"), policy);
+        let mut ctx = SkillContext::new(
+            ScanMode::SingleFile,
+            Some(PathBuf::from("/tmp/my-skill")),
+            policy,
+        );
         // manifest name 为空时使用目录名
         assert_eq!(ctx.skill_name(), "my-skill");
         // manifest name 优先
-        ctx.manifest.name = "custom-name".to_string();
+        ctx.manifest = Some(SkillManifest {
+            name: "custom-name".to_string(),
+            ..Default::default()
+        });
         assert_eq!(ctx.skill_name(), "custom-name");
     }
 
     #[test]
     fn test_skill_context_files_by_type() {
         let policy = ScanPolicy::builtin_default().clone();
-        let mut ctx = SkillContext::new(ScanMode::Directory, PathBuf::from("/tmp/skill"), policy);
+        let mut ctx = SkillContext::new(
+            ScanMode::Directory,
+            Some(PathBuf::from("/tmp/skill")),
+            policy,
+        );
 
         ctx.files.push(SkillFile {
             relative_path: PathBuf::from("skill.md"),
@@ -361,7 +513,11 @@ mod tests {
     #[test]
     fn test_skill_context_is_referenced() {
         let policy = ScanPolicy::builtin_default().clone();
-        let mut ctx = SkillContext::new(ScanMode::Directory, PathBuf::from("/tmp/skill"), policy);
+        let mut ctx = SkillContext::new(
+            ScanMode::Directory,
+            Some(PathBuf::from("/tmp/skill")),
+            policy,
+        );
 
         ctx.referenced_files.push(PathBuf::from("/tmp/skill/run.sh"));
         assert!(ctx.is_referenced(Path::new("/tmp/skill/run.sh")));
@@ -438,5 +594,190 @@ mod tests {
         let (manifest, body) = SkillContext::parse_frontmatter(content);
         assert!(manifest.is_none());
         assert_eq!(body, content);
+    }
+
+    // ── for_single_file tests ──
+
+    #[test]
+    fn test_for_single_file() {
+        let content = "---\nname: test-skill\ndescription: A test\n---\n\nInstruction body here.";
+        let policy = ScanPolicy::builtin_default().clone();
+        let ctx = SkillContext::for_single_file(content, "/tmp/test.md", policy);
+
+        assert_eq!(ctx.scan_mode, ScanMode::SingleFile);
+        assert!(ctx.skill_dir.is_none());
+        assert_eq!(
+            ctx.skill_md_path,
+            Some(PathBuf::from("/tmp/test.md"))
+        );
+        let manifest = ctx.manifest.as_ref().expect("manifest should exist");
+        assert_eq!(manifest.name, "test-skill");
+        assert_eq!(manifest.description, "A test");
+        assert_eq!(
+            ctx.instruction_body.as_deref(),
+            Some("Instruction body here.")
+        );
+        assert!(ctx.files.is_empty());
+        assert!(ctx.script_files.is_empty());
+        assert!(ctx.asset_files.is_empty());
+    }
+
+    #[test]
+    fn test_for_single_file_no_frontmatter() {
+        let content = "Just plain instructions, no frontmatter.";
+        let policy = ScanPolicy::builtin_default().clone();
+        let ctx = SkillContext::for_single_file(content, "/tmp/plain.md", policy);
+
+        assert_eq!(ctx.scan_mode, ScanMode::SingleFile);
+        assert!(
+            ctx.manifest.is_none()
+                || ctx.manifest.as_ref().unwrap().name.is_empty()
+        );
+        assert_eq!(
+            ctx.instruction_body.as_deref(),
+            Some("Just plain instructions, no frontmatter.")
+        );
+    }
+
+    // ── for_directory tests ──
+
+    #[test]
+    fn test_for_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+
+        // 创建一个 skill.md
+        let skill_md_content = "---\nname: dir-skill\nallowed-tools:\n  - bash\n---\n\nDo something.";
+        std::fs::write(dir_path.join("skill.md"), skill_md_content).unwrap();
+
+        // 创建一个脚本文件
+        std::fs::write(dir_path.join("run.sh"), "#!/bin/bash\necho hello").unwrap();
+
+        // 创建一个资产文件
+        std::fs::write(dir_path.join("logo.png"), [0x89, 0x50, 0x4e, 0x47]).unwrap();
+
+        // 创建一个普通文件
+        std::fs::write(dir_path.join("config.json"), "{}").unwrap();
+
+        let policy = ScanPolicy::builtin_default().clone();
+        let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
+
+        assert_eq!(ctx.scan_mode, ScanMode::Directory);
+        assert_eq!(ctx.skill_dir, Some(dir_path.to_path_buf()));
+        assert!(ctx.skill_md_path.is_some());
+        let md_path = ctx.skill_md_path.as_ref().unwrap();
+        assert!(md_path.to_string_lossy().contains("skill.md"));
+
+        let manifest = ctx.manifest.as_ref().expect("manifest should exist");
+        assert_eq!(manifest.name, "dir-skill");
+        assert_eq!(manifest.allowed_tools, vec!["bash"]);
+        assert_eq!(
+            ctx.instruction_body.as_deref(),
+            Some("Do something.")
+        );
+
+        // 应该发现 4 个文件
+        assert_eq!(ctx.file_count(), 4);
+
+        // 脚本文件应包含 run.sh
+        assert_eq!(ctx.script_files.len(), 1);
+        assert!(ctx.script_files[0].to_string_lossy().contains("run.sh"));
+
+        // 资产文件应包含 logo.png
+        assert_eq!(ctx.asset_files.len(), 1);
+        assert!(ctx.asset_files[0].to_string_lossy().contains("logo.png"));
+    }
+
+    #[test]
+    fn test_for_directory_missing() {
+        let policy = ScanPolicy::builtin_default().clone();
+        let result = SkillContext::for_directory("/nonexistent/path/that/does/not/exist", policy);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Directory does not exist"));
+    }
+
+    #[test]
+    fn test_for_directory_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+
+        let policy = ScanPolicy::builtin_default().clone();
+        let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
+
+        assert_eq!(ctx.scan_mode, ScanMode::Directory);
+        assert_eq!(ctx.file_count(), 0);
+        assert!(ctx.skill_md_path.is_none());
+        assert!(
+            ctx.manifest.is_none()
+                || ctx.manifest.as_ref().unwrap().name.is_empty()
+        );
+    }
+
+    #[test]
+    fn test_for_directory_with_hidden_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+
+        // 创建隐藏文件
+        let hidden_dir = dir_path.join(".hidden");
+        std::fs::create_dir(&hidden_dir).unwrap();
+        std::fs::write(hidden_dir.join("secret.txt"), "secret").unwrap();
+
+        // 创建正常文件
+        std::fs::write(dir_path.join("visible.txt"), "visible").unwrap();
+
+        let policy = ScanPolicy::builtin_default().clone();
+        let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
+
+        // 两个文件都应该被发现
+        assert_eq!(ctx.file_count(), 2);
+        // 隐藏文件应该标记 is_hidden
+        let hidden_file = ctx
+            .files
+            .iter()
+            .find(|f| f.relative_path.to_string_lossy().contains("secret.txt"))
+            .unwrap();
+        assert!(hidden_file.is_hidden);
+        let visible_file = ctx
+            .files
+            .iter()
+            .find(|f| f.relative_path.to_string_lossy() == "visible.txt")
+            .unwrap();
+        assert!(!visible_file.is_hidden);
+    }
+
+    #[test]
+    fn test_for_directory_depth_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+
+        // 创建嵌套目录结构
+        let deep_dir = dir_path.join("a").join("b").join("c");
+        std::fs::create_dir_all(&deep_dir).unwrap();
+        std::fs::write(deep_dir.join("deep.txt"), "deep").unwrap();
+        std::fs::write(dir_path.join("shallow.txt"), "shallow").unwrap();
+
+        let mut policy = ScanPolicy::builtin_default().clone();
+        policy.file_limits.max_depth = 2; // 限制深度为 2
+
+        let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
+
+        // 只应发现 shallow.txt（深度 1），不应发现 a/b/c/deep.txt（深度 4）
+        assert_eq!(ctx.file_count(), 1);
+        assert_eq!(
+            ctx.files[0].relative_path.to_string_lossy(),
+            "shallow.txt"
+        );
+    }
+
+    #[test]
+    fn test_is_script_method() {
+        assert!(SkillFileType::Script.is_script());
+        assert!(!SkillFileType::Markdown.is_script());
+        assert!(!SkillFileType::Config.is_script());
+        assert!(!SkillFileType::Asset.is_script());
+        assert!(!SkillFileType::Binary.is_script());
+        assert!(!SkillFileType::Unknown.is_script());
     }
 }
