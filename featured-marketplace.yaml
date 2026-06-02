@@ -987,7 +987,7 @@ repositories:
             zh: "YAO 的公开技能合集：把决策、商业分析、学习教程、研究取证和文档生成流程沉淀成可复用的 AI 资产。包含 12 个技能，涵盖贝叶斯分析、博弈论、Kelly 准则、Web 安全审计（275+ 检查项）与教程生成"
           tags: ["business", "analysis", "learning", "security", "bayesian"]
           featured: true
-          - url: "https://github.com/yaojingang/yao-doctor-skill"
+        - url: "https://github.com/yaojingang/yao-doctor-skill"
           name: "yaojingang"
           description:
             en: "Security-first audit skill for local skill libraries and AI workbench surfaces. Detects privacy theft, credential theft, covert data leakage, insecure execution chains, deceptive instructions, and persistence behaviors."
