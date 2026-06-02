@@ -1011,6 +1011,24 @@ impl SecurityScanner {
             let content = content.unwrap_or_else(|| String::from_utf8_lossy(&buf).into_owned());
             scanned_files.push(rel_str.clone());
             files_scanned += 1;
+
+            // Homoglyph/unicode 隐写检测
+            let homoglyph_findings = crate::security::homoglyph::check(&content, &rel_str);
+            for finding in &homoglyph_findings {
+                all_issues.push(SecurityIssue {
+                    severity: finding.severity,
+                    category: crate::models::security::IssueCategory::ObfuscatedCode,
+                    description: finding.description.clone(),
+                    line_number: finding.line_number,
+                    code_snippet: finding.snippet.clone(),
+                    file_path: Some(rel_str.clone()),
+                    rule_id: Some(finding.rule_id.clone()),
+                    confidence: None,
+                    remediation: finding.remediation.clone(),
+                    cwe_id: finding.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
+                });
+            }
+
             let is_skill_md = Self::is_skill_md(&rel_str);
             let filtered_rule_set = if is_skill_md {
                 None
