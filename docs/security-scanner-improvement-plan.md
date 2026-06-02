@@ -1,0 +1,460 @@
+# 安全扫描器升级计划（方案一整合版）
+
+> 对比对象：Cisco 开源 `skill_scanner`（`reference/skill_scanner`）  
+> 本项目实现：`src-tauri/src/security/`  
+> 约束：不引入基于 LLM 或远程 API 的安全检测逻辑；排除 `LLMAnalyzer`、`MetaAnalyzer`、`VirusTotalAnalyzer`、`AIDefenseAnalyzer` 等远程/模型模块。  
+> 主线：保留现有 Rust/Tauri 扫描器，把 Cisco 的本地静态能力分阶段移植到 Rust 侧。
+
+---
+
+## 1. 结论
+
+本项目当前扫描器是轻量安装前阻断器：纯 Rust、`RegexSet` 批量匹配、扩展名过滤、硬触发阻断、目录/文件上限、UTF-16 解码、续行与字符串拼接归一化、symlink 阻断、`partial_scan` 标记。这些能力适合桌面应用和安装流程，应继续保留。
+
+Cisco `skill_scanner` 的价值不在于“规则更多”这一点本身，而在于体系化：规则包、策略、Skill 语义解析、多分析器、管道链路分析、结构校验、可分析性评分、Finding 归一化。方案一的目标是把这些确定性的本地能力移植到 Rust，而不是把 Python 扫描器作为运行时核心引入。
+
+推荐路线：
+
+1. 先做规则外置化和 policy，解除 `rules.rs` 硬编码瓶颈。
+2. 再补 Skill 结构扫描、Prompt Injection、资产/文档风险、Secret 脱敏。
+3. 然后实现 Pipeline/Compound 链路分析，补齐“单步无害、组合有害”的攻击。
+4. 最后引入可分析性评分、YARA/类 YARA 规则与字节码/Office/PDF 等深度项。
+
+---
+
+## 2. 当前能力与差距
+
+### 2.1 本项目应保留的优势
+
+- 纯 Rust，无 Python 运行时和 sidecar 依赖，适合 Tauri 桌面端发布。
+- `RegexSet` 批量匹配，且按扩展名缓存 `FilteredRuleSet`。
+- 支持 shell `\`、PowerShell 反引号、JS/Python 字符串拼接等归一化后扫描。
+- 支持 UTF-16 LE/BE 解码，适配 Windows 脚本。
+- `hard_trigger` 和 `blocked` 已与安装流程绑定。
+- `confidence` 参与评分，低置信度规则不会过度扣分。
+- 对 symlink、文件数量、扫描深度、单文件大小、二进制内容已有基础边界控制。
+
+### 2.2 Cisco 本地静态核心的主要优势
+
+- `SkillLoader` 将目录解析为 Skill 对象，包含 manifest、instruction body、files、referenced files。
+- `StaticAnalyzer` 分阶段扫描 manifest、SKILL.md、scripts、references、binary、hidden files、assets、PDF/Office、homoglyph 等。
+- `PipelineAnalyzer` 识别 `fetch -> execute`、`read sensitive -> encode -> network`、`find/xargs -> exec` 等链路。
+- `BytecodeAnalyzer` 处理 `.pyc` 与源码一致性场景。
+- `RulePack` 与 `ScanPolicy` 支持规则包、禁用规则、严重度覆盖、文件范围、文档降级、已知安装器降级。
+- `Analyzability` 以 fail-closed 思路评估扫描覆盖率，而不把不可读/不可分析内容默认视为安全。
+- Finding 输出支持稳定 ID、去重、策略指纹和规则共现元数据。
+
+### 2.3 本项目当前主要缺口
+
+| 缺口 | 影响 |
+|------|------|
+| 规则硬编码 | 规则更新和运营调优必须改 Rust 源码 |
+| 无 policy | 无法按默认/严格/宽松或组织配置调节扫描行为 |
+| 缺少 Prompt Injection 规则 | 对 Agent Skill 特有威胁覆盖不足 |
+| 缺少 Skill 语义解析 | 无法检查 frontmatter、allowed-tools、引用文件、未引用脚本 |
+| 缺少 Pipeline 分析 | 难发现多步组合攻击 |
+| 二进制/不可读文件只标记 partial | 缺少可解释的 fail-closed 风险评分 |
+| Secret 报告未统一脱敏 | 风险报告本身可能泄露 token |
+| Finding 归一化不足 | 多规则/多阶段扩展后容易产生重复告警 |
+
+---
+
+## 3. 目标架构
+
+```text
+src-tauri/
+  resources/security/
+    policies/
+      default.yaml
+      strict.yaml
+      permissive.yaml
+    packs/
+      core/
+        pack.yaml
+        signatures/*.yaml
+        yara/*.yara
+  src/security/
+    mod.rs
+    scanner.rs              # 统一编排，保留现有公开接口
+    models.rs               # 内部 Finding / SkillFile / SkillContext
+    policy.rs               # ScanPolicy 子集
+    rules/
+      mod.rs
+      loader.rs             # YAML rule pack 加载
+      pattern_engine.rs     # RegexSet、exclude、multiline、归一化
+      builtin_compat.rs     # 现有 PatternRule 兼容迁移期使用
+    analyzers/
+      static_analyzer.rs    # manifest/scripts/references/assets
+      structure.rs          # strict structure 子集
+      pipeline.rs           # pipeline/compound 分析
+      analyzability.rs      # 扫描覆盖率与 fail-closed finding
+      yara.rs               # 后续可选
+      bytecode.rs           # 后续可选
+    adapters.rs             # Finding -> SecurityIssue/SecurityReport
+```
+
+设计原则：
+
+- 对外保持 `SecurityScanner::scan_file`、`scan_directory_with_options`、`SecurityReport` 基本兼容。
+- 内部改为多 analyzer 产出统一 `Finding`，最后由 adapter 映射到现有 UI 模型。
+- 所有规则和策略默认本地内置，不调用远程服务。
+- 优先移植确定性检测，不移植依赖 LLM 判断的行为。
+
+---
+
+## 4. 核心模块计划
+
+### 4.1 规则包与 Policy
+
+新增 Rust 侧 `ScanPolicy`，先覆盖以下字段：
+
+- `disabled_rules`
+- `severity_overrides`
+- `hard_trigger_overrides`
+- `file_limits.max_files`
+- `file_limits.max_depth`
+- `file_limits.max_scan_file_size_bytes`
+- `file_classification.inert_extensions`
+- `rule_scoping.doc_path_indicators`
+- `rule_scoping.skip_in_docs`
+- `pipeline.known_installer_domains`
+- `credentials.known_test_values`
+- `finding_output.dedupe`
+
+规则 YAML 支持：
+
+- `id`
+- `category`
+- `severity`
+- `weight`
+- `confidence`
+- `hard_trigger`
+- `patterns`
+- `exclude_patterns`
+- `file_types`
+- `description`
+- `remediation`
+- `cwe_id`
+- `metadata`
+
+迁移策略：
+
+1. 保留现有 `rules.rs`，作为兼容基线。
+2. 新建 YAML rule pack，并先复制现有 84 条规则到 YAML。
+3. 增加 Cisco core signatures 中本项目缺失的 Agent Skill 规则。
+4. 验证一致后逐步瘦身 `rules.rs`。
+
+### 4.2 Pattern Engine
+
+在现有 `RegexSet` 基础上增强：
+
+- 支持一条规则多个 pattern。
+- 支持 `exclude_patterns`，先排除再命中。
+- 支持 `file_types` 和文档目录降级。
+- 保留现有续行、字符串拼接、UTF-16 处理。
+- 支持多行 pattern 第二遍扫描，覆盖 `path = ...\nopen(path)` 类模式。
+- 为每个 finding 生成稳定 ID：`rule_id + file + line + snippet_hash`。
+
+### 4.3 Skill 语义与结构扫描
+
+新增 `SkillContext`：
+
+- `skill_dir`
+- `skill_md_path`
+- `manifest`
+- `instruction_body`
+- `files`
+- `referenced_files`
+- `script_files`
+- `asset_files`
+- `reference_files`
+
+扫描项：
+
+- `SKILL.md` 是否存在，frontmatter 是否可解析。
+- `name` 格式、长度、目录名一致性。
+- `description` 是否为空、过短、过长、过泛。
+- `allowed-tools` 与实际行为是否明显不一致。
+- symlink、隐藏文件、隐藏可执行脚本、非规范扩展名。
+- `SKILL.md` 中引用路径是否路径穿越、是否过深、是否不存在。
+- 目录中存在未引用脚本时给出低/中风险 finding。
+
+### 4.4 Prompt Injection 与 Agent 威胁规则
+
+优先移植 Cisco `prompt_injection.yaml` 和 core pack 中 Agent Skill 相关规则：
+
+- 忽略/覆盖系统指令。
+- 进入 unrestricted/debug/admin 等模式。
+- 绕过安全策略。
+- 要求泄露 system prompt。
+- 要求隐藏动作或不要告知用户。
+- capability inflation。
+- tool chaining abuse。
+- autonomy abuse。
+- indirect prompt injection。
+- unicode steganography/homoglyph。
+
+阻断建议：
+
+- 对明确“覆盖系统/隐藏行为/绕过策略”的 `SKILL.md` 指令，默认 `High` 或 `Critical`，并进入 `blocked`。
+- 对 references/examples/docs 中的同类文本按 policy 降级，避免教育性文档误报。
+
+### 4.5 Pipeline 与 Compound 分析
+
+实现独立 `pipeline.rs`，不依赖 LLM。
+
+优先覆盖：
+
+- `curl/wget/iwr -> sh/bash/IEX`
+- `download -> chmod +x -> execute`
+- `archive extract -> execute`
+- `cat/read sensitive file -> base64/xxd/openssl -> curl/post`
+- `find -exec`、`find | xargs sh/bash/eval`
+- `env/secret harvesting -> network send`
+- `base64 decode -> execute`
+
+误报控制：
+
+- 已知安装器域名降级，如 `bun.sh`、`get.pnpm.io`、`sh.rustup.rs`。
+- 文档目录和示例代码降级。
+- API 文档型 `curl | jq` 不作为执行链。
+- 同一 pipeline 多入口命中时去重。
+
+### 4.6 Analyzability
+
+新增可分析性评分，不替代现有安全分，而是作为补充维度：
+
+- 文本源码、Markdown、JSON/YAML、shell、Python、JS/TS 视为可分析。
+- 静态图片、字体等 inert assets 可视为低风险可跳过。
+- 未知二进制、超大截断、不可读文件、`.pyc` 无源码视为不可完全分析。
+- 按文件大小 log 权重计算覆盖率。
+- 低于阈值时产生 `LOW_ANALYZABILITY`。
+- 不可分析高风险文件产生 `UNANALYZABLE_BINARY`。
+
+与现有字段关系：
+
+- `partial_scan = true` 继续保留。
+- `skipped_files` 继续记录。
+- 新增 finding 解释为什么 partial，避免 UI 只显示一个布尔值。
+
+### 4.7 Secret 脱敏
+
+所有 secret 类 finding 的 `code_snippet` 必须脱敏：
+
+- AWS/GitHub/Stripe/OpenAI/JWT/DB URL 保留前缀和类型。
+- 私钥只保留 `BEGIN ... PRIVATE KEY` 类型说明。
+- 通用 token 保留前 4 位或固定前缀。
+- 原始完整 secret 不进入日志、数据库和 UI。
+
+### 4.8 Finding 归一化与报告
+
+内部新增 `Finding`，字段建议：
+
+- `id`
+- `rule_id`
+- `category`
+- `severity`
+- `title`
+- `description`
+- `file_path`
+- `line_number`
+- `snippet`
+- `remediation`
+- `analyzer`
+- `metadata`
+
+输出时：
+
+- 按 `rule_id + file + line + normalized_snippet` 去重。
+- 同一位置多个 analyzer 命中时保留更高严重度。
+- 同路径多规则共现写入 `metadata.same_path_other_rule_ids`。
+- policy fingerprint 写入报告 metadata，便于追溯规则版本。
+- 通过 adapter 映射回现有 `SecurityIssue`，前端可逐步扩展展示。
+
+---
+
+## 5. 分阶段里程碑
+
+### P0：规则外置化与兼容基线
+
+目标：不改变现有扫描结果的前提下，建立可扩展规则体系。
+
+交付：
+
+- `policy.rs`
+- YAML rule loader
+- `pattern_engine.rs`
+- 默认 `default.yaml`
+- 现有 84 条 Rust 规则迁移到 YAML
+- 现有单元测试全部通过
+
+验收：
+
+- 对现有测试样例，YAML 规则结果与旧 `rules.rs` 等价。
+- `hard_trigger`、`confidence`、`remediation`、`cwe_id` 不丢失。
+- 禁用规则和严重度覆盖可生效。
+
+### P1：Skill 语义扫描与 Prompt Injection
+
+目标：补齐 Agent Skill 特有威胁面。
+
+交付：
+
+- `SkillContext` 构建
+- frontmatter 解析与结构扫描
+- referenced files 提取
+- Prompt Injection 规则包
+- allowed-tools 基础一致性检查
+- hidden files / orphan scripts finding
+- Secret 脱敏
+
+验收：
+
+- 恶意 `SKILL.md` 中的 override/bypass/conceal 指令可阻断。
+- references/docs 中的教育性文本按 policy 降级。
+- 报告不泄露完整 secret。
+
+### P2：Pipeline 与组合攻击分析
+
+目标：发现单条正则难覆盖的链路风险。
+
+交付：
+
+- `pipeline.rs`
+- source/sink/transform 识别
+- fetch-execute、archive-execute、sensitive-exfiltration、find-exec 检测
+- known installer 降级
+- pipeline finding 去重
+
+验收：
+
+- `cat ~/.ssh/id_rsa | base64 | curl -X POST ...` 触发高风险。
+- `curl https://bun.sh/install | bash` 在文档/已知安装器策略下可降级。
+- 实际执行语境仍可 hard block。
+
+### P3：Analyzability 与报告归一化
+
+目标：让扫描覆盖率和不可分析内容可解释。
+
+交付：
+
+- `analyzability.rs`
+- `LOW_ANALYZABILITY`
+- `UNANALYZABLE_BINARY`
+- Finding 归一化与 same-path 共现 metadata
+- policy fingerprint
+
+验收：
+
+- 超大截断、不可读、未知二进制均产生明确 finding。
+- 静态图片等 inert assets 不造成误报。
+- 多 analyzer 扩展后重复告警显著减少。
+
+### P4：深度本地静态项
+
+目标：按成本逐步移植 Cisco 深度能力。
+
+候选交付：
+
+- YARA 或类 YARA 规则加载。
+- PDF 结构风险：`/JS`、`/JavaScript`、`/OpenAction`、`/Launch`。
+- Office 风险：VBA macro、OLE embedded。
+- `.pyc` 与 `.py` 一致性检查。
+- Homoglyph/unicode 隐写增强。
+
+验收：
+
+- 可选项默认本地离线运行。
+- 任何依赖导致不可用时回退到已实现 Rust 静态扫描，不阻塞基础扫描。
+
+---
+
+## 6. 阻断与评分策略
+
+保留现有 `score` 和 `blocked`。
+
+阻断规则：
+
+- `hard_trigger = true` 直接阻断。
+- policy 可将特定 `rule_id` 覆盖为 hard trigger。
+- symlink 继续硬阻断。
+- 明确系统指令覆盖、隐藏行为、远程下载执行、凭据外传、破坏性命令默认阻断。
+
+评分建议：
+
+- `Critical` 基础扣分 80-100。
+- `High` 基础扣分 40-70。
+- `Medium` 基础扣分 15-40。
+- `Low` 基础扣分 3-15。
+- `Info` 默认不扣或极低扣分。
+- 非 hard trigger 使用 `confidence` 乘数。
+- `LOW_ANALYZABILITY` 不等同恶意，但降低整体安全等级置信度。
+
+---
+
+## 7. 测试计划
+
+测试分层：
+
+- 规则加载测试：YAML 解析、重复 ID、非法正则、禁用规则。
+- 兼容回归测试：现有 `scanner.rs` 测试全部保留。
+- Prompt Injection fixture：override、bypass、conceal、system prompt reveal。
+- Structure fixture：frontmatter 缺失、隐藏脚本、路径穿越引用、未引用脚本。
+- Pipeline fixture：fetch-execute、archive-execute、secret exfil、known installer 降级。
+- Analyzability fixture：UTF-16、二进制、静态图片、超大文件、不可读文件。
+- 性能测试：接近 2000 文件上限的目录扫描耗时。
+
+建议增加一组跨引擎对齐 fixture：
+
+- 从 `reference/skill_scanner` 抽取静态规则样例。
+- 同一 fixture 运行本项目扫描器，记录期望 rule_id。
+- 只对本地静态检测对齐，不纳入 LLM/VT/API 结果。
+
+---
+
+## 8. 风险与取舍
+
+| 风险 | 应对 |
+|------|------|
+| 规则外置后启动编译 Regex 成本增加 | lazy cache，按扩展名构建 `RegexSet`，预编译失败在启动时报错 |
+| Prompt Injection 误报 | `exclude_patterns`、文档目录降级、示例文本降级 |
+| Pipeline 分析复杂 | 先覆盖高价值链路，不追求完整 shell parser |
+| YARA Rust 依赖不稳定 | P4 可选，不作为 P0-P3 阻塞项 |
+| 报告字段扩展影响前端 | adapter 保持旧字段，新增 metadata 渐进展示 |
+| Apache-2.0 参考代码/规则迁移 | 保留许可证声明，记录规则来源和同步版本 |
+
+---
+
+## 9. 暂不采用的方向
+
+不把 Cisco Python 扫描器作为默认扫描核心引入，原因：
+
+- 增加 Python/依赖打包和跨平台发布复杂度。
+- Tauri 桌面端安装前扫描需要低延迟和稳定回退。
+- 本项目已有与安装流程深度绑定的 `blocked`、`partial_scan` 和 UI 模型。
+
+可以保留一个远期实验方向：把 Cisco scanner 作为“深度扫描 sidecar”仅在开发/调试或用户显式启用时运行。但这不是本计划主线，也不影响方案一落地。
+
+---
+
+## 10. 建议执行顺序
+
+1. P0：规则外置化、policy、兼容现有 84 条规则。
+2. P1：SkillContext、结构扫描、Prompt Injection、Secret 脱敏。
+3. P2：Pipeline/Compound 分析。
+4. P3：Analyzability、Finding 归一化、报告 metadata。
+5. P4：YARA/PDF/Office/bytecode 等深度静态能力。
+
+最小可交付版本建议做到 P1：它能在不大幅增加复杂度的情况下，补齐 Agent Skill 最关键的威胁面，并为后续 pipeline 和 analyzability 打好结构基础。
+
+---
+
+## 11. 文档维护
+
+| 项 | 说明 |
+|----|------|
+| 创建日期 | 2026-06-02 |
+| 计划版本 | v2，按方案一整合 |
+| 参考来源 | 当前项目 `src-tauri/src/security`、`reference/skill_scanner` 本地快照 |
+| 更新时机 | 扫描架构变更、规则包迁移完成、Cisco 参考快照更新 |
+
