@@ -1,5 +1,6 @@
 pub mod policy;
 pub mod referenced_files;
+pub mod secret_masking;
 mod rules;
 mod scanner;
 pub mod skill_context;
