@@ -420,7 +420,7 @@ mod tests {
         existing.security_score = Some(88);
         existing.security_level = Some("Low".to_string());
         existing.security_issues = Some(vec![crate::models::security::SecurityIssue {
-            severity: crate::models::security::IssueSeverity::Warning,
+            severity: crate::models::security::IssueSeverity::Medium,
             category: crate::models::security::IssueCategory::Other,
             description: "Warning: existing".to_string(),
             line_number: None,

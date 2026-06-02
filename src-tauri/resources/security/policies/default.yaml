@@ -1,0 +1,148 @@
+# 默认扫描策略
+# 适用于一般桌面应用场景，平衡安全检测与误报控制
+
+policy_name: default
+policy_version: "1.0"
+preset_base: balanced
+
+# 禁用的规则（空列表表示不禁用任何规则）
+disabled_rules: []
+
+# 严重度覆盖（示例，可按需调整）
+severity_overrides: []
+
+# 硬触发覆盖
+hard_trigger_overrides: []
+
+# 文件限制
+file_limits:
+  max_files: 2000
+  max_depth: 20
+  max_scan_file_size_bytes: 2097152  # 2 MiB
+
+# 文件分类
+file_classification:
+  inert_extensions:
+    - ".ttf"
+    - ".otf"
+    - ".woff"
+    - ".woff2"
+    - ".eot"
+    - ".png"
+    - ".jpg"
+    - ".jpeg"
+    - ".gif"
+    - ".webp"
+    - ".avif"
+    - ".bmp"
+    - ".ico"
+    - ".icns"
+    - ".tif"
+    - ".tiff"
+    - ".heic"
+    - ".heif"
+    - ".pyc"
+    - ".pyo"
+    - ".db"
+    - ".sqlite"
+    - ".sqlite3"
+
+# 规则作用域
+rule_scoping:
+  doc_path_indicators:
+    - "doc"
+    - "docs"
+    - "references"
+    - "examples"
+    - "tutorials"
+    - "guides"
+    - "test"
+    - "tests"
+    - "fixtures"
+    - "samples"
+    - "demo"
+  skip_in_docs: []
+
+# Pipeline 分析
+pipeline:
+  known_installer_domains:
+    - "sh.rustup.rs"
+    - "astral.sh"
+    - "bun.sh"
+    - "deno.land"
+    - "get.pnpm.io"
+    - "nodejs.org"
+    - "npmjs.com"
+    - "pip.pypa.io"
+    - "brew.sh"
+    - "curl.se"
+    - "git-scm.com"
+    - "golang.org"
+    - "go.dev"
+    - "rustup.rs"
+    - "install.python-poetry.org"
+    - "rye.astral.sh"
+    - "mise.jdx.dev"
+
+# 凭据检测
+credentials:
+  known_test_values:
+    - "sk_test_"
+    - "pk_test_"
+    - "tok_test_"
+    - "your-api-key-here"
+    - "example-token"
+    - "changeme"
+    - "password123"
+
+# Finding 输出
+finding_output:
+  dedupe: true
+
+# 归档文件限制
+archive:
+  max_depth: 3
+  max_total_size_bytes: 104857600  # 100 MiB
+  max_file_count: 500
+  max_compression_ratio: 100.0
+
+# 结构校验
+strict_structure:
+  allowed_extensions:
+    - ".md"
+    - ".py"
+    - ".sh"
+    - ".json"
+    - ".yaml"
+    - ".yml"
+    - ".txt"
+    - ".js"
+    - ".ts"
+    - ".html"
+    - ".css"
+    - ".svg"
+    - ".xml"
+    - ".xsd"
+    - ".toml"
+    - ".cfg"
+    - ".ini"
+    - ".env"
+    - ".gitignore"
+    - ".gitattributes"
+    - ".editorconfig"
+    - ".prettierrc"
+    - ".eslintrc"
+  allowed_subdirs:
+    - "scripts"
+    - "references"
+    - "assets"
+    - "templates"
+    - "data"
+    - "config"
+    - "src"
+    - "lib"
+
+# 触发/描述质量
+trigger:
+  min_description_length: 10
+  keyword_baiting_threshold: 8

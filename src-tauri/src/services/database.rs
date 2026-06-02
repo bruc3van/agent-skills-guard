@@ -80,8 +80,9 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
     if parts.len() == 2 {
         let (severity, is_known_severity) = match parts[0] {
             "Critical" => (IssueSeverity::Critical, true),
-            "Error" => (IssueSeverity::Error, true),
-            "Warning" => (IssueSeverity::Warning, true),
+            "High" | "Error" => (IssueSeverity::High, true),
+            "Medium" | "Warning" => (IssueSeverity::Medium, true),
+            "Low" => (IssueSeverity::Low, true),
             "Info" => (IssueSeverity::Info, true),
             _ => (IssueSeverity::Info, false),
         };

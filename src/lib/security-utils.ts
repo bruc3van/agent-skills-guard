@@ -6,9 +6,10 @@ export function hasIssueMetadata(issue: SecurityIssue): boolean {
 
 const severityOrder: Record<string, number> = {
   Critical: 0,
-  Error: 1,
-  Warning: 2,
-  Info: 3,
+  High: 1,
+  Medium: 2,
+  Low: 3,
+  Info: 4,
 };
 
 export interface GroupedSecurityIssue {
@@ -20,8 +21,9 @@ export interface GroupedSecurityIssue {
 export function countIssuesBySeverity(issues: SecurityIssue[]) {
   return {
     critical: issues.filter((i) => i.severity === "Critical").length,
-    error: issues.filter((i) => i.severity === "Error").length,
-    warning: issues.filter((i) => i.severity === "Warning").length,
+    high: issues.filter((i) => i.severity === "High").length,
+    medium: issues.filter((i) => i.severity === "Medium").length,
+    low: issues.filter((i) => i.severity === "Low").length,
     info: issues.filter((i) => i.severity === "Info").length,
   };
 }

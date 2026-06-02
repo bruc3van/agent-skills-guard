@@ -1,28 +1,32 @@
+use crate::models::security::{IssueSeverity, ThreatCategory};
 use lazy_static::lazy_static;
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
 
-/// 风险严重程度
+/// 风险严重程度（5 级统一模型，与 IssueSeverity 一一对应）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Severity {
-    Low,
-    Medium,
-    High,
     Critical,
+    High,
+    Medium,
+    Low,
+    Info,
 }
 
-/// 风险类别
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Category {
-    Destructive,         // 破坏性操作
-    RemoteExec,          // 远程执行
-    CmdInjection,        // 命令注入
-    Network,             // 网络外传
-    Privilege,           // 权限提升
-    Secrets,             // 敏感泄露
-    Persistence,         // 持久化
-    SensitiveFileAccess, // 敏感文件访问
+impl From<Severity> for crate::models::security::IssueSeverity {
+    fn from(s: Severity) -> Self {
+        match s {
+            Severity::Critical => IssueSeverity::Critical,
+            Severity::High => IssueSeverity::High,
+            Severity::Medium => IssueSeverity::Medium,
+            Severity::Low => IssueSeverity::Low,
+            Severity::Info => IssueSeverity::Info,
+        }
+    }
 }
+
+/// 风险类别（统一使用 ThreatCategory，保持向后兼容的别名）
+pub type Category = ThreatCategory;
 
 /// 置信度等级
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -559,7 +563,7 @@ lazy_static! {
             "sudo提权",
             r"\bsudo\s+",
             Severity::Low,
-            Category::Privilege,
+            Category::PrivilegeEscalation,
             3,  // 降低weight，因为sudo在正常脚本中很常见
             "sudo 权限提升",
             false,
@@ -572,7 +576,7 @@ lazy_static! {
             "chmod 777",
             r"chmod\s+(?:-[a-zA-Z]*\s+)*(?:[0-7]?[0-7][67][67]|(?:a|ugo|o)?[+=]rwx|(?:a|ugo|o)\+[rwx]*w)",
             Severity::High,
-            Category::Privilege,
+            Category::PrivilegeEscalation,
             55,
             "chmod 设置过于开放的权限（world-writable）",
             false,
@@ -585,7 +589,7 @@ lazy_static! {
             "sudoers修改",
             r"(/etc/sudoers(?:\.d(?:/\S+)?)?|visudo|NOPASSWD)",
             Severity::Critical,
-            Category::Privilege,
+            Category::PrivilegeEscalation,
             95,
             "sudoers 文件修改",
             true,

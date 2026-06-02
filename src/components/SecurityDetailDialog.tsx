@@ -62,9 +62,9 @@ export function SecurityDetailDialog({ result, open, onClose }: SecurityDetailDi
     const sortedIssues = sortIssuesBySeverity(report.issues);
     return {
       criticalIssues: sortedIssues.filter((i) => i.severity === "Critical"),
-      highIssues: sortedIssues.filter((i) => i.severity === "Error"),
-      mediumIssues: sortedIssues.filter((i) => i.severity === "Warning"),
-      lowIssues: sortedIssues.filter((i) => i.severity === "Info"),
+      highIssues: sortedIssues.filter((i) => i.severity === "High"),
+      mediumIssues: sortedIssues.filter((i) => i.severity === "Medium"),
+      lowIssues: sortedIssues.filter((i) => i.severity === "Low"),
     };
   }, [result]);
 

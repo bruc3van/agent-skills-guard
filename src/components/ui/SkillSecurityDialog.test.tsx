@@ -43,7 +43,7 @@ const report: SecurityReport = {
       description: "SYMLINK: symbolic link detected inside skill directory",
     },
     {
-      severity: "Error",
+      severity: "High",
       category: "command",
       file_path: "SKILL.md",
       description: "Command execution risk",

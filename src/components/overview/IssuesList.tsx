@@ -47,8 +47,8 @@ const levelConfig = {
 };
 
 const mapSeverityTo3Levels = (severity: string): keyof typeof levelConfig => {
-  if (severity === "Critical" || severity === "High" || severity === "Error") return "Critical";
-  if (severity === "Medium" || severity === "Low" || severity === "Warning") return "Medium";
+  if (severity === "Critical" || severity === "High") return "Critical";
+  if (severity === "Medium" || severity === "Low") return "Medium";
   if (severity === "Info") return "Safe";
   return "Safe";
 };

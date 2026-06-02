@@ -51,19 +51,19 @@ const scanResult: SkillScanResult = {
         description: "SYMLINK: symbolic link detected inside skill directory",
       },
       {
-        severity: "Error",
+        severity: "High",
         category: "command",
         file_path: "SKILL.md",
         description: "Command execution risk",
       },
       {
-        severity: "Error",
+        severity: "High",
         category: "secrets",
         file_path: "config.json",
         description: "Secret-like value detected",
       },
       {
-        severity: "Info",
+        severity: "Low",
         category: "metadata",
         file_path: "README.md",
         description: "Low risk metadata issue",

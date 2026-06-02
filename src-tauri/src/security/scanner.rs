@@ -1,6 +1,8 @@
 use crate::i18n::validate_locale;
 use crate::models::security::*;
 use crate::security::rules::{Category, Confidence, SecurityRules, Severity};
+use crate::security::skill_context::SkillContext;
+use crate::security::strict_structure;
 use anyhow::Result;
 use lazy_static::lazy_static;
 use regex::{Regex, RegexSet};
@@ -719,6 +721,46 @@ impl SecurityScanner {
 
         let rules = SecurityRules::get_all_patterns();
         let mut files_scanned = 0usize;
+
+        // ── SkillContext 构建与结构校验 ──
+        let policy = crate::security::policy::ScanPolicy::builtin_default().clone();
+        let skill_ctx = match SkillContext::for_directory(dir_path, policy) {
+            Ok(ctx) => ctx,
+            Err(_) => {
+                // 构建失败不影响现有扫描逻辑
+                SkillContext::for_single_file(
+                    "",
+                    dir_path,
+                    crate::security::policy::ScanPolicy::builtin_default().clone(),
+                )
+            }
+        };
+
+        // 运行结构校验（仅 Directory 模式）
+        let structure_findings = strict_structure::validate(&skill_ctx);
+        for finding in &structure_findings {
+            all_issues.push(SecurityIssue {
+                severity: finding.severity,
+                category: IssueCategory::Other,
+                description: finding.description.clone(),
+                line_number: finding.line_number,
+                code_snippet: finding.snippet.clone(),
+                file_path: finding.file_path.clone(),
+                rule_id: Some(finding.rule_id.clone()),
+                confidence: None,
+                remediation: finding.remediation.clone(),
+                cwe_id: finding
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| m.cwe_id.clone()),
+            });
+            // 结构校验的 Critical finding 触发 blocked
+            if finding.severity == IssueSeverity::Critical {
+                blocked = true;
+                total_hard_trigger_issues
+                    .push(format!("{}: {}", finding.rule_id, finding.description));
+            }
+        }
 
         // 递归遍历目录（不跟随 symlink），扫描文本文件内容
         let mut iter = WalkDir::new(path)
@@ -1962,5 +2004,67 @@ eval(user_input)
             .collect();
         assert!(structure_issues.is_empty(),
             "SingleFile scan should not produce structure findings, got: {:?}", structure_issues);
+    }
+
+    #[test]
+    fn test_scan_directory_includes_structure_validation() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("SKILL.md"),
+            "---\nname: test-skill\ndescription: A valid test skill for testing\n---\nBody",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("malware.exe"), "MZ...").unwrap();
+
+        let scanner = SecurityScanner::new();
+        let report = scanner
+            .scan_directory(dir.path().to_str().unwrap(), "test", "en")
+            .unwrap();
+
+        let structure_issues: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| {
+                i.rule_id
+                    .as_deref()
+                    .map_or(false, |id| id.starts_with("STRUCTURE_"))
+            })
+            .collect();
+        assert!(
+            !structure_issues.is_empty(),
+            "Directory scan should detect structure issues"
+        );
+    }
+
+    #[test]
+    fn test_scan_directory_valid_skill_no_structure_issues() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("SKILL.md"),
+            "---\nname: my-skill\ndescription: A valid test skill for testing\n---\nBody",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("scripts")).unwrap();
+        std::fs::write(dir.path().join("scripts/helper.py"), "print('hi')").unwrap();
+
+        let scanner = SecurityScanner::new();
+        let report = scanner
+            .scan_directory(dir.path().to_str().unwrap(), "test", "en")
+            .unwrap();
+
+        let structure_issues: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| {
+                i.rule_id
+                    .as_deref()
+                    .map_or(false, |id| id.starts_with("STRUCTURE_"))
+            })
+            .collect();
+        assert!(
+            structure_issues.is_empty(),
+            "Valid skill should have no structure issues, got: {:?}",
+            structure_issues
+        );
     }
 }

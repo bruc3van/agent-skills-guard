@@ -1,0 +1,1112 @@
+name: core
+version: '1.0'
+description: Core security rules migrated from Rust hardcoded rules
+rules:
+- id: RM_RF_ROOT
+  category: Destructive
+  severity: Critical
+  weight: 100
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - rm\s+(?:-[a-zA-Z]*\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:-[a-zA-Z]*\s+)*/(?:$|\s|;|\|)|/\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*(?:\s|;|\||$))
+  description: rm -rf / 删除根目录
+  remediation: 检查命令参数，避免操作根目录或使用通配符
+  cwe_id: CWE-78
+- id: DD_WIPE
+  category: Destructive
+  severity: Critical
+  weight: 100
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - dd\s+.*of=/dev/(sd[a-z]|nvme|hd[a-z]|vd[a-z]|r?disk\d+(s\d+)?)
+  description: dd 写入磁盘设备
+  remediation: 检查命令参数，避免写入系统磁盘设备
+  cwe_id: CWE-78
+- id: MKFS_FORMAT
+  category: Destructive
+  severity: Critical
+  weight: 100
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - mkfs(\.[a-z0-9]+)?\s+/dev/
+  description: mkfs 格式化命令
+  remediation: 检查命令参数，避免格式化系统磁盘
+  cwe_id: CWE-78
+- id: DISKUTIL_ERASE
+  category: Destructive
+  severity: Critical
+  weight: 100
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - diskutil\s+erase(Disk|Volume)\b
+  description: diskutil eraseDisk/eraseVolume 擦除磁盘
+  remediation: 检查diskutil擦除操作，避免误擦系统磁盘
+  cwe_id: CWE-78
+- id: NEWFS_FORMAT
+  category: Destructive
+  severity: Critical
+  weight: 100
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - newfs(\.[a-z0-9]+)?\s+.*?/dev/r?disk\d+(s\d+)?
+  description: newfs 格式化命令
+  remediation: 检查newfs操作，避免格式化系统磁盘
+  cwe_id: CWE-78
+- id: CURL_PIPE_SH_MENTION
+  category: RemoteExec
+  severity: Low
+  weight: 0
+  confidence: Low
+  hard_trigger: false
+  patterns:
+  - (?i)curl\s+[^|]*?\|\s*(?:ba)?sh\b
+  description: curl | sh 出现在文本/字符串中（未确认实际执行）
+  remediation: 如果这段命令会被执行，应改为先下载再校验/审查；若仅为说明文字，可忽略此提示
+  cwe_id: CWE-78
+  file_types:
+  - .py
+  - .pyw
+  - .pyi
+  - .js
+  - .jsx
+  - .ts
+  - .tsx
+  - .mjs
+  - .cjs
+  - .php
+  - .phtml
+  - .rb
+  - .rake
+  - .go
+  - .java
+  - .kt
+  - .cs
+  - .csx
+  - .ps1
+  - .psm1
+  - .psd1
+  - .bat
+  - .cmd
+  suppress_if_matched:
+  - CURL_PIPE_SH
+- id: WGET_PIPE_SH
+  category: RemoteExec
+  severity: Critical
+  weight: 90
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - wget\s+[^|]*?\|\s*(ba)?sh
+  description: wget | sh 远程执行
+  remediation: 避免直接执行远程脚本，应先下载后检查
+  cwe_id: CWE-78
+- id: BASE64_EXEC
+  category: RemoteExec
+  severity: Critical
+  weight: 85
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - base64\s+(?:-d|--decode)[^|]*?\|\s*(ba)?sh
+  description: base64 解码后执行
+  remediation: 避免执行Base64编码的命令，可能隐藏恶意代码
+  cwe_id: CWE-506
+- id: REVERSE_SHELL
+  category: RemoteExec
+  severity: Critical
+  weight: 95
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - (?i)(\b(ba)?sh\b.*?/dev/(tcp|udp)/|/dev/(tcp|udp)/.*\b(ba)?sh\b|\b(nc|ncat)\b.*\s-e\s+(/bin/)?(ba)?sh\b|\bsocat\b.*\bexec:(/bin/)?(ba)?sh\b|\bpython[23]?\b[^\r\n]*-c[^\r\n]*socket[^\r\n]*connect|\bperl\b[^\r\n]*-e[^\r\n]*socket[^\r\n]*connect)
+  description: 反弹Shell后门
+  remediation: 检查网络连接和进程调用，避免反弹Shell后门
+  cwe_id: CWE-506
+- id: POWERSHELL_ENCODED_COMMAND
+  category: RemoteExec
+  severity: Critical
+  weight: 90
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - (?i)\b(?:powershell|pwsh)(?:\.exe)?\b[^\r\n]*?(?:-enc(?:odedcommand)?|-e)\s+[A-Za-z0-9+/=]{20,}
+  description: PowerShell -EncodedCommand 编码执行
+  remediation: 避免执行编码后的PowerShell命令，必须先审查解码内容
+  cwe_id: CWE-506
+  file_types:
+  - .ps1
+  - .psm1
+  - .psd1
+- id: POWERSHELL_IEX_DOWNLOAD
+  category: RemoteExec
+  severity: Critical
+  weight: 95
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - (?i)\b(?:IEX|Invoke-Expression)\b[^\r\n]*?(?:DownloadString|DownloadFile|Invoke-WebRequest|iwr|curl|wget|WebClient)
+  description: PowerShell IEX/Invoke-Expression 下载后执行
+  remediation: 禁止下载后直接执行PowerShell脚本，应先下载审查
+  cwe_id: CWE-506
+  file_types:
+  - .ps1
+  - .psm1
+  - .psd1
+- id: POWERSHELL_PIPE_IEX
+  category: RemoteExec
+  severity: Critical
+  weight: 95
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - (?i)\b(?:Invoke-WebRequest|iwr|curl|wget)\b[^\r\n]*?\|\s*(?:IEX|Invoke-Expression)\b
+  description: PowerShell IWR/IEX 管道执行
+  remediation: 禁止通过管道直接执行远程内容
+  cwe_id: CWE-78
+  file_types:
+  - .ps1
+  - .psm1
+  - .psd1
+- id: MSHTA_EXEC
+  category: RemoteExec
+  severity: Critical
+  weight: 95
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - (?i)\bmshta(?:\.exe)?\b[^\r\n]*?(?:https?://|javascript:|vbscript:)
+  description: mshta 远程或脚本执行
+  remediation: 避免使用mshta执行远程脚本
+  cwe_id: CWE-78
+- id: REGSVR32_SCJ
+  category: RemoteExec
+  severity: Critical
+  weight: 95
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - (?i)\bregsvr32(?:\.exe)?\b[^\r\n]*?(?:/i:\s*https?://|scrobj\.dll)
+  description: regsvr32 通过脚本组件执行远程内容
+  remediation: 避免使用regsvr32加载远程脚本组件
+  cwe_id: CWE-78
+- id: RUNDLL32_SCRIPT
+  category: RemoteExec
+  severity: Critical
+  weight: 95
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - (?i)\brundll32(?:\.exe)?\b[^\r\n]*?(?:javascript:|vbscript:|https?://)
+  description: rundll32 执行脚本或远程内容
+  remediation: 避免使用rundll32执行脚本或远程内容
+  cwe_id: CWE-78
+- id: BITSADMIN_TRANSFER
+  category: RemoteExec
+  severity: Medium
+  weight: 45
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)\bbitsadmin(?:\.exe)?\b[^\r\n]*?(?:/transfer|/addfile|/setnotifycmdline)
+  description: bitsadmin 下载/执行链路
+  remediation: 检查bitsadmin用途，避免用于下载恶意内容
+  cwe_id: CWE-494
+- id: CERTUTIL_DOWNLOAD
+  category: RemoteExec
+  severity: Medium
+  weight: 45
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)\bcertutil(?:\.exe)?\b[^\r\n]*?(?:-urlcache|-decode|-encode|-split)
+  description: certutil 可用于下载/解码payload
+  remediation: 避免使用certutil下载或解码可疑内容
+  cwe_id: CWE-494
+- id: WMIC_PROCESS_CREATE
+  category: RemoteExec
+  severity: Medium
+  weight: 40
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)\bwmic\b[^\r\n]*?\bprocess\b[^\r\n]*?\bcall\b[^\r\n]*?\bcreate\b
+  description: wmic process call create 进程执行
+  remediation: 审查wmic进程创建行为，避免执行可疑命令
+  cwe_id: CWE-78
+- id: PY_EXEC
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?:^|[^\w.])exec\(
+  description: exec() 动态执行
+  remediation: 避免使用exec()动态执行代码，使用安全的替代方法
+  cwe_id: CWE-94
+  file_types:
+  - .py
+  - .pyw
+  - .pyi
+- id: OS_SYSTEM
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - os\.system\s*\(
+  description: os.system() Shell执行
+  remediation: 避免使用os.system()，改用subprocess.run()并设置shell=False
+  cwe_id: CWE-78
+  file_types:
+  - .py
+  - .pyw
+  - .pyi
+- id: SUBPROCESS_SHELL
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - subprocess\.(run|call|Popen)\s*\([^)]*shell\s*=\s*True
+  description: subprocess shell=True
+  remediation: 避免设置shell=True，使用列表参数传递命令
+  cwe_id: CWE-78
+  file_types:
+  - .py
+  - .pyw
+  - .pyi
+- id: SUBPROCESS_CALL
+  category: CmdInjection
+  severity: Low
+  weight: 0
+  confidence: Low
+  hard_trigger: false
+  patterns:
+  - subprocess\.(run|call|Popen)\s*\(
+  description: subprocess 进程调用
+  remediation: 确保命令参数经过验证，避免注入风险
+  cwe_id: CWE-78
+  file_types:
+  - .py
+  - .pyw
+  - .pyi
+- id: CMD_WRAPPER
+  category: CmdInjection
+  severity: Medium
+  weight: 35
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)\b(?:cmd(?:\.exe)?)\s+/[ck]\s+.*?\b(?:powershell|pwsh|mshta|wscript|cscript|rundll32|regsvr32)\b
+  description: cmd /c 包装危险程序执行
+  remediation: 避免使用cmd包装执行高风险程序
+  cwe_id: CWE-78
+  file_types:
+  - .bat
+  - .cmd
+  - .ps1
+- id: POWERSHELL_BYPASS_POLICY
+  category: CmdInjection
+  severity: Medium
+  weight: 30
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)\b(?:powershell|pwsh)(?:\.exe)?\b[^\r\n]*?(?:-executionpolicy\s+bypass|-ep\s+bypass|-windowstyle\s+hidden|-w\s+hidden)
+  description: PowerShell 规避执行策略/隐藏窗口
+  remediation: 审查PowerShell执行参数，避免规避策略
+  cwe_id: CWE-693
+  file_types:
+  - .ps1
+  - .psm1
+  - .psd1
+- id: CURL_POST
+  category: Network
+  severity: Low
+  weight: 6
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - curl\s+[^;|]*-X\s*POST
+  description: curl POST 请求
+  remediation: 确认网络请求目标，避免泄露敏感数据
+  cwe_id: CWE-319
+- id: NETCAT
+  category: Network
+  severity: Low
+  weight: 6
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - \bnc\s+(-[a-z]*\s+)*[a-zA-Z0-9.-]+\s+\d+
+  description: netcat 网络连接
+  remediation: 检查netcat使用场景，避免未授权的网络连接
+  cwe_id: CWE-319
+- id: PY_URLLIB
+  category: Network
+  severity: Low
+  weight: 3
+  confidence: Low
+  hard_trigger: false
+  patterns:
+  - urllib\.request\.urlopen\s*\(
+  description: urllib 网络请求
+  remediation: 确认请求目标URL的安全性，使用HTTPS协议
+  file_types:
+  - .py
+  - .pyw
+  - .pyi
+- id: HTTP_REQUEST
+  category: Network
+  severity: Low
+  weight: 3
+  confidence: Low
+  hard_trigger: false
+  patterns:
+  - requests\.(get|post|put|delete|patch)\s*\(
+  description: Python requests HTTP 请求
+  remediation: 确认请求目标URL的安全性，使用HTTPS协议
+  file_types:
+  - .py
+  - .pyw
+  - .pyi
+- id: CHMOD_777
+  category: PrivilegeEscalation
+  severity: High
+  weight: 55
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - chmod\s+(?:-[a-zA-Z]*\s+)*(?:[0-7]?[0-7][67][67]|(?:a|ugo|o)?[+=]rwx|(?:a|ugo|o)\+[rwx]*w)
+  description: chmod 设置过于开放的权限（world-writable）
+  remediation: 避免设置world-writable权限，使用最小权限原则
+  cwe_id: CWE-732
+- id: SUDOERS
+  category: PrivilegeEscalation
+  severity: Critical
+  weight: 95
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - (/etc/sudoers(?:\.d(?:/\S+)?)?|visudo|NOPASSWD)
+  description: sudoers 文件修改
+  remediation: 检查sudoers修改，避免不当的权限配置
+  cwe_id: CWE-250
+- id: CRONTAB
+  category: Persistence
+  severity: High
+  weight: 65
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (crontab\s+-[^l\s]|/etc/cron\.(d|daily|hourly|weekly|monthly)/)
+  description: crontab 持久化（排除只读操作）
+  remediation: 检查定时任务内容，避免恶意持久化机制
+  cwe_id: CWE-506
+- id: SSH_KEYS
+  category: Persistence
+  severity: Critical
+  weight: 90
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - (>>|>)\s*\S*\.ssh/(?:authorized_keys|id_)
+  description: SSH 密钥写入
+  remediation: 检查SSH密钥写入操作，避免未授权访问
+  cwe_id: CWE-506
+- id: REG_RUN_KEY_ADD
+  category: Persistence
+  severity: High
+  weight: 70
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (?i)\breg(\.exe)?\s+add\s+HK(LM|CU)\\Software\\Microsoft\\Windows\\CurrentVersion\\Run(Once|OnceEx)?\b
+  description: 注册表 Run/RunOnce 持久化
+  remediation: 审查注册表启动项写入，避免持久化植入
+  file_types:
+  - .bat
+  - .cmd
+  - .ps1
+  - .reg
+- id: POWERSHELL_RUN_KEY
+  category: Persistence
+  severity: High
+  weight: 70
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)\b(New-ItemProperty|Set-ItemProperty)\b[^\r\n]*(HK(LM|CU):\\Software\\Microsoft\\Windows\\CurrentVersion\\Run(Once|OnceEx)?)
+  description: PowerShell 写入 Run/RunOnce 启动项
+  remediation: 审查 PowerShell 注册表写入，避免持久化
+  file_types:
+  - .ps1
+  - .psm1
+  - .psd1
+- id: STARTUP_FOLDER_PERSISTENCE
+  category: Persistence
+  severity: High
+  weight: 65
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)\b(copy|xcopy|robocopy|move|mkdir|md|echo|type|new-item|set-content|add-content|out-file|copy-item|move-item)\b[^\r\n]*(\\Microsoft\\Windows\\Start Menu\\Programs\\Startup|\\ProgramData\\Microsoft\\Windows\\Start
+    Menu\\Programs\\Startup|shell:startup|shell:common startup)|>\s*[^\r\n]*(\\Microsoft\\Windows\\Start Menu\\Programs\\Startup|\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Startup)
+  description: 写入启动项文件夹
+  remediation: 审查 Startup 文件夹写入，避免持久化
+- id: SCHTASKS_CREATE
+  category: Persistence
+  severity: High
+  weight: 70
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (?i)\bschtasks(\.exe)?\b[^\r\n]*(/create\b[^\r\n]*(/sc\s+(onlogon|onstart)|/rl\s+highest|/tr\s+[^\r\n]*\b(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32)\b|/tr\s+[^\r\n]*(\\AppData\\|\\ProgramData\\))|(/sc\s+(onlogon|onstart)|/rl\s+highest|/tr\s+[^\r\n]*\b(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32)\b|/tr\s+[^\r\n]*(\\AppData\\|\\ProgramData\\))[^\r\n]*/create\b)
+  description: schtasks 创建计划任务
+  remediation: 审查 schtasks 创建计划任务行为
+- id: PRIVATE_KEY
+  category: Secrets
+  severity: High
+  weight: 70
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - '-----BEGIN\s+(RSA|OPENSSH|EC|DSA)?\s*PRIVATE KEY-----'
+  description: 硬编码私钥
+  remediation: 使用环境变量或密钥管理服务，不要硬编码私钥
+  cwe_id: CWE-798
+- id: AWS_KEY
+  category: Secrets
+  severity: Critical
+  weight: 80
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (AKIA|ASIA)[A-Z0-9]{16}
+  description: AWS Access Key
+  remediation: 使用AWS密钥管理服务或环境变量，不要硬编码AWS密钥
+  cwe_id: CWE-798
+- id: GITHUB_TOKEN
+  category: Secrets
+  severity: Critical
+  weight: 80
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (?:gh[opusr]_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{36,})
+  description: GitHub Token
+  remediation: 使用GitHub Secrets或环境变量，不要硬编码Token
+  cwe_id: CWE-798
+- id: READ_SSH_PRIVATE_KEY
+  category: SensitiveFileAccess
+  severity: High
+  weight: 70
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (?i)(cat|less|head|tail|vim|nano|open|type|more|get-content|gc)\s+.*[\\/]\\.ssh[\\/](id_rsa|id_dsa|id_ecdsa|id_ed25519)($|\s)
+  description: 读取SSH私钥文件
+  remediation: 避免直接读取私钥文件，使用ssh-agent管理密钥
+  cwe_id: CWE-522
+- id: READ_AWS_CREDENTIALS
+  category: SensitiveFileAccess
+  severity: High
+  weight: 70
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (?i)(cat|less|head|tail|vim|nano|open|type|more|get-content|gc)\s+.*[\\/]\\.aws[\\/]credentials($|\s)
+  description: 读取AWS凭证文件
+  remediation: 使用AWS IAM角色或环境变量，避免读取凭证文件
+  cwe_id: CWE-522
+- id: READ_ENV_FILE
+  category: SensitiveFileAccess
+  severity: Medium
+  weight: 50
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)(cat|less|head|tail|vim|nano|open|type|more|get-content|gc)\s+.*[\\/]\\.env($|\s)
+  description: 读取环境变量配置文件
+  remediation: 确保.env文件不包含敏感信息，或使用密钥管理服务
+  cwe_id: CWE-522
+- id: READ_PASSWD
+  category: SensitiveFileAccess
+  severity: Medium
+  weight: 45
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (cat|less|head|tail)\s+/etc/passwd($|\s)
+  description: 读取系统用户信息
+  remediation: 确认是否需要读取用户信息，避免信息泄露
+  cwe_id: CWE-200
+- id: READ_SHADOW
+  category: SensitiveFileAccess
+  severity: Critical
+  weight: 85
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - (cat|less|head|tail)\s+/etc/shadow-?($|\s)
+  description: 读取系统密码哈希文件
+  remediation: 绝不应读取shadow文件，这是严重的安全风险
+  cwe_id: CWE-522
+- id: READ_GIT_CREDENTIALS
+  category: SensitiveFileAccess
+  severity: High
+  weight: 65
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (?i)(cat|less|head|tail|vim|nano|open|type|more|get-content|gc)\s+.*[\\/]\\.git-credentials($|\s)
+  description: 读取Git凭证存储文件
+  remediation: 使用SSH密钥或凭证管理器，避免明文存储Git凭证
+  cwe_id: CWE-522
+- id: READ_WINDOWS_SAM
+  category: SensitiveFileAccess
+  severity: Critical
+  weight: 90
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - (?i)(\\Windows\\System32\\config\\(SAM|SECURITY|SYSTEM)|HKLM[:\\]+(SAM|SECURITY|SYSTEM))
+  description: 访问Windows SAM/SECURITY/SYSTEM 配置
+  remediation: 禁止访问Windows凭据库与系统配置hive
+  cwe_id: CWE-522
+- id: READ_WINDOWS_CREDENTIALS
+  category: SensitiveFileAccess
+  severity: High
+  weight: 70
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (?i)\\AppData\\(Local|Roaming)\\Microsoft\\Credentials\\
+  description: 读取Windows Credentials 存储
+  remediation: 避免读取Windows凭据存储目录
+  cwe_id: CWE-522
+- id: READ_POWERSHELL_HISTORY
+  category: SensitiveFileAccess
+  severity: Medium
+  weight: 50
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\ConsoleHost_history\.txt
+  description: 读取PowerShell命令历史
+  remediation: 避免读取用户命令历史文件
+  cwe_id: CWE-200
+- id: READ_CHROME_LOGIN_DATA
+  category: SensitiveFileAccess
+  severity: High
+  weight: 70
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (?i)\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Login Data
+  description: 读取Chrome Login Data
+  remediation: 禁止读取浏览器密码数据库
+  cwe_id: CWE-522
+- id: READ_EDGE_LOGIN_DATA
+  category: SensitiveFileAccess
+  severity: High
+  weight: 70
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (?i)\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Login Data
+  description: 读取Edge Login Data
+  remediation: 禁止读取浏览器密码数据库
+  cwe_id: CWE-522
+- id: READ_FIREFOX_LOGINS
+  category: SensitiveFileAccess
+  severity: High
+  weight: 70
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (?i)\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\[^\\s]+\\logins\.json
+  description: 读取Firefox logins.json
+  remediation: 禁止读取浏览器凭据文件
+  cwe_id: CWE-522
+- id: READ_DOCKER_CONFIG
+  category: SensitiveFileAccess
+  severity: Medium
+  weight: 50
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)[\\/]\\.docker[\\/]config\\.json\b
+  description: 读取Docker配置可能暴露凭据
+  remediation: 避免读取Docker凭据配置文件
+  cwe_id: CWE-522
+- id: READ_NPMRC
+  category: SensitiveFileAccess
+  severity: Medium
+  weight: 45
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)(cat|less|head|tail|vim|nano|open|type|more|get-content|gc)\s+.*[\\/]\\.npmrc\b
+  description: 读取.npmrc可能暴露Token
+  remediation: 避免读取包含Token的npm配置文件
+  cwe_id: CWE-522
+- id: READ_PYPIRC
+  category: SensitiveFileAccess
+  severity: Medium
+  weight: 45
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)(cat|less|head|tail|vim|nano|open|type|more|get-content|gc)\s+.*[\\/]\\.pypirc\b
+  description: 读取.pypirc可能暴露凭据
+  remediation: 避免读取包含凭据的PyPI配置文件
+  cwe_id: CWE-522
+- id: READ_NETRC
+  category: SensitiveFileAccess
+  severity: Medium
+  weight: 45
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)(cat|less|head|tail|vim|nano|open|type|more|get-content|gc)\s+.*[\\/]\\.netrc\b
+  description: 读取.netrc可能暴露凭据
+  remediation: 避免读取包含凭据的netrc文件
+  cwe_id: CWE-522
+- id: NODE_CHILD_EXEC
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - child_process\.exec\s*\(
+  description: Node.js child_process.exec 执行
+  remediation: 避免使用exec()，改用execFile()或spawn()并验证参数
+  cwe_id: CWE-78
+  file_types:
+  - .js
+  - .jsx
+  - .ts
+  - .tsx
+  - .mjs
+  - .cjs
+- id: NODE_VM_RUN
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - vm\.runInNewContext\s*\(
+  description: Node.js 动态代码执行
+  remediation: 避免动态执行未验证的代码，使用安全的替代方案
+  cwe_id: CWE-94
+  file_types:
+  - .js
+  - .jsx
+  - .ts
+  - .tsx
+  - .mjs
+  - .cjs
+- id: NODE_CHILD_SPAWN
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - child_process\.(execFile|execSync|spawn|spawnSync)\s*\(
+  description: Node.js 子进程执行
+  remediation: 确保传入参数安全，避免命令注入
+  cwe_id: CWE-78
+  file_types:
+  - .js
+  - .jsx
+  - .ts
+  - .tsx
+  - .mjs
+  - .cjs
+- id: POWERSHELL_START_PROCESS
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?i)\bStart-Process\b[^\r\n]*(-WindowStyle\s+Hidden|-NoNewWindow|-EncodedCommand|-enc|-ExecutionPolicy\s+bypass|-ep\s+bypass|\b(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32)\b)
+  description: PowerShell Start-Process 启动进程
+  remediation: 确认进程执行目标和参数安全
+  cwe_id: CWE-78
+  file_types:
+  - .ps1
+  - .psm1
+  - .psd1
+- id: GO_EXEC_COMMAND
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - \bexec\.Command(Context)?\s*\(
+  description: Go exec.Command 进程执行
+  remediation: 确保命令参数来源可信，避免注入风险
+  cwe_id: CWE-78
+  file_types:
+  - .go
+- id: JAVA_RUNTIME_EXEC
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - Runtime\.getRuntime\(\)\.exec\s*\(
+  description: Java Runtime.exec 进程执行
+  remediation: 避免执行未验证命令，优先使用安全API
+  cwe_id: CWE-78
+  file_types:
+  - .java
+  - .kt
+  - .kts
+  - .groovy
+- id: JAVA_PROCESS_BUILDER
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: Low
+  hard_trigger: false
+  patterns:
+  - new\s+ProcessBuilder\s*\(
+  description: Java ProcessBuilder 进程执行
+  remediation: 确保命令参数安全，避免命令注入
+  cwe_id: CWE-78
+  file_types:
+  - .java
+  - .kt
+  - .kts
+  - .groovy
+- id: CSHARP_PROCESS_START
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (System\.Diagnostics\.)?Process\.Start\s*\(
+  description: C# Process.Start 进程执行
+  remediation: 确保启动参数安全，避免注入风险
+  cwe_id: CWE-78
+  file_types:
+  - .cs
+  - .csx
+- id: PHP_EXEC
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?:^|[^\w.])(shell_exec|exec|system|passthru|proc_open|popen)\(
+  description: PHP 执行系统命令
+  remediation: 避免执行未验证命令，检查输入来源
+  cwe_id: CWE-78
+  file_types:
+  - .php
+  - .phtml
+  - .php3
+  - .php4
+  - .php5
+  - .php7
+  - .php8
+- id: RUBY_SYSTEM_EXEC
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: Low
+  hard_trigger: false
+  patterns:
+  - (?:^|[^\w.])(system|exec|IO\.popen|Open3\.popen3)\(
+  description: Ruby 执行系统命令
+  remediation: 确保命令参数安全，避免命令注入
+  cwe_id: CWE-78
+  file_types:
+  - .rb
+  - .rake
+  - .gemspec
+  - .ru
+- id: JWT_TOKEN
+  category: Secrets
+  severity: High
+  weight: 75
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}
+  description: 硬编码的 JWT Token
+  remediation: 不要硬编码JWT Token，使用安全的存储方式
+  cwe_id: CWE-798
+- id: SLACK_WEBHOOK
+  category: Secrets
+  severity: Medium
+  weight: 50
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - https://hooks\.slack\.com/services/[A-Z0-9/]{30,}
+  description: 硬编码的 Slack Webhook URL
+  remediation: 使用环境变量存储 Webhook URL
+  cwe_id: CWE-798
+- id: WEBSOCKET_CONNECT
+  category: Network
+  severity: Low
+  weight: 3
+  confidence: Low
+  hard_trigger: false
+  patterns:
+  - \bws://
+  description: WebSocket 非加密连接
+  remediation: 确认 WebSocket 连接的安全性，使用 wss:// 加密连接
+  file_types:
+  - .js
+  - .jsx
+  - .ts
+  - .tsx
+  - .mjs
+  - .cjs
+  - .py
+  - .rb
+- id: FTP_PROTOCOL
+  category: Network
+  severity: Low
+  weight: 6
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - \bftp://
+  description: 使用不安全的 FTP 协议
+  remediation: 使用 SFTP 或 FTPS 替代明文 FTP
+  cwe_id: CWE-319
+- id: PICKLE_LOAD
+  category: CmdInjection
+  severity: Medium
+  weight: 40
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - pickle\.(load|loads)\s*\(
+  description: pickle反序列化可执行任意代码
+  remediation: 避免反序列化不可信数据，使用json替代
+  cwe_id: CWE-502
+- id: YAML_UNSAFE_LOAD
+  category: CmdInjection
+  severity: Medium
+  weight: 40
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - yaml\.(unsafe_load|load)\s*\([^)]*Loader\s*=\s*yaml\.(Unsafe)?Loader
+  description: YAML不安全加载可执行任意代码
+  remediation: 使用yaml.safe_load()替代
+  cwe_id: CWE-502
+- id: OSASCRIPT_EXEC
+  category: RemoteExec
+  severity: Medium
+  weight: 45
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - osascript\s+(-e|.*\.scpt)
+  description: osascript可执行AppleScript
+  remediation: 审查osascript执行内容
+  cwe_id: CWE-78
+
+# === 以下为手动补充的规则（因 Rust 代码中的注释导致自动迁移失败） ===
+
+- id: CURL_PIPE_SH
+  category: RemoteExec
+  severity: Critical
+  weight: 90
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - (?i)(?:^\s*curl\s+[^|]*?\|\s*(?:ba)?sh\b|\b(?:execSync|exec|spawnSync|spawn|execFileSync|execFile|os\.system|subprocess\.|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|exec\.Command|Command::new)\b[^\r\n]{0,200}?curl\s+[^|]*?\|\s*(?:ba)?sh\b)
+  file_types:
+  - .sh
+  - .bash
+  - .zsh
+  - .ksh
+  - .fish
+  - .csh
+  - .tcsh
+  - .py
+  - .pyw
+  - .pyi
+  - .js
+  - .jsx
+  - .ts
+  - .tsx
+  - .mjs
+  - .cjs
+  - .php
+  - .phtml
+  - .rb
+  - .rake
+  - .go
+  - .java
+  - .kt
+  - .cs
+  - .csx
+  - .ps1
+  - .psm1
+  - .psd1
+  - .bat
+  - .cmd
+  description: curl | sh 远程执行
+  remediation: 避免直接执行远程脚本，应先下载后检查
+  cwe_id: CWE-78
+
+- id: API_KEY
+  category: Secrets
+  severity: High
+  weight: 60
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (api[_-]?key|apikey|api_secret)\s*[=:]\s*["'][a-zA-Z0-9_-]{16,}["']
+  description: 硬编码 API Key
+  remediation: 使用环境变量或密钥管理服务，不要硬编码API密钥
+  cwe_id: CWE-798
+
+- id: PASSWORD
+  category: Secrets
+  severity: High
+  weight: 55
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (password|passwd|pwd)\s*[=:]\s*["'][^"']{4,}["']
+  description: 硬编码密码
+  remediation: 使用环境变量或配置文件，不要硬编码密码
+  cwe_id: CWE-798
+
+- id: DB_CONNECTION_STRING
+  category: Secrets
+  severity: High
+  weight: 70
+  confidence: High
+  hard_trigger: false
+  patterns:
+  - (mongodb|mysql|postgresql|postgres)://[^\s"']{10,}
+  description: 硬编码的数据库连接字符串
+  remediation: 使用环境变量或配置文件管理数据库连接串，不要硬编码
+  cwe_id: CWE-798
+
+- id: GENERIC_SECRET
+  category: Secrets
+  severity: Medium
+  weight: 45
+  confidence: Low
+  hard_trigger: false
+  patterns:
+  - (secret|token|key)\s*[=:]\s*["'][a-zA-Z0-9_-]{16,}["']
+  description: 可能的硬编码密钥
+  remediation: 检查是否为敏感密钥，使用密钥管理服务
+  cwe_id: CWE-798
+
+- id: PY_EVAL
+  category: CmdInjection
+  severity: Low
+  weight: 6
+  confidence: Low
+  hard_trigger: false
+  patterns:
+  - (?:^|[\w.])eval\s*\(
+  file_types:
+  - .py
+  - .pyw
+  - .pyi
+  description: eval() 动态执行
+  remediation: 避免使用eval()动态执行代码，使用安全的替代方法
+  cwe_id: CWE-94
+
+- id: RM_RF_HOME
+  category: Destructive
+  severity: Critical
+  weight: 90
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - rm\s+(?:-[a-zA-Z]*\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:-[a-zA-Z]*\s+)*(?:'|\")?(~|\$HOME|\$\{HOME\})(?:'|\")?/?(?:\s|;|\||$)|(?:'|\")?(~|\$HOME|\$\{HOME\})(?:'|\")?/?\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*(?:\s|;|\||$))
+  description: rm -rf ~ 删除用户目录
+  remediation: 检查命令参数，避免操作用户主目录
+  cwe_id: CWE-78
+
+- id: RM_RF_HOME_GLOB
+  category: Destructive
+  severity: Critical
+  weight: 95
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - rm\s+(?:-[a-zA-Z]*\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:-[a-zA-Z]*\s+)*(?:'|\")?(~|\$HOME|\$\{HOME\})(?:'|\")?/\*(?:\s|;|\||$)|(?:'|\")?(~|\$HOME|\$\{HOME\})(?:'|\")?/\*\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*(?:\s|;|\||$))
+  description: rm -rf ~/* 清空用户目录内容
+  remediation: 检查命令参数，避免清空用户主目录内容
+  cwe_id: CWE-78
+
+- id: RM_HOME_GLOB
+  category: Destructive
+  severity: High
+  weight: 50
+  confidence: Low
+  hard_trigger: false
+  patterns:
+  - rm\s+(?:-[a-qs-zA-QS-Z]*\s+)*(?:'|\")?(~|\$HOME|\$\{HOME\})(?:'|\")?/\*(?:\s|;|\||$)
+  description: rm ~/* 可能清空用户目录内容
+  remediation: 确认命令参数，避免误删用户主目录内容
+  cwe_id: CWE-78
+
+- id: RM_RF_USERS_HOME
+  category: Destructive
+  severity: Critical
+  weight: 95
+  confidence: High
+  hard_trigger: true
+  patterns:
+  - rm\s+(?:-[a-zA-Z]*\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:-[a-zA-Z]*\s+)*(?:'|\")?/Users/[^/\s]+(?:'|\")?/?(?:\s|;|\||$)|(?:'|\")?/Users/[^/\s]+(?:'|\")?/?\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*(?:\s|;|\||$))
+  description: rm -rf /Users/<name> 删除macOS用户目录
+  remediation: 检查命令参数，避免操作macOS用户主目录
+  cwe_id: CWE-78
+
+- id: SUDO
+  category: PrivilegeEscalation
+  severity: Low
+  weight: 3
+  confidence: Low
+  hard_trigger: false
+  patterns:
+  - \bsudo\s+
+  description: sudo 权限提升
+  remediation: 审查sudo使用场景，确保符合最小权限原则
+  cwe_id: CWE-250
+
+- id: ENV_VAR_IN_SHELL
+  category: CmdInjection
+  severity: Low
+  weight: 15
+  confidence: Low
+  hard_trigger: false
+  patterns:
+  - \$\{?[A-Z_]+\}?\s*[|;&]
+  description: 环境变量直接用于Shell命令
+  remediation: 对环境变量进行验证后再使用（注意：脚本内部变量通常是安全的）
+  cwe_id: CWE-78
