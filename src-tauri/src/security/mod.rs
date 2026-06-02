@@ -1,3 +1,4 @@
+pub mod analyzability;
 pub mod archive_extractor;
 pub mod consistency_checker;
 pub mod file_magic;
