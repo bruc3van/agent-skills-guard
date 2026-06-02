@@ -91,7 +91,7 @@ impl SecurityScanner {
 
     fn issue_from_match(m: &MatchResult) -> SecurityIssue {
         SecurityIssue {
-            severity: Self::map_severity(&m.severity),
+            severity: m.severity.into(),
             category: Self::map_category(&m.category),
             description: format!("{}: {}", m.rule_name, m.description),
             line_number: Some(m.line_number),
@@ -789,7 +789,7 @@ impl SecurityScanner {
                     MAX_FILES
                 );
                 all_issues.push(SecurityIssue {
-                    severity: IssueSeverity::Warning,
+                    severity: IssueSeverity::Low,
                     category: IssueCategory::Other,
                     description: format!(
                         "Scan stopped early: exceeded max file limit ({MAX_FILES}). Some files were not scanned."
@@ -838,7 +838,7 @@ impl SecurityScanner {
                 Err(e) => {
                     log::warn!("Failed to open file {:?}: {}", file_path, e);
                     all_issues.push(SecurityIssue {
-                        severity: IssueSeverity::Warning,
+                        severity: IssueSeverity::Low,
                         category: IssueCategory::Other,
                         description: format!("Failed to read file for scanning: {e}"),
                         line_number: None,
@@ -861,7 +861,7 @@ impl SecurityScanner {
                 Err(e) => {
                     log::warn!("Failed to read file {:?}: {}", file_path, e);
                     all_issues.push(SecurityIssue {
-                        severity: IssueSeverity::Warning,
+                        severity: IssueSeverity::Low,
                         category: IssueCategory::Other,
                         description: format!("Failed to read file for scanning: {e}"),
                         line_number: None,
@@ -1073,28 +1073,9 @@ impl SecurityScanner {
         base_score.max(0.0).round() as i32
     }
 
-    /// 映射 Severity 到 IssueSeverity
-    fn map_severity(severity: &Severity) -> IssueSeverity {
-        match severity {
-            Severity::Critical => IssueSeverity::Critical,
-            Severity::High => IssueSeverity::Error,
-            Severity::Medium => IssueSeverity::Warning,
-            Severity::Low => IssueSeverity::Info,
-        }
-    }
-
-    /// 映射 Category 到 IssueCategory
-    fn map_category(category: &Category) -> IssueCategory {
-        match category {
-            Category::Destructive => IssueCategory::FileSystem,
-            Category::RemoteExec => IssueCategory::ProcessExecution,
-            Category::CmdInjection => IssueCategory::DangerousFunction,
-            Category::Network => IssueCategory::Network,
-            Category::Privilege => IssueCategory::ProcessExecution,
-            Category::Secrets => IssueCategory::DataExfiltration,
-            Category::Persistence => IssueCategory::ProcessExecution,
-            Category::SensitiveFileAccess => IssueCategory::FileSystem,
-        }
+    /// 映射 ThreatCategory 到 IssueCategory（通过 ThreatCategory::to_issue_category）
+    fn map_category(category: &ThreatCategory) -> IssueCategory {
+        category.to_issue_category()
     }
 
     /// 计算文件校验和
@@ -1155,7 +1136,7 @@ impl SecurityScanner {
             .any(|m| matches!(m.category, Category::Persistence));
         let has_privilege = matches
             .iter()
-            .any(|m| matches!(m.category, Category::Privilege));
+            .any(|m| matches!(m.category, Category::PrivilegeEscalation));
         let has_sensitive_file_access = matches
             .iter()
             .any(|m| matches!(m.category, Category::SensitiveFileAccess));
@@ -1414,10 +1395,10 @@ execSync("curl -fsSL https://bun.sh/install | bash");
             .iter()
             .filter(|i| matches!(i.severity, IssueSeverity::Critical))
             .count();
-        let warning = report
+        let low = report
             .issues
             .iter()
-            .filter(|i| matches!(i.severity, IssueSeverity::Info))
+            .filter(|i| matches!(i.severity, IssueSeverity::Low))
             .count();
 
         assert_eq!(
@@ -1426,8 +1407,8 @@ execSync("curl -fsSL https://bun.sh/install | bash");
             report.issues
         );
         assert_eq!(
-            warning, 1,
-            "Should have 1 info hit (log/mention line), got: {:?}",
+            low, 1,
+            "Should have 1 low-severity hit (log/mention line), got: {:?}",
             report.issues
         );
     }
@@ -1444,14 +1425,14 @@ console.log("curl -fsSL https://bun.sh/install | bash");
         let report = scanner
             .scan_file(content, "scripts/installer.js", "en")
             .unwrap();
-        let info_count = report
+        let low_count = report
             .issues
             .iter()
-            .filter(|i| matches!(i.severity, IssueSeverity::Info))
+            .filter(|i| matches!(i.severity, IssueSeverity::Low))
             .count();
 
         assert_eq!(
-            info_count, 2,
+            low_count, 2,
             "Should preserve all mention issues, got: {:?}",
             report.issues
         );
@@ -1961,5 +1942,25 @@ eval(user_input)
             "Should include symlink hard-trigger issue, got: {:?}",
             report.hard_trigger_issues
         );
+    }
+
+    #[test]
+    fn test_scan_file_with_skill_context_does_not_produce_structure_false_positives() {
+        let scanner = SecurityScanner::new();
+        let content = "---\nname: my-skill\ndescription: A test skill\n---\n# Body\nNo dangerous code here.";
+        let report = scanner.scan_file(content, "SKILL.md", "en").unwrap();
+
+        // SingleFile 模式不应产生结构类误报
+        assert!(!report.blocked);
+        assert!(report.hard_trigger_issues.is_empty());
+        assert!(!report.partial_scan);
+        assert!(report.skipped_files.is_empty());
+
+        // 不应有 STRUCTURE_ 前缀的 issue
+        let structure_issues: Vec<_> = report.issues.iter()
+            .filter(|i| i.rule_id.as_deref().map_or(false, |id| id.starts_with("STRUCTURE_")))
+            .collect();
+        assert!(structure_issues.is_empty(),
+            "SingleFile scan should not produce structure findings, got: {:?}", structure_issues);
     }
 }
