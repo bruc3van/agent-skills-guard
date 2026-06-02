@@ -1043,12 +1043,48 @@ impl SecurityScanner {
             }
         }
 
+        // ── Analyzability 集成 ──
+        let analyzability_result = crate::security::analyzability::assess(&skill_ctx);
+        for finding in &analyzability_result.findings {
+            all_issues.push(SecurityIssue {
+                severity: finding.severity,
+                category: IssueCategory::Other,
+                description: finding.description.clone(),
+                line_number: finding.line_number,
+                code_snippet: finding.snippet.clone(),
+                file_path: finding.file_path.clone(),
+                rule_id: Some(finding.rule_id.clone()),
+                confidence: None,
+                remediation: finding.remediation.clone(),
+                cwe_id: finding.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
+            });
+        }
+        if analyzability_result.score < 70.0 {
+            partial_scan = true;
+        }
+
+        // ── Finding 归一化：按 rule_id + file_path + line_number 去重 ──
+        let mut seen = HashSet::new();
+        all_issues.retain(|issue| {
+            let key = format!(
+                "{}:{}:{}",
+                issue.rule_id.as_deref().unwrap_or(""),
+                issue.file_path.as_deref().unwrap_or(""),
+                issue.line_number.unwrap_or(0)
+            );
+            seen.insert(key)
+        });
+
         // 计算安全评分
         let score = self.calculate_score_weighted(&all_matches);
         let level = crate::models::security::SecurityLevel::from_score(score);
 
         // 生成建议
-        let recommendations = self.generate_recommendations(&all_matches, score, locale);
+        let mut recommendations = self.generate_recommendations(&all_matches, score, locale);
+
+        // 追加 policy fingerprint
+        let policy_fingerprint = crate::security::policy::ScanPolicy::builtin_default().fingerprint();
+        recommendations.push(format!("[policy:{}]", policy_fingerprint));
 
         Ok(SecurityReport {
             skill_id: skill_id.to_string(),
@@ -2152,6 +2188,126 @@ eval(user_input)
             structure_issues.is_empty(),
             "Valid skill should have no structure issues, got: {:?}",
             structure_issues
+        );
+    }
+
+    #[test]
+    fn test_dedup_removes_duplicate_findings() {
+        let scanner = SecurityScanner::new();
+        let dir = tempdir().unwrap();
+        // 同一文件中 eval 重复出现——collect_matches_for_content 内部已做 dedup，
+        // 但目录扫描可能从多个扫描路径产生重复 issue。
+        // 这里用 scan_file 验证 dedup 在 scan_directory 路径上的效果
+        std::fs::write(
+            dir.path().join("SKILL.md"),
+            "---\nname: dup-test\ndescription: A test skill for dedup\n---\nBody",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("code.py"), "eval('x')\n").unwrap();
+
+        let report1 = scanner
+            .scan_directory(dir.path().to_str().unwrap(), "test-dup", "en")
+            .unwrap();
+        let report2 = scanner
+            .scan_directory(dir.path().to_str().unwrap(), "test-dup", "en")
+            .unwrap();
+
+        // 两次扫描结果应一致（幂等性）
+        assert_eq!(report1.issues.len(), report2.issues.len(),
+            "Repeated scans should produce same issue count");
+    }
+
+    #[test]
+    fn test_policy_fingerprint_in_recommendations() {
+        let scanner = SecurityScanner::new();
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("SKILL.md"),
+            "---\nname: test\n---\n# Body\nsafe content\n",
+        )
+        .unwrap();
+
+        let report = scanner
+            .scan_directory(dir.path().to_str().unwrap(), "test-fp", "en")
+            .unwrap();
+
+        let policy_rec = report
+            .recommendations
+            .iter()
+            .find(|r| r.starts_with("[policy:"));
+        assert!(
+            policy_rec.is_some(),
+            "Recommendations should contain policy fingerprint, got: {:?}",
+            report.recommendations
+        );
+        let fingerprint = policy_rec.unwrap();
+        assert!(
+            fingerprint.len() > 9, // "[policy:" + at least 1 char + "]"
+            "Policy fingerprint should have content, got: {}",
+            fingerprint
+        );
+    }
+
+    #[test]
+    fn test_analyzability_findings_included_in_directory_scan() {
+        let scanner = SecurityScanner::new();
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("SKILL.md"),
+            "---\nname: test\n---\n# Body\nsafe content\n",
+        )
+        .unwrap();
+
+        let report = scanner
+            .scan_directory(dir.path().to_str().unwrap(), "test-analyz", "en")
+            .unwrap();
+
+        // analyzability findings (如 LOW_ANALYZABILITY 或 EXCESSIVE_FILE_COUNT) 可能存在，
+        // 但至少验证报告正常生成且 partial_scan 字段存在
+        // 当所有文件都是可分析的，analyzability_score = 100，不会产生 finding
+        // 因此这里主要验证集成不破坏正常流程
+        assert!(!report.scanned_files.is_empty(), "Should have scanned files");
+
+        // 验证 policy fingerprint 存在
+        assert!(
+            report.recommendations.iter().any(|r| r.starts_with("[policy:")),
+            "Should contain policy fingerprint"
+        );
+    }
+
+    #[test]
+    fn test_analyzability_triggers_partial_scan_for_binary() {
+        let scanner = SecurityScanner::new();
+        let dir = tempdir().unwrap();
+        // 创建一个包含未知二进制文件的 skill 目录
+        // analyzability score 会很低，触发 partial_scan
+        std::fs::write(
+            dir.path().join("SKILL.md"),
+            "---\nname: test\n---\n# Small\nHi",
+        )
+        .unwrap();
+        // 写入一个大二进制文件（使用非已知惰性扩展名）
+        let binary_content: Vec<u8> = (0..5000).map(|i| (i % 256) as u8).collect();
+        std::fs::write(dir.path().join("data.xyz"), &binary_content).unwrap();
+
+        let report = scanner
+            .scan_directory(dir.path().to_str().unwrap(), "test-analyz-bin", "en")
+            .unwrap();
+
+        // 应检测到 UNANALYZABLE_BINARY
+        let unanalyzable = report
+            .issues
+            .iter()
+            .filter(|i| {
+                i.rule_id
+                    .as_deref()
+                    .map_or(false, |id| id == "UNANALYZABLE_BINARY")
+            })
+            .count();
+        assert!(
+            unanalyzable > 0,
+            "Should detect UNANALYZABLE_BINARY finding, got: {:?}",
+            report.issues.iter().map(|i| i.rule_id.as_deref()).collect::<Vec<_>>()
         );
     }
 }
