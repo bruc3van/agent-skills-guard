@@ -1,3 +1,4 @@
+pub mod archive_extractor;
 pub mod consistency_checker;
 pub mod policy;
 pub mod referenced_files;
