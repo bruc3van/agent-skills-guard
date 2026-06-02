@@ -18,12 +18,20 @@ fn featured_marketplaces_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, S
     Ok(app_dir.join("featured-marketplace.yaml"))
 }
 
-/// 从远程 URL 下载 YAML 内容并原子写入缓存文件，返回 YAML 字符串。
-pub async fn download_yaml_to_cache(url: &str, cache_path: &PathBuf) -> Result<String, String> {
-    use std::io::Write;
+/// 删除损坏或过期的 YAML 缓存文件（文件不存在时忽略）。
+pub fn remove_cache_file(cache_path: &PathBuf) {
+    match std::fs::remove_file(cache_path) {
+        Ok(()) => log::info!("已删除精选配置缓存: {:?}", cache_path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!("删除精选配置缓存失败: {:?}, 错误: {}", cache_path, e),
+    }
+}
+
+/// 从远程 URL 下载 YAML 内容。
+pub async fn download_remote_yaml(url: &str) -> Result<String, String> {
     use std::time::Duration;
 
-    let yaml_content = reqwest::Client::builder()
+    reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?
@@ -36,7 +44,12 @@ pub async fn download_yaml_to_cache(url: &str, cache_path: &PathBuf) -> Result<S
         .map_err(|e| format!("Failed to download: {}", e))?
         .text()
         .await
-        .map_err(|e| format!("Failed to read content: {}", e))?;
+        .map_err(|e| format!("Failed to read content: {}", e))
+}
+
+/// 将 YAML 内容原子写入缓存文件。
+pub fn write_yaml_cache(cache_path: &PathBuf, yaml_content: &str) -> Result<(), String> {
+    use std::io::Write;
 
     let cache_dir = cache_path
         .parent()
@@ -52,7 +65,7 @@ pub async fn download_yaml_to_cache(url: &str, cache_path: &PathBuf) -> Result<S
     tmp.persist(cache_path)
         .map_err(|e| format!("Failed to persist cache: {}", e))?;
 
-    Ok(yaml_content)
+    Ok(())
 }
 
 /// 获取精选插件市场列表
@@ -71,6 +84,7 @@ pub async fn get_featured_marketplaces(
                     cache_path,
                     e
                 );
+                remove_cache_file(&cache_path);
             }
         }
     }
@@ -86,9 +100,14 @@ pub async fn refresh_featured_marketplaces(
     app: tauri::AppHandle,
 ) -> Result<FeaturedMarketplacesConfig, String> {
     let cache_path = featured_marketplaces_cache_path(&app)?;
-    let yaml_content =
-        download_yaml_to_cache(FEATURED_MARKETPLACES_REMOTE_URL, &cache_path).await?;
+    let yaml_content = download_remote_yaml(FEATURED_MARKETPLACES_REMOTE_URL).await?;
 
-    serde_yaml::from_str::<FeaturedMarketplacesConfig>(&yaml_content)
-        .map_err(|e| format!("Failed to parse downloaded featured marketplaces: {}", e))
+    let config = serde_yaml::from_str::<FeaturedMarketplacesConfig>(&yaml_content)
+        .map_err(|e| {
+            remove_cache_file(&cache_path);
+            format!("Failed to parse downloaded featured marketplaces: {}", e)
+        })?;
+
+    write_yaml_cache(&cache_path, &yaml_content)?;
+    Ok(config)
 }

@@ -1056,7 +1056,7 @@ mod install_path_tests {
 }
 
 use crate::commands::featured_marketplaces::{
-    download_yaml_to_cache, FEATURED_MARKETPLACES_REMOTE_URL,
+    download_remote_yaml, remove_cache_file, write_yaml_cache, FEATURED_MARKETPLACES_REMOTE_URL,
 };
 
 const DEFAULT_FEATURED_REPOSITORIES_YAML: &str = include_str!("../../../featured-marketplace.yaml");
@@ -1108,6 +1108,7 @@ pub async fn get_featured_repositories(
                     cache_path,
                     e
                 );
+                remove_cache_file(&cache_path);
             }
         }
     }
@@ -1122,11 +1123,15 @@ pub async fn refresh_featured_repositories(
     app: tauri::AppHandle,
 ) -> Result<FeaturedRepositoriesConfig, String> {
     let cache_path = featured_repositories_cache_path(&app)?;
-    let yaml_content =
-        download_yaml_to_cache(FEATURED_MARKETPLACES_REMOTE_URL, &cache_path).await?;
+    let yaml_content = download_remote_yaml(FEATURED_MARKETPLACES_REMOTE_URL).await?;
 
-    parse_featured_repositories_yaml(&yaml_content)
-        .map_err(|e| format!("Failed to parse downloaded featured repositories: {}", e))
+    let config = parse_featured_repositories_yaml(&yaml_content).map_err(|e| {
+        remove_cache_file(&cache_path);
+        format!("Failed to parse downloaded featured repositories: {}", e)
+    })?;
+
+    write_yaml_cache(&cache_path, &yaml_content)?;
+    Ok(config)
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
