@@ -109,14 +109,14 @@ pub struct SkillManifest {
     /// Skill 描述
     #[serde(default)]
     pub description: String,
-    /// 声明允许使用的工具列表
-    #[serde(default)]
+    /// 声明允许使用的工具列表（支持 YAML 中的 `allowed-tools` 或 `allowed_tools`）
+    #[serde(default, alias = "allowed-tools")]
     pub allowed_tools: Vec<String>,
     /// 兼容性信息（目标平台、版本等）
-    #[serde(default)]
+    #[serde(default, alias = "compatibility-info")]
     pub compatibility: HashMap<String, String>,
     /// 其他元数据字段
-    #[serde(default)]
+    #[serde(default, alias = "meta")]
     pub metadata: HashMap<String, String>,
 }
 
@@ -232,6 +232,32 @@ impl SkillContext {
     /// 检查某个文件是否在引用列表中
     pub fn is_referenced(&self, path: &Path) -> bool {
         self.referenced_files.iter().any(|p| p == path)
+    }
+
+    /// 从内容中解析 YAML frontmatter
+    /// 返回 (manifest, instruction_body)
+    /// 解析失败返回 (None, 原始内容)
+    pub fn parse_frontmatter(content: &str) -> (Option<SkillManifest>, String) {
+        let trimmed = content.trim_start();
+        if !trimmed.starts_with("---") {
+            return (None, content.to_string());
+        }
+        let after_first = &trimmed[3..];
+        let second = match after_first.find("\n---") {
+            Some(pos) => pos,
+            None => return (None, content.to_string()),
+        };
+        let yaml_str = &after_first[..second];
+        let body_start = 3 + second + 4; // "---\n" = 4 bytes
+        let body = if body_start < content.len() {
+            content[body_start..].trim_start_matches('\n').to_string()
+        } else {
+            String::new()
+        };
+        match serde_yaml::from_str::<SkillManifest>(yaml_str) {
+            Ok(manifest) => (Some(manifest), body),
+            Err(_) => (None, content.to_string()),
+        }
     }
 }
 
@@ -374,5 +400,43 @@ mod tests {
                 ext
             );
         }
+    }
+
+    #[test]
+    fn test_parse_frontmatter_basic() {
+        let content = "---\nname: my-skill\ndescription: A test skill\nallowed-tools:\n  - bash\n  - read\n---\n\nThis is the body.";
+        let (manifest, body) = SkillContext::parse_frontmatter(content);
+        let m = manifest.expect("should parse manifest");
+        assert_eq!(m.name, "my-skill");
+        assert_eq!(m.description, "A test skill");
+        assert_eq!(m.allowed_tools, vec!["bash", "read"]);
+        assert_eq!(body, "This is the body.");
+    }
+
+    #[test]
+    fn test_parse_frontmatter_missing() {
+        let content = "This is just plain text without frontmatter.";
+        let (manifest, body) = SkillContext::parse_frontmatter(content);
+        assert!(manifest.is_none());
+        assert_eq!(body, content);
+    }
+
+    #[test]
+    fn test_parse_frontmatter_empty_fields() {
+        let content = "---\nname: partial-skill\n---\n\nBody only.";
+        let (manifest, body) = SkillContext::parse_frontmatter(content);
+        let m = manifest.expect("should parse manifest");
+        assert_eq!(m.name, "partial-skill");
+        assert!(m.description.is_empty());
+        assert!(m.allowed_tools.is_empty());
+        assert_eq!(body, "Body only.");
+    }
+
+    #[test]
+    fn test_parse_frontmatter_invalid_yaml() {
+        let content = "---\n: invalid: yaml: [[[\n---\nBody.";
+        let (manifest, body) = SkillContext::parse_frontmatter(content);
+        assert!(manifest.is_none());
+        assert_eq!(body, content);
     }
 }
