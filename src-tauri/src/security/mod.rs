@@ -1,6 +1,7 @@
 pub mod archive_extractor;
 pub mod consistency_checker;
 pub mod file_magic;
+pub mod pipeline;
 pub mod policy;
 pub mod referenced_files;
 pub mod secret_masking;
