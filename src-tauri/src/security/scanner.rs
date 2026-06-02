@@ -92,12 +92,18 @@ impl SecurityScanner {
     }
 
     fn issue_from_match(m: &MatchResult) -> SecurityIssue {
+        // Secret 类 finding 的 code_snippet 必须脱敏
+        let code_snippet = if m.category == Category::Secrets {
+            Some(crate::security::secret_masking::mask_secrets(&m.code_snippet))
+        } else {
+            Some(m.code_snippet.clone())
+        };
         SecurityIssue {
             severity: m.severity.into(),
             category: Self::map_category(&m.category),
             description: format!("{}: {}", m.rule_name, m.description),
             line_number: Some(m.line_number),
-            code_snippet: Some(m.code_snippet.clone()),
+            code_snippet,
             file_path: Some(m.file_path.clone()),
             rule_id: Some(m.rule_id.clone()),
             confidence: Some(m.confidence.as_str().to_string()),
@@ -724,15 +730,11 @@ impl SecurityScanner {
 
         // ── SkillContext 构建与结构校验 ──
         let policy = crate::security::policy::ScanPolicy::builtin_default().clone();
-        let skill_ctx = match SkillContext::for_directory(dir_path, policy) {
+        let skill_ctx = match SkillContext::for_directory(dir_path, policy.clone()) {
             Ok(ctx) => ctx,
-            Err(_) => {
-                // 构建失败不影响现有扫描逻辑
-                SkillContext::for_single_file(
-                    "",
-                    dir_path,
-                    crate::security::policy::ScanPolicy::builtin_default().clone(),
-                )
+            Err(e) => {
+                log::warn!("Failed to build SkillContext for directory '{}': {}. Falling back to empty context.", dir_path, e);
+                SkillContext::for_single_file("", dir_path, policy)
             }
         };
 
