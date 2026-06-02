@@ -781,6 +781,23 @@ impl SecurityScanner {
             });
         }
 
+        // 运行 Pipeline 分析（仅 Directory 模式）
+        let pipeline_findings = crate::security::pipeline::analyze(&skill_ctx);
+        for finding in &pipeline_findings {
+            all_issues.push(SecurityIssue {
+                severity: finding.severity,
+                category: IssueCategory::Other,
+                description: finding.description.clone(),
+                line_number: finding.line_number,
+                code_snippet: finding.snippet.clone(),
+                file_path: finding.file_path.clone(),
+                rule_id: Some(finding.rule_id.clone()),
+                confidence: None,
+                remediation: finding.remediation.clone(),
+                cwe_id: finding.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
+            });
+        }
+
         // 递归遍历目录（不跟随 symlink），扫描文本文件内容
         let mut iter = WalkDir::new(path)
             .follow_links(false)
@@ -958,6 +975,22 @@ impl SecurityScanner {
                     cwe_id: None,
                 });
                 partial_scan = true;
+            }
+
+            // File Magic 检测
+            if let Some(magic_finding) = crate::security::file_magic::check_magic(&rel_str, &buf) {
+                all_issues.push(SecurityIssue {
+                    severity: magic_finding.severity,
+                    category: IssueCategory::Other,
+                    description: magic_finding.description.clone(),
+                    line_number: None,
+                    code_snippet: None,
+                    file_path: Some(rel_str.clone()),
+                    rule_id: Some(magic_finding.rule_id.clone()),
+                    confidence: None,
+                    remediation: magic_finding.remediation.clone(),
+                    cwe_id: magic_finding.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
+                });
             }
 
             let mut content = None;
