@@ -300,6 +300,7 @@ Cisco 在主扫描编排前会先执行 archive extraction，将压缩包和 Off
 - 解压失败产生 `ARCHIVE_EXTRACTION_FAILED`，不静默跳过。
 - 嵌套过深产生 `ARCHIVE_NESTED_TOO_DEEP`。
 - Office/PDF 深度结构风险仍放在 P4，但 archive extraction 要先为后续能力预留文件来源和 metadata。
+- 解压 Office 文档（`.docx`/`.xlsx`/`.pptx`）时检查 ZIP 文件名列表中是否存在 `vbaProject`（VBA 宏）或 `oleObject`/`embeddings`（嵌入 OLE 对象），产生 `OFFICE_VBA_MACRO`（CRITICAL）和 `OFFICE_EMBEDDED_OLE`（HIGH）。此检查仅遍历 ZIP entry 名称，不依赖外部库，成本极低。
 
 参考 Cisco：
 
@@ -368,6 +369,9 @@ Cisco 在主扫描编排前会先执行 archive extraction，将压缩包和 Off
 - `partial_scan = true` 继续保留。
 - `skipped_files` 继续记录。
 - 新增 finding 解释为什么 partial，避免 UI 只显示一个布尔值。
+- 文件数量超过 policy `max_file_count` 时产生 `EXCESSIVE_FILE_COUNT`（LOW），metadata 包含 `file_count` 和 `type_breakdown`。
+- 单文件超过 policy `max_file_size_bytes` 时产生 `OVERSIZED_FILE`（LOW），metadata 包含文件路径和实际大小。
+- 这两个 finding 让 `partial_scan = true` 的原因可解释，而非仅依赖布尔值和 `skipped_files` 列表。
 
 参考 Cisco：
 
@@ -526,7 +530,9 @@ Cisco 在主扫描编排前会先执行 archive extraction，将压缩包和 Off
 - 压缩包内脚本会被加入后续扫描。
 - zip bomb/path traversal archive entry 会产生明确 finding。
 - archive 临时解压目录扫描后清理。
+- 含 `vbaProject` 的 `.docx` 产生 `OFFICE_VBA_MACRO`（CRITICAL），含 `oleObject`/`embeddings` 的产生 `OFFICE_EMBEDDED_OLE`（HIGH）。
 - text/code 扩展名伪装成 PE/ELF/Mach-O/ZIP/PDF/Office 会产生 `FILE_MAGIC_MISMATCH`，并按风险分级。
+- 文件总数超过 policy 限制产生 `EXCESSIVE_FILE_COUNT`，单文件过大产生 `OVERSIZED_FILE`，`partial_scan` 原因可解释。
 
 ### P3：Analyzability 与报告归一化
 
@@ -556,7 +562,7 @@ Cisco 在主扫描编排前会先执行 archive extraction，将压缩包和 Off
 
 - YARA 或类 YARA 规则加载。
 - PDF 结构风险：`/JS`、`/JavaScript`、`/OpenAction`、`/Launch`。
-- Office 风险：VBA macro、OLE embedded。
+- Office 风险：VBA macro 内容分析、OLE embedded 对象深度检查（P2 已覆盖基于 ZIP 文件名的基础 VBA/OLE 检测）。
 - `.pyc` 与 `.py` 一致性检查。
 - Homoglyph/unicode 隐写增强。
 - indirect prompt injection / unicode steganography parity。
@@ -607,7 +613,8 @@ Cisco 在主扫描编排前会先执行 archive extraction，将压缩包和 Off
 - Allowed-tools fixture：Read/Write/Bash/Grep/Glob/Network 分项、localhost-only network 降级/排除。
 - Trigger fixture：过泛描述、过短描述、关键词诱导、description/behavior mismatch。
 - File magic fixture：源码扩展名伪装可执行、图片扩展名伪装脚本、text/code label mismatch。
-- Archive fixture：zip bomb、嵌套过深、路径穿越、压缩包内恶意脚本。
+- Archive fixture：zip bomb、嵌套过深、路径穿越、压缩包内恶意脚本、含 `vbaProject` 的 `.docx`、含 `oleObject` 的 `.xlsx`。
+- File inventory fixture：文件数超限产生 `EXCESSIVE_FILE_COUNT`、单文件过大产生 `OVERSIZED_FILE`、metadata 包含 `type_breakdown`。
 - Pipeline fixture：fetch-execute、archive-execute、secret exfil、known installer 降级。
 - Analyzability fixture：UTF-16、二进制、静态图片、超大文件、不可读文件。
 - Flow fixture：`scan_file(SKILL.md)`、`prepare_skill_installation` 目录扫描、`skip_readme`、进度回调、partial scan 阻断。
