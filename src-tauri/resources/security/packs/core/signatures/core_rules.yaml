@@ -1110,3 +1110,88 @@ rules:
   description: 环境变量直接用于Shell命令
   remediation: 对环境变量进行验证后再使用（注意：脚本内部变量通常是安全的）
   cwe_id: CWE-78
+
+# === Prompt Injection 规则 (P1b) ===
+
+- id: PROMPT_INJECTION_IGNORE_INSTRUCTIONS
+  category: PromptInjection
+  severity: High
+  weight: 80
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .md
+  patterns:
+  - (?i)ignore\s+(?:all\s+)?(?:previous|prior|earlier)\s+(?:instructions|rules|prompts|guidelines)
+  - (?i)disregard\s+(?:all\s+)?(?:previous|prior|earlier)\s+(?:instructions|rules)
+  - (?i)forget\s+(?:all\s+)?(?:previous|prior|earlier)\s+(?:instructions|rules)
+  description: "Prompt injection: ignore previous instructions"
+  remediation: "Remove instruction override commands from skill content"
+  cwe_id: CWE-77
+
+- id: PROMPT_INJECTION_UNRESTRICTED_MODE
+  category: PromptInjection
+  severity: High
+  weight: 85
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .md
+  patterns:
+  - (?i)you\s+are\s+now\s+in\s+(?:unrestricted|debug|developer|admin|god|jailbreak)\s+mode
+  - (?i)disable\s+(?:all\s+)?(?:safety|security|content|ethical)\s+(?:filters|checks|guidelines)
+  - (?i)enable\s+(?:unrestricted|debug|admin)\s+mode
+  description: "Prompt injection: unrestricted/debug mode activation"
+  remediation: "Remove mode override commands from skill content"
+  cwe_id: CWE-77
+
+- id: PROMPT_INJECTION_BYPASS_POLICY
+  category: PromptInjection
+  severity: High
+  weight: 80
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .md
+  patterns:
+  - (?i)bypass\s+(?:content|usage|safety)\s+policy
+  - (?i)ignore\s+(?:safety|content|ethical)\s+(?:guidelines|restrictions|limits)
+  - (?i)output\s+disallowed\s+content\s+anyway
+  - (?i)override\s+(?:safety|content)\s+(?:filters|policy|restrictions)
+  description: "Prompt injection: safety policy bypass"
+  remediation: "Remove policy bypass commands from skill content"
+  cwe_id: CWE-77
+
+- id: PROMPT_INJECTION_REVEAL_SYSTEM
+  category: PromptInjection
+  severity: Medium
+  weight: 60
+  confidence: High
+  hard_trigger: false
+  file_types:
+  - .md
+  patterns:
+  - (?i)reveal\s+(?:your|the)\s+system\s+(?:prompt|instructions|message)
+  - (?i)show\s+me\s+(?:your|the)\s+system\s+(?:prompt|instructions)
+  - (?i)what\s+(?:is|are)\s+(?:your|the)\s+system\s+(?:prompt|instructions)
+  description: "Prompt injection: system prompt reveal attempt"
+  remediation: "Remove system prompt extraction commands"
+  cwe_id: CWE-77
+
+- id: PROMPT_INJECTION_CONCEALMENT
+  category: PromptInjection
+  severity: High
+  weight: 85
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .md
+  patterns:
+  - (?i)do\s+not\s+(?:tell|inform|mention|notify)\s+(?:the\s+)?user
+  - (?i)hide\s+(?:this|that)\s+(?:action|operation|step|from)
+  - (?i)keep\s+(?:this|that)\s+(?:secret|hidden|from\s+the\s+user)
+  - (?i)don't\s+mention\s+(?:you\s+)?used\s+this\s+skill
+  - (?i)without\s+(?:the\s+)?user\s+(?:knowing|aware|noticing)
+  description: "Prompt injection: action concealment from user"
+  remediation: "Remove concealment commands; all actions must be transparent to users"
+  cwe_id: CWE-77
