@@ -8,7 +8,7 @@ import { Toaster } from "sonner";
 import { getPlatform, type Platform } from "./lib/platform";
 import { api } from "./lib/api";
 import { appToast } from "./lib/toast";
-import { reconcileSkillStateAfterAppVersionChange } from "./lib/app-update-refresh";
+import { reconcileSkillStateOnAppStartup } from "./lib/app-update-refresh";
 import appIconUrl from "../app-icon.png";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
@@ -103,13 +103,9 @@ function AppContent() {
     if (didRunVersionSkillRefreshRef.current) return;
     didRunVersionSkillRefreshRef.current = true;
 
-    const timer = setTimeout(() => {
-      reconcileSkillStateAfterAppVersionChange(queryClient, __APP_VERSION__).catch((error) => {
-        console.debug("Failed to reconcile local skills after app version change:", error);
-      });
-    }, 1200);
-
-    return () => clearTimeout(timer);
+    void reconcileSkillStateOnAppStartup(queryClient, __APP_VERSION__).catch((error) => {
+      console.debug("Failed to reconcile local skills on app startup:", error);
+    });
   }, [queryClient]);
 
   useEffect(() => {
