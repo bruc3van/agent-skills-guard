@@ -6,7 +6,7 @@
 
 ### Making Claude Code Skills Management as Simple and Secure as an App Store
 
-[![Version](https://img.shields.io/badge/version-1.2.4-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
+[![Version](https://img.shields.io/badge/version-1.2.5-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 

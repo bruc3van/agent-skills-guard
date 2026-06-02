@@ -21,7 +21,7 @@ dependencies = [
 
 [[package]]
 name = "agent-skills-guard"
-version = "1.2.4"
+version = "1.2.5"
 dependencies = [
  "anyhow",
  "chrono",
