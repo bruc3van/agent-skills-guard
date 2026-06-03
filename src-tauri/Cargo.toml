@@ -71,6 +71,10 @@ tauri-plugin-opener = "~2.5.0"
 # ZIP解压
 zip = "2.2"
 
+# TAR解压
+tar = "0.4"
+flate2 = "1.0"
+
 # OS 插件
 tauri-plugin-os = "~2.3.0"
 

@@ -430,6 +430,7 @@ mod tests {
             confidence: None,
             remediation: None,
             cwe_id: None,
+            threat_category: None,
         }]);
         existing.security_report = Some(crate::models::security::SecurityReport {
             skill_id: existing.id.clone(),

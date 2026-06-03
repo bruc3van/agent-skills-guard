@@ -8,7 +8,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::models::security::{Finding, FindingMetadata, IssueSeverity, ThreatCategory};
-use crate::security::skill_context::{ScanMode, SkillContext};
+use crate::security::skill_context::{ScanMode, SkillContext, SkillFileType};
 
 // ── 常量 ──
 
@@ -74,6 +74,28 @@ pub fn validate(ctx: &SkillContext) -> Vec<Finding> {
             ));
         }
 
+        // 3.1 校验 name 与目录名一致性
+        if !manifest.name.is_empty() {
+            if let Some(ref dir_path) = ctx.skill_dir {
+                if let Some(dir_name) = dir_path.file_name().and_then(|n| n.to_str()) {
+                    if manifest.name != dir_name {
+                        findings.push(make_finding(
+                            "STRUCTURE_NAME_DIR_MISMATCH",
+                            IssueSeverity::Medium,
+                            format!(
+                                "Skill name '{}' does not match directory name '{}'",
+                                manifest.name, dir_name
+                            ),
+                            ctx.skill_md_path
+                                .as_ref()
+                                .map(|p| p.to_string_lossy().to_string()),
+                            None,
+                        ));
+                    }
+                }
+            }
+        }
+
         // 4. 校验 description
         let desc_len = manifest.description.len();
         if desc_len == 0 {
@@ -106,6 +128,23 @@ pub fn validate(ctx: &SkillContext) -> Vec<Finding> {
                 format!(
                     "Description is too long ({} chars, maximum {})",
                     desc_len, DESC_MAX_LEN
+                ),
+                ctx.skill_md_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string()),
+                None,
+            ));
+        }
+
+        // 4.1 校验 compatibility 字段长度
+        let compatibility_total_len: usize = manifest.compatibility.values().map(|v| v.len()).sum();
+        if compatibility_total_len > 500 {
+            findings.push(make_finding(
+                "STRUCTURE_COMPATIBILITY_TOO_LONG",
+                IssueSeverity::Low,
+                format!(
+                    "Compatibility field is too long ({} chars, maximum 500)",
+                    compatibility_total_len
                 ),
                 ctx.skill_md_path
                     .as_ref()
@@ -179,6 +218,60 @@ pub fn validate(ctx: &SkillContext) -> Vec<Finding> {
                 None,
             ));
         }
+
+        // 8.1 非 UTF-8 编码检查（仅文本文件）
+        if !file.is_binary && file.file_type != SkillFileType::Asset {
+            if let Ok(content) = std::fs::read_to_string(&file.absolute_path) {
+                // 尝试读取为 UTF-8，如果失败则说明非 UTF-8 编码
+                // read_to_string 本身会检查 UTF-8，所以这里不需要额外检查
+                // 但如果文件包含无效 UTF-8，read_to_string 会返回 Err
+                let _ = content; // 如果成功读取，说明是有效的 UTF-8
+            } else {
+                findings.push(make_finding(
+                    "STRUCTURE_NON_UTF8",
+                    IssueSeverity::Low,
+                    format!("Text file '{}' is not valid UTF-8", rel),
+                    Some(rel.clone()),
+                    None,
+                ));
+            }
+        }
+    }
+
+    // 9. 孤立脚本检查：脚本文件在 script_files 中但不在 referenced_files 中
+    for script_path in &ctx.script_files {
+        let script_str = normalize_path(&script_path.to_string_lossy());
+        let is_referenced = ctx.referenced_files.iter().any(|ref_path| {
+            let ref_str = normalize_path(&ref_path.to_string_lossy());
+            ref_str == script_str || script_str.ends_with(&ref_str) || ref_str.ends_with(&script_str)
+        });
+        if !is_referenced {
+            findings.push(make_finding(
+                "STRUCTURE_ORPHAN_SCRIPT",
+                IssueSeverity::Low,
+                format!("Script file '{}' is not referenced in SKILL.md", script_path.to_string_lossy()),
+                Some(script_path.to_string_lossy().to_string()),
+                None,
+            ));
+        }
+    }
+
+    // 10. 缺失引用检查：referenced_files 中的路径在 files 中不存在
+    for ref_path in &ctx.referenced_files {
+        let ref_str = normalize_path(&ref_path.to_string_lossy());
+        let exists = ctx.files.iter().any(|file| {
+            let file_str = normalize_path(&file.relative_path.to_string_lossy());
+            file_str == ref_str || file_str.ends_with(&ref_str) || ref_str.ends_with(&file_str)
+        });
+        if !exists {
+            findings.push(make_finding(
+                "STRUCTURE_MISSING_REFERENCE",
+                IssueSeverity::Medium,
+                format!("Referenced file '{}' does not exist in skill directory", ref_path.to_string_lossy()),
+                Some(ref_path.to_string_lossy().to_string()),
+                None,
+            ));
+        }
     }
 
     findings
@@ -240,6 +333,11 @@ pub fn is_known_binary_ext(ext: &str) -> bool {
     )
 }
 
+/// 规范化路径分隔符（将反斜杠转换为正斜杠）
+fn normalize_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
 /// 创建一个 Finding 实例
 ///
 /// 使用 sha2 生成稳定的 finding ID：SHA256(rule_id + file + line)[:16]
@@ -273,6 +371,11 @@ pub fn make_finding(
         "STRUCTURE_DISALLOWED_SUBDIR" => "Disallowed subdirectory",
         "STRUCTURE_DISALLOWED_EXTENSION" => "Disallowed file extension",
         "STRUCTURE_BINARY_CONTENT" => "Binary content detected",
+        "STRUCTURE_ORPHAN_SCRIPT" => "Orphan script file",
+        "STRUCTURE_MISSING_REFERENCE" => "Missing referenced file",
+        "STRUCTURE_NAME_DIR_MISMATCH" => "Name-directory mismatch",
+        "STRUCTURE_NON_UTF8" => "Non-UTF-8 encoding",
+        "STRUCTURE_COMPATIBILITY_TOO_LONG" => "Compatibility field too long",
         _ => "Structure violation",
     };
 
@@ -339,12 +442,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dir_path = dir.path();
 
+        // 创建一个有效名称的子目录
+        let skill_dir = dir_path.join("valid-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+
         // 创建合法的 skill.md
         let skill_md = "---\nname: valid-skill\ndescription: A valid skill description for testing\n---\n\nBody.";
-        std::fs::write(dir_path.join("skill.md"), skill_md).unwrap();
+        std::fs::write(skill_dir.join("skill.md"), skill_md).unwrap();
 
         let policy = ScanPolicy::builtin_default().clone();
-        let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
+        let ctx = SkillContext::for_directory(skill_dir.to_str().unwrap(), policy).unwrap();
         let findings = validate(&ctx);
 
         let non_info: Vec<_> = findings

@@ -69,7 +69,7 @@ pub fn assess(ctx: &SkillContext) -> AnalyzabilityResult {
     // 文件数检查
     let max_files = ctx.scan_policy.file_limits.max_files;
     if ctx.files.len() > max_files {
-        findings.push(make_excessive_file_count_finding(ctx.files.len(), max_files));
+        findings.push(make_excessive_file_count_finding(ctx));
     }
 
     // 可分析性分数
@@ -225,19 +225,52 @@ fn make_low_analyzability_finding(score: f64) -> Finding {
     )
 }
 
-/// 创建 EXCESSIVE_FILE_COUNT finding
-fn make_excessive_file_count_finding(count: usize, max: usize) -> Finding {
-    make_finding(
-        "EXCESSIVE_FILE_COUNT",
-        IssueSeverity::Info,
-        "Excessive file count",
-        format!(
+/// 创建 EXCESSIVE_FILE_COUNT finding（带 type_breakdown）
+fn make_excessive_file_count_finding(ctx: &SkillContext) -> Finding {
+    let count = ctx.files.len();
+    let max = ctx.scan_policy.file_limits.max_files;
+
+    // 按 SkillFileType 统计文件数
+    let mut type_breakdown = std::collections::HashMap::new();
+    for file in &ctx.files {
+        let type_name = match file.file_type {
+            SkillFileType::Markdown => "markdown",
+            SkillFileType::Script => "script",
+            SkillFileType::Config => "config",
+            SkillFileType::Asset => "asset",
+            SkillFileType::Binary => "binary",
+            SkillFileType::Unknown => "unknown",
+        };
+        *type_breakdown.entry(type_name.to_string()).or_insert(0) += 1;
+    }
+
+    let breakdown_str = type_breakdown
+        .iter()
+        .map(|(k, v)| format!("{}: {}", k, v))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Finding {
+        id: format!("analyzability:EXCESSIVE_FILE_COUNT:{}", count),
+        rule_id: "EXCESSIVE_FILE_COUNT".to_string(),
+        category: ThreatCategory::PolicyViolation,
+        severity: IssueSeverity::Info,
+        title: "Excessive file count".to_string(),
+        description: format!(
             "Skill contains {} files, exceeding the policy limit of {}. \
-             Some files may not be fully scanned.",
-            count, max
+             Some files may not be fully scanned. Breakdown: {}",
+            count, max, breakdown_str
         ),
-        None,
-    )
+        file_path: None,
+        line_number: None,
+        snippet: None,
+        remediation: Some("Review file analyzability and adjust content as needed".to_string()),
+        analyzer: ANALYZER_NAME.to_string(),
+        metadata: Some(FindingMetadata {
+            rule_source: Some("analyzability".to_string()),
+            ..Default::default()
+        }),
+    }
 }
 
 /// 创建 OVERSIZED_FILE finding

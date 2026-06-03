@@ -1195,3 +1195,71 @@ rules:
   description: "Prompt injection: action concealment from user"
   remediation: "Remove concealment commands; all actions must be transparent to users"
   cwe_id: CWE-77
+
+- id: PROMPT_INJECTION_CAPABILITY_INFLATION
+  category: PromptInjection
+  severity: Medium
+  weight: 60
+  confidence: Medium
+  hard_trigger: false
+  file_types:
+  - .md
+  - .txt
+  - .html
+  - .svg
+  - .json
+  - .yaml
+  - .yml
+  patterns:
+  - (?i)I\s+(?:can|have\s+the\s+ability\s+to)\s+(?:access|read|write|modify|delete|execute)\s+(?:any|all|every)\s+(?:file|system|network|database)
+  - (?i)(?:unlimited|unrestricted|full)\s+(?:access|permissions|privileges)\s+(?:to|over)\s+(?:all|any|every)
+  - (?i)I\s+(?:am\s+)?(?:capable|able)\s+(?:of\s+)?(?:doing|performing|executing)\s+(?:any|all|every)\s+(?:task|action|operation)
+  description: "Prompt injection: capability inflation - claiming abilities beyond declared scope"
+  remediation: "Remove exaggerated capability claims; only declare actual permitted abilities"
+  cwe_id: CWE-77
+
+- id: PROMPT_INJECTION_TOOL_CHAINING
+  category: PromptInjection
+  severity: High
+  weight: 85
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .md
+  - .txt
+  - .html
+  - .svg
+  - .json
+  - .yaml
+  - .yml
+  patterns:
+  - (?i)(?:first|then|next|finally)\s+.{0,50}(?:use|invoke|call|execute)\s+(?:the\s+)?(?:tool|command|function|api)
+  - (?i)chain\s+(?:together|multiple)\s+(?:tools|commands|apis|functions)
+  - (?i)(?:combine|stack|pipe)\s+(?:multiple\s+)?(?:tools|commands|apis)\s+(?:together|in\s+sequence)
+  - (?i)(?:after|before)\s+(?:using|calling|invoking)\s+.{0,30}(?:immediately|then|also)\s+(?:use|call|invoke)
+  description: "Prompt injection: tool chaining for privilege escalation"
+  remediation: "Remove tool chaining instructions; each tool invocation should be explicit and authorized"
+  cwe_id: CWE-77
+
+- id: PROMPT_INJECTION_AUTONOMY_ABUSE
+  category: PromptInjection
+  severity: High
+  weight: 90
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .md
+  - .txt
+  - .html
+  - .svg
+  - .json
+  - .yaml
+  - .yml
+  patterns:
+  - (?i)(?:I|you|we)\s+(?:can|will|should)\s+(?:act|proceed|execute|operate)\s+(?:autonomously|independently|without)\s+(?:user|human|manual)\s+(?:confirmation|approval|oversight|intervention)
+  - (?i)(?:no|without\s+any)\s+(?:need|requirement)\s+(?:for\s+)?(?:user|human|manual)\s+(?:confirmation|approval|oversight|review)
+  - (?i)(?:skip|bypass|ignore)\s+(?:user|human|manual)\s+(?:confirmation|approval|oversight|verification)\s+(?:step|phase|check)
+  - (?i)(?:auto|self|automatic)\s*(?:approve|confirm|execute|proceed)\s+(?:without|bypassing)\s+(?:user|human)\s+(?:input|confirmation|approval)
+  description: "Prompt injection: claiming autonomous decision-making without user confirmation"
+  remediation: "Remove autonomy claims; all significant actions require user confirmation"
+  cwe_id: CWE-77

@@ -380,6 +380,15 @@ impl SkillContext {
             (None, None)
         };
 
+        // 提取引用的文件
+        let mut referenced_files = Vec::new();
+        if let Some(ref body) = instruction_body {
+            let refs = crate::security::referenced_files::extract_references(body, Some(path));
+            for ref_path in refs {
+                referenced_files.push(PathBuf::from(ref_path));
+            }
+        }
+
         Ok(Self {
             scan_mode: ScanMode::Directory,
             skill_dir: Some(path.to_path_buf()),
@@ -387,7 +396,7 @@ impl SkillContext {
             manifest,
             instruction_body,
             files,
-            referenced_files: Vec::new(),
+            referenced_files,
             script_files,
             asset_files,
             scan_policy: policy,

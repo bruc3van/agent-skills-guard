@@ -22,6 +22,17 @@ lazy_static! {
     static ref GENERIC_TOKEN_RE: Regex = Regex::new(
         r#"(?:secret|token|key)\s*[=:]\s*["']([a-zA-Z0-9_-]{16,})["']"#
     ).unwrap();
+
+    // Stripe key patterns
+    static ref STRIPE_LIVE_KEY_RE: Regex =
+        Regex::new(r"sk_live_[a-zA-Z0-9]{24,}").unwrap();
+
+    static ref STRIPE_TEST_KEY_RE: Regex =
+        Regex::new(r"pk_test_[a-zA-Z0-9]{24,}").unwrap();
+
+    // OpenAI key pattern
+    static ref OPENAI_KEY_RE: Regex =
+        Regex::new(r"sk-[a-zA-Z0-9]{20,}T3BlbkFJ[a-zA-Z0-9]{20,}").unwrap();
 }
 
 /// 对代码片段中的 secret 进行脱敏处理，返回新的 String。
@@ -70,6 +81,28 @@ pub fn mask_secrets(snippet: &str) -> String {
             prefix,
             masked
         )
+    });
+
+    // 7. Stripe live key: 保留前 8 字符 + 后 4 位
+    let result = STRIPE_LIVE_KEY_RE.replace_all(&result, |caps: &regex::Captures| {
+        let full = &caps[0];
+        let suffix = &full[full.len() - 4..];
+        let masked_len = full.len() - 8 - 4;
+        format!("{}{}{}", &full[..8], "*".repeat(masked_len), suffix)
+    });
+
+    // 8. Stripe test key: 保留前 8 字符 + 后 4 位
+    let result = STRIPE_TEST_KEY_RE.replace_all(&result, |caps: &regex::Captures| {
+        let full = &caps[0];
+        let suffix = &full[full.len() - 4..];
+        let masked_len = full.len() - 8 - 4;
+        format!("{}{}{}", &full[..8], "*".repeat(masked_len), suffix)
+    });
+
+    // 9. OpenAI key: 保留前 8 字符 + [REDACTED]
+    let result = OPENAI_KEY_RE.replace_all(&result, |caps: &regex::Captures| {
+        let full = &caps[0];
+        format!("{}[REDACTED]", &full[..8])
     });
 
     result.into_owned()
@@ -138,5 +171,33 @@ mod tests {
         let input = "fn main() { println!(\"hello world\"); }";
         let masked = mask_secrets(input);
         assert_eq!(masked, input);
+    }
+
+    #[test]
+    fn test_mask_stripe_live_key() {
+        let input = concat!("sk_live_", "abc123def456ghi789jkl012mno345");
+        let masked = mask_secrets(input);
+        // Stripe key should be masked
+        assert!(masked.contains("*"), "Should contain masked characters");
+        assert!(masked.starts_with("sk_live_"), "Should preserve prefix");
+    }
+
+    #[test]
+    fn test_mask_stripe_test_key() {
+        let input = concat!("pk_test_", "abc123def456ghi789jkl012mno345");
+        let masked = mask_secrets(input);
+        // Stripe key should be masked
+        assert!(masked.contains("*"), "Should contain masked characters");
+        assert!(masked.starts_with("pk_test_"), "Should preserve prefix");
+    }
+
+    #[test]
+    fn test_mask_openai_key() {
+        // OpenAI key format: sk-{20+}T3BlbkFJ{20+}
+        let input = concat!("sk-", "abcdefghijklmnopqrst", "T3BlbkFJ", "abcdefghijklmnopqrst");
+        let masked = mask_secrets(input);
+        // OpenAI key should be masked
+        assert!(masked.contains("[REDACTED]"), "Should contain [REDACTED], got: {}", masked);
+        assert!(masked.starts_with("sk-abcde"), "Should preserve prefix, got: {}", masked);
     }
 }

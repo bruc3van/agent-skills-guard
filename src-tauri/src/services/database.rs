@@ -101,6 +101,7 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
             confidence: None,
             remediation: None,
             cwe_id: None,
+            threat_category: None,
         });
     }
 
@@ -115,6 +116,7 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
         confidence: None,
         remediation: None,
         cwe_id: None,
+        threat_category: None,
     })
 }
 

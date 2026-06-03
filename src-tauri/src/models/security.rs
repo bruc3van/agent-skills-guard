@@ -79,6 +79,8 @@ pub struct SecurityIssue {
     pub remediation: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwe_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threat_category: Option<String>,
 }
 
 /// 问题严重程度（5 级统一模型）

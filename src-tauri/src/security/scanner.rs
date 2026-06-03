@@ -1,18 +1,17 @@
 use crate::i18n::validate_locale;
 use crate::models::security::*;
 use crate::security::rules::pattern_engine::match_yaml_rule;
-use crate::security::rules::{Category, Confidence, SecurityRules, Severity};
+use crate::security::rules::{Category, Confidence, Severity};
 use crate::security::skill_context::SkillContext;
 use crate::security::strict_structure;
 use anyhow::Result;
 use lazy_static::lazy_static;
-use regex::{Regex, RegexSet};
+use regex::Regex;
 use rust_i18n::t;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
-use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy)]
 enum Utf16Encoding {
@@ -40,27 +39,7 @@ struct MatchResult {
 
 pub struct SecurityScanner;
 
-#[derive(Debug)]
-struct FilteredRuleSet {
-    regex_set: RegexSet,
-    rule_indices: Vec<usize>,
-}
-
-impl FilteredRuleSet {
-    fn match_into(&self, content: &str, out: &mut Vec<usize>) {
-        out.clear();
-        out.extend(
-            self.regex_set
-                .matches(content)
-                .into_iter()
-                .map(|i| self.rule_indices[i]),
-        );
-    }
-}
-
 lazy_static! {
-    static ref FILTERED_RULE_SETS: Mutex<HashMap<String, Arc<FilteredRuleSet>>> =
-        Mutex::new(HashMap::new());
     static ref STRING_CONCAT_SEPARATOR: Regex =
         Regex::new(r#"(?:"\s*\+\s*"|'\s*\+\s*'|"\s*\+\s*'|'\s*\+\s*")"#)
             .expect("Invalid string concat regex");
@@ -110,6 +89,7 @@ impl SecurityScanner {
             confidence: Some(m.confidence.as_str().to_string()),
             remediation: Some(m.remediation.clone()),
             cwe_id: m.cwe_id.map(|id| id.to_string()),
+            threat_category: Some(m.category.as_str().to_string()),
         }
     }
 
@@ -347,71 +327,23 @@ impl SecurityScanner {
         &self,
         content: &str,
         file_path: &str,
-        filtered_rule_set: Option<&Arc<FilteredRuleSet>>,
-        rules: &[crate::security::rules::PatternRule],
         policy: &crate::security::policy::ScanPolicy,
     ) -> Vec<MatchResult> {
         let file_ext = Self::normalized_extension(file_path);
         let scan_lines = Self::build_scan_lines(content, file_ext.as_deref());
         let mut matches = Vec::new();
-        let mut matched_indices = Vec::new();
         let mut seen = HashSet::new();
 
-        // ── 1. Builtin 规则匹配 ──
-        for (line_number, line) in &scan_lines {
-            if let Some(set) = filtered_rule_set {
-                set.match_into(line, &mut matched_indices);
-            } else {
-                SecurityRules::quick_match_into(line, &mut matched_indices);
-            }
-            if matched_indices.is_empty() {
+        // ── YAML 规则匹配 ──
+        let yaml_rules = crate::security::rules::loader::get_builtin_compiled_rules();
+        let is_skill_md = Self::is_skill_md(file_path);
+
+        for compiled_rule in yaml_rules {
+            // 检查规则是否被策略禁用
+            if policy.is_rule_disabled(&compiled_rule.id) {
                 continue;
             }
 
-            let has_curl_pipe_exec = matched_indices.iter().any(|&idx| {
-                rules
-                    .get(idx)
-                    .map(|r| r.id == "CURL_PIPE_SH")
-                    .unwrap_or(false)
-            });
-
-            for &rule_idx in &matched_indices {
-                if let Some(rule) = rules.get(rule_idx) {
-                    if rule.id == "CURL_PIPE_SH_MENTION" && has_curl_pipe_exec {
-                        continue;
-                    }
-
-                    let dedup_key = format!("{}:{}", rule.id, line_number);
-                    if !seen.insert(dedup_key) {
-                        continue;
-                    }
-
-                    matches.push(MatchResult {
-                        rule_id: rule.id.to_string(),
-                        rule_name: rule.name.to_string(),
-                        severity: rule.severity,
-                        category: rule.category,
-                        weight: rule.weight,
-                        description: rule.description.to_string(),
-                        hard_trigger: rule.hard_trigger,
-                        confidence: rule.confidence,
-                        remediation: rule.remediation.to_string(),
-                        cwe_id: rule.cwe_id,
-                        line_number: *line_number,
-                        code_snippet: line.clone(),
-                        file_path: file_path.to_string(),
-                    });
-                }
-            }
-        }
-
-        // ── 2. YAML 规则匹配 ──
-        let yaml_rules = crate::security::rules::loader::get_builtin_compiled_rules();
-        let is_skill_md = Self::is_skill_md(file_path);
-        // 收集已匹配的规则 ID，用于 suppress_if_matched 检查
-        let mut matched_rule_ids: Vec<String> = matches.iter().map(|m| m.rule_id.clone()).collect();
-
-        for compiled_rule in yaml_rules {
             // 检查 file_types 过滤（SKILL.md 文件跳过此过滤）
             if !is_skill_md && !compiled_rule.rule.file_types.is_empty() {
                 if let Some(ref ext) = file_ext {
@@ -429,16 +361,6 @@ impl SecurityScanner {
                 }
             }
 
-            // 检查 suppress_if_matched：如果当前规则被已匹配的规则抑制，则跳过
-            if compiled_rule
-                .rule
-                .suppress_if_matched
-                .iter()
-                .any(|id| matched_rule_ids.iter().any(|m| m == id))
-            {
-                continue;
-            }
-
             for (line_number, line) in &scan_lines {
                 if !match_yaml_rule(compiled_rule, line) {
                     continue;
@@ -449,13 +371,32 @@ impl SecurityScanner {
                     continue;
                 }
 
-                // 转换 severity
-                let severity = match compiled_rule.rule.severity {
+                // 转换 severity（应用策略覆盖）
+                let base_severity = match compiled_rule.rule.severity {
                     IssueSeverity::Critical => Severity::Critical,
                     IssueSeverity::High => Severity::High,
                     IssueSeverity::Medium => Severity::Medium,
                     IssueSeverity::Low => Severity::Low,
                     IssueSeverity::Info => Severity::Info,
+                };
+                let severity = if let Some(override_severity) = policy.get_severity_override(&compiled_rule.id) {
+                    match override_severity {
+                        "Critical" => Severity::Critical,
+                        "High" => Severity::High,
+                        "Medium" => Severity::Medium,
+                        "Low" => Severity::Low,
+                        "Info" => Severity::Info,
+                        _ => base_severity,
+                    }
+                } else {
+                    base_severity
+                };
+
+                // 处理 hard_trigger 覆盖
+                let hard_trigger = if let Some(override_ht) = policy.get_hard_trigger_override(&compiled_rule.id) {
+                    override_ht
+                } else {
+                    compiled_rule.rule.hard_trigger
                 };
 
                 // 处理 cwe_id 生命周期：YAML 规则的 cwe_id 是 Option<String>，
@@ -473,7 +414,7 @@ impl SecurityScanner {
                     category: compiled_rule.rule.category,
                     weight: compiled_rule.rule.weight,
                     description: compiled_rule.rule.description.clone(),
-                    hard_trigger: compiled_rule.rule.hard_trigger,
+                    hard_trigger,
                     confidence: compiled_rule.rule.confidence_enum(),
                     remediation: compiled_rule.rule.remediation.clone(),
                     cwe_id: cwe_id_static,
@@ -481,150 +422,48 @@ impl SecurityScanner {
                     code_snippet: line.clone(),
                     file_path: file_path.to_string(),
                 });
+            }
+        }
 
-                // 记录已匹配的规则 ID（用于后续 suppress 检查）
-                if !matched_rule_ids.contains(&compiled_rule.id) {
-                    matched_rule_ids.push(compiled_rule.id.clone());
+        // ── 后处理：应用 suppress_if_matched 抑制逻辑 ──
+        // 收集所有规则的 suppress_if_matched 配置
+        let suppress_rules: Vec<(String, Vec<String>)> = yaml_rules
+            .iter()
+            .filter(|r| !r.rule.suppress_if_matched.is_empty())
+            .map(|r| (r.id.clone(), r.rule.suppress_if_matched.clone()))
+            .collect();
+
+        // 标记应该被抑制的匹配
+        let mut suppressed_indices = Vec::new();
+        for (idx, m) in matches.iter().enumerate() {
+            for (suppress_target_id, suppressor_ids) in &suppress_rules {
+                if m.rule_id == *suppress_target_id {
+                    // 检查同一行中是否有抑制规则被匹配
+                    let is_suppressed = suppressor_ids.iter().any(|suppressor_id| {
+                        matches.iter().any(|other| {
+                            other.rule_id == *suppressor_id
+                                && other.line_number == m.line_number
+                                && other.rule_id != m.rule_id // 避免自己抑制自己
+                        })
+                    });
+                    if is_suppressed {
+                        suppressed_indices.push(idx);
+                        break;
+                    }
                 }
             }
+        }
+
+        // 移除被抑制的匹配（从后往前移除以保持索引有效性）
+        suppressed_indices.sort_unstable();
+        for idx in suppressed_indices.into_iter().rev() {
+            matches.remove(idx);
         }
 
         // ── 3. 文档降级：对文档路径中的 findings 降低严重度 ──
         Self::downgrade_doc_findings(&mut matches, file_path, policy);
 
         matches
-    }
-
-    fn get_filtered_rule_set(ext: Option<&str>) -> Arc<FilteredRuleSet> {
-        let key = ext.unwrap_or("").to_string();
-        if let Ok(cache) = FILTERED_RULE_SETS.lock() {
-            if let Some(set) = cache.get(&key) {
-                return Arc::clone(set);
-            }
-        }
-
-        let rules = SecurityRules::get_all_patterns();
-        let mut patterns = Vec::new();
-        let mut rule_indices = Vec::new();
-        for (idx, rule) in rules.iter().enumerate() {
-            if Self::rule_applies_to_extension(rule.id, ext) {
-                patterns.push(rule.pattern.as_str());
-                rule_indices.push(idx);
-            }
-        }
-
-        let regex_set = RegexSet::new(patterns).expect("Invalid regex patterns");
-        let set = Arc::new(FilteredRuleSet {
-            regex_set,
-            rule_indices,
-        });
-
-        if let Ok(mut cache) = FILTERED_RULE_SETS.lock() {
-            cache.insert(key, Arc::clone(&set));
-        }
-
-        set
-    }
-
-    fn rule_applies_to_extension(rule_id: &str, ext: Option<&str>) -> bool {
-        match rule_id {
-            // Python
-            "PY_EVAL" | "PY_EXEC" | "OS_SYSTEM" | "SUBPROCESS_SHELL" | "SUBPROCESS_CALL"
-            | "PY_URLLIB" | "HTTP_REQUEST" => {
-                matches!(ext, Some("py") | Some("pyw") | Some("pyi"))
-            }
-            // Node.js / JS / TS
-            "NODE_CHILD_EXEC" | "NODE_VM_RUN" | "NODE_CHILD_SPAWN" => {
-                matches!(
-                    ext,
-                    Some("js") | Some("jsx") | Some("ts") | Some("tsx") | Some("mjs") | Some("cjs")
-                )
-            }
-            // PHP
-            "PHP_EXEC" => {
-                matches!(
-                    ext,
-                    Some("php")
-                        | Some("phtml")
-                        | Some("php3")
-                        | Some("php4")
-                        | Some("php5")
-                        | Some("php7")
-                        | Some("php8")
-                )
-            }
-            // Ruby
-            "RUBY_SYSTEM_EXEC" => matches!(
-                ext,
-                Some("rb") | Some("rake") | Some("gemspec") | Some("ru")
-            ),
-            // Go
-            "GO_EXEC_COMMAND" => matches!(ext, Some("go")),
-            // Java / JVM
-            "JAVA_RUNTIME_EXEC" | "JAVA_PROCESS_BUILDER" => matches!(
-                ext,
-                Some("java") | Some("kt") | Some("kts") | Some("groovy")
-            ),
-            // C#
-            "CSHARP_PROCESS_START" => matches!(ext, Some("cs") | Some("csx")),
-            // PowerShell
-            "POWERSHELL_BYPASS_POLICY"
-            | "POWERSHELL_ENCODED_COMMAND"
-            | "POWERSHELL_IEX_DOWNLOAD"
-            | "POWERSHELL_PIPE_IEX"
-            | "POWERSHELL_RUN_KEY"
-            | "POWERSHELL_START_PROCESS" => {
-                matches!(ext, Some("ps1") | Some("psm1") | Some("psd1"))
-            }
-            // Windows batch / cmd / PowerShell scripts
-            "CMD_WRAPPER" => matches!(ext, Some("bat") | Some("cmd") | Some("ps1")),
-            // Shell / OS command patterns
-            "CURL_PIPE_SH" | "WGET_PIPE_SH" | "BASE64_EXEC" | "REVERSE_SHELL" | "CURL_POST"
-            | "NETCAT" | "FTP_PROTOCOL" => Self::is_script_or_code_ext(ext),
-            "CURL_PIPE_SH_MENTION" => Self::is_non_shell_code_ext(ext),
-            // Privilege / persistence commonly in scripts
-            "SUDO"
-            | "CHMOD_777"
-            | "SUDOERS"
-            | "CRONTAB"
-            | "SSH_KEYS"
-            | "STARTUP_FOLDER_PERSISTENCE"
-            | "SCHTASKS_CREATE" => Self::is_script_or_code_ext(ext),
-            "REG_RUN_KEY_ADD" => {
-                matches!(ext, Some("bat") | Some("cmd") | Some("ps1") | Some("reg"))
-            }
-            // Sensitive file access patterns should be in scripts/tools, not docs
-            "READ_SSH_PRIVATE_KEY"
-            | "READ_AWS_CREDENTIALS"
-            | "READ_ENV_FILE"
-            | "READ_PASSWD"
-            | "READ_SHADOW"
-            | "READ_GIT_CREDENTIALS"
-            | "READ_WINDOWS_SAM"
-            | "READ_WINDOWS_CREDENTIALS"
-            | "READ_POWERSHELL_HISTORY"
-            | "READ_CHROME_LOGIN_DATA"
-            | "READ_EDGE_LOGIN_DATA"
-            | "READ_FIREFOX_LOGINS"
-            | "READ_DOCKER_CONFIG"
-            | "READ_NPMRC"
-            | "READ_PYPIRC"
-            | "READ_NETRC" => Self::is_script_or_code_ext(ext),
-            // WebSocket/HTTP usage likely in code, not docs
-            "WEBSOCKET_CONNECT" => matches!(
-                ext,
-                Some("js")
-                    | Some("jsx")
-                    | Some("ts")
-                    | Some("tsx")
-                    | Some("mjs")
-                    | Some("cjs")
-                    | Some("py")
-                    | Some("rb")
-            ),
-            // 默认：所有文件类型适用
-            _ => true,
-        }
     }
 
     fn detect_utf16_encoding(buf: &[u8]) -> Option<(Utf16Encoding, usize)> {
@@ -871,8 +710,6 @@ impl SecurityScanner {
         let mut skipped_files = Vec::new();
         let mut blocked = false;
         let mut partial_scan = false;
-
-        let rules = SecurityRules::get_all_patterns();
         let mut files_scanned = 0usize;
 
         // ── SkillContext 构建与结构校验 ──
@@ -902,6 +739,7 @@ impl SecurityScanner {
                     .metadata
                     .as_ref()
                     .and_then(|m| m.cwe_id.clone()),
+                threat_category: Some(finding.category.as_str().to_string()),
             });
             // 结构校验的 Critical finding 触发 blocked
             if finding.severity == IssueSeverity::Critical {
@@ -925,6 +763,7 @@ impl SecurityScanner {
                 confidence: None,
                 remediation: finding.remediation.clone(),
                 cwe_id: finding.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
+                threat_category: Some(finding.category.as_str().to_string()),
             });
         }
 
@@ -942,6 +781,7 @@ impl SecurityScanner {
                 confidence: None,
                 remediation: finding.remediation.clone(),
                 cwe_id: finding.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
+                threat_category: Some(finding.category.as_str().to_string()),
             });
         }
 
@@ -1003,6 +843,7 @@ impl SecurityScanner {
                     confidence: Some(Confidence::High.as_str().to_string()),
                     remediation: None,
                     cwe_id: Some("CWE-59".to_string()),
+                    threat_category: Some("SensitiveFileAccess".to_string()),
                 });
                 continue;
             }
@@ -1026,6 +867,7 @@ impl SecurityScanner {
                     confidence: None,
                     remediation: None,
                     cwe_id: None,
+                    threat_category: None,
                 });
                 partial_scan = true;
                 break;
@@ -1073,6 +915,7 @@ impl SecurityScanner {
                         confidence: None,
                         remediation: None,
                         cwe_id: None,
+                    threat_category: None,
                     });
                     skipped_files.push(rel_str.clone());
                     partial_scan = true;
@@ -1096,6 +939,7 @@ impl SecurityScanner {
                         confidence: None,
                         remediation: None,
                         cwe_id: None,
+                    threat_category: None,
                     });
                     skipped_files.push(rel_str.clone());
                     partial_scan = true;
@@ -1120,6 +964,7 @@ impl SecurityScanner {
                     confidence: None,
                     remediation: None,
                     cwe_id: None,
+                    threat_category: None,
                 });
                 partial_scan = true;
             }
@@ -1137,6 +982,7 @@ impl SecurityScanner {
                     confidence: None,
                     remediation: magic_finding.remediation.clone(),
                     cwe_id: magic_finding.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
+                    threat_category: Some(magic_finding.category.as_str().to_string()),
                 });
             }
 
@@ -1163,6 +1009,7 @@ impl SecurityScanner {
                             .metadata
                             .as_ref()
                             .and_then(|m| m.cwe_id.clone()),
+                        threat_category: Some(finding.category.as_str().to_string()),
                     });
 
                     // Critical findings (ZIP bomb, path traversal, VBA macro) 触发 blocked
@@ -1201,8 +1048,6 @@ impl SecurityScanner {
                                 let extracted_matches = self.collect_matches_for_content(
                                     &extracted_content,
                                     &extracted_display,
-                                    None,
-                                    &rules,
                                     &policy,
                                 );
                                 for match_result in extracted_matches {
@@ -1265,20 +1110,13 @@ impl SecurityScanner {
                     confidence: None,
                     remediation: finding.remediation.clone(),
                     cwe_id: finding.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
+                    threat_category: Some(finding.category.as_str().to_string()),
                 });
             }
 
-            let is_skill_md = Self::is_skill_md(&rel_str);
-            let filtered_rule_set = if is_skill_md {
-                None
-            } else {
-                Some(Self::get_filtered_rule_set(file_ext.as_deref()))
-            };
             for match_result in self.collect_matches_for_content(
                 &content,
                 &rel_str,
-                filtered_rule_set.as_ref(),
-                &rules,
                 &policy,
             ) {
                 if match_result.hard_trigger {
@@ -1315,6 +1153,7 @@ impl SecurityScanner {
                 confidence: None,
                 remediation: finding.remediation.clone(),
                 cwe_id: finding.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
+                threat_category: Some(finding.category.as_str().to_string()),
             });
         }
         if analyzability_result.score < 70.0 {
@@ -1369,21 +1208,9 @@ impl SecurityScanner {
         let mut matches = Vec::new();
         let skill_id = file_path.to_string();
 
-        // 获取所有规则
-        let rules = SecurityRules::get_all_patterns();
-
-        let file_ext = Self::normalized_extension(file_path);
-        let is_skill_md = Self::is_skill_md(file_path);
-        let filtered_rule_set = if is_skill_md {
-            None
-        } else {
-            Some(Self::get_filtered_rule_set(file_ext.as_deref()))
-        };
         matches.extend(self.collect_matches_for_content(
             content,
             file_path,
-            filtered_rule_set.as_ref(),
-            &rules,
             &crate::security::policy::ScanPolicy::builtin_default(),
         ));
 
@@ -2421,17 +2248,22 @@ eval(user_input)
     #[test]
     fn test_scan_directory_valid_skill_no_structure_issues() {
         let dir = tempdir().unwrap();
+        // 创建一个有效名称的子目录
+        let skill_dir = dir.path().join("my-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+
+        // 创建合法的 SKILL.md（引用脚本文件）
         std::fs::write(
-            dir.path().join("SKILL.md"),
-            "---\nname: my-skill\ndescription: A valid test skill for testing\n---\nBody",
+            skill_dir.join("SKILL.md"),
+            "---\nname: my-skill\ndescription: A valid test skill for testing\n---\n\nRun scripts/helper.py for assistance.",
         )
         .unwrap();
-        std::fs::create_dir_all(dir.path().join("scripts")).unwrap();
-        std::fs::write(dir.path().join("scripts/helper.py"), "print('hi')").unwrap();
+        std::fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+        std::fs::write(skill_dir.join("scripts/helper.py"), "print('hi')").unwrap();
 
         let scanner = SecurityScanner::new();
         let report = scanner
-            .scan_directory(dir.path().to_str().unwrap(), "test", "en")
+            .scan_directory(skill_dir.to_str().unwrap(), "test", "en")
             .unwrap();
 
         let structure_issues: Vec<_> = report
