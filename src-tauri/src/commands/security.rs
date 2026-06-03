@@ -2,11 +2,13 @@ use crate::commands::{clamp_scan_parallelism, AppState, ScanProgressEvent};
 use crate::i18n::validate_locale;
 use crate::models::security::{SecurityLevel, SecurityReport, SkillScanResult};
 use crate::models::Skill;
+use crate::security::cross_skill::{self, SkillScanContext};
 use crate::security::{ScanOptions, SecurityScanner};
 use anyhow::Result;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use rust_i18n::t;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, State};
 
@@ -68,7 +70,10 @@ pub async fn scan_all_installed_skills(
                     path.to_str().unwrap_or(""),
                     &skill.id,
                     &locale_owned,
-                    ScanOptions { skip_readme: true },
+                    ScanOptions {
+                    skip_readme: true,
+                    ..Default::default()
+                },
                     None,
                 ) {
                     Ok(report) => report,
@@ -103,6 +108,73 @@ pub async fn scan_all_installed_skills(
             })
             .collect::<Vec<(usize, SkillScanResult)>>()
     });
+
+    // ── 跨 Skill 协同攻击检测 ──
+    let cross_skill_contexts: Vec<SkillScanContext> = installed_skills
+        .iter()
+        .filter_map(|skill| {
+            let local_path = skill.local_path.as_ref()?;
+            let path = PathBuf::from(local_path);
+            if !path.exists() || !path.is_dir() {
+                return None;
+            }
+            let mut file_contents = HashMap::new();
+            if let Ok(entries) = std::fs::read_dir(&path) {
+                for entry in entries.flatten() {
+                    let entry_path = entry.path();
+                    if entry_path.is_file() {
+                        if let Ok(content) = std::fs::read_to_string(&entry_path) {
+                            let rel = entry_path
+                                .strip_prefix(&path)
+                                .unwrap_or(&entry_path)
+                                .to_string_lossy()
+                                .to_string();
+                            file_contents.insert(rel, content);
+                        }
+                    }
+                }
+            }
+            Some(SkillScanContext {
+                skill_id: skill.id.clone(),
+                skill_name: skill.name.clone(),
+                description: skill.description.clone().unwrap_or_default(),
+                file_contents,
+            })
+        })
+        .collect();
+
+    if cross_skill_contexts.len() >= 2 {
+        let cross_findings = cross_skill::analyze_skill_set(&cross_skill_contexts);
+        if !cross_findings.is_empty() {
+            // 将 cross-skill findings 追加到所有已扫描 skill 的 report 中
+            for (_, result) in &mut results {
+                let cross_issues: Vec<_> = cross_findings
+                    .iter()
+                    .map(|f| crate::models::security::SecurityIssue {
+                        severity: f.severity,
+                        category: f.category.to_issue_category(),
+                        description: f.description.clone(),
+                        line_number: None,
+                        code_snippet: None,
+                        file_path: None,
+                        rule_id: Some(f.rule_id.clone()),
+                        confidence: f.metadata.as_ref().and_then(|m| m.confidence.clone()),
+                        remediation: f.remediation.clone(),
+                        cwe_id: f.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
+                        threat_category: Some(f.category.as_str().to_string()),
+                        same_path_other_rule_ids: None,
+                    })
+                    .collect();
+                result.report.issues.extend(cross_issues.clone());
+                // 同步更新 score（简单扣分：每条 cross-skill issue 扣 5 分）
+                let penalty: i32 = cross_issues.len() as i32 * 5;
+                result.score = (result.score - penalty).max(0);
+                result.report.score = result.score;
+                result.level = SecurityLevel::from_score(result.score).as_str().to_string();
+                result.report.level = SecurityLevel::from_score(result.score);
+            }
+        }
+    }
 
     results.sort_by_key(|(index, _)| *index);
     Ok(results.into_iter().map(|(_, result)| result).collect())
@@ -165,7 +237,10 @@ pub async fn scan_installed_skill(
                 path.to_str().unwrap_or(""),
                 &skill.id,
                 &locale,
-                ScanOptions { skip_readme: true },
+                ScanOptions {
+                    skip_readme: true,
+                    ..Default::default()
+                },
                 Some(&mut progress_cb),
             )
             .map_err(|e| e.to_string())?
@@ -175,7 +250,10 @@ pub async fn scan_installed_skill(
                 path.to_str().unwrap_or(""),
                 &skill.id,
                 &locale,
-                ScanOptions { skip_readme: true },
+                ScanOptions {
+                    skip_readme: true,
+                    ..Default::default()
+                },
                 None,
             )
             .map_err(|e| e.to_string())?
@@ -216,6 +294,7 @@ pub async fn count_scan_files(
     let scanner = SecurityScanner::new();
     let options = ScanOptions {
         skip_readme: skip_readme.unwrap_or(true),
+        ..Default::default()
     };
 
     scanner
@@ -247,6 +326,7 @@ pub async fn get_scan_results(state: State<'_, AppState>) -> Result<Vec<SkillSca
                 scanned_files: vec![],
                 partial_scan: false,
                 skipped_files: vec![],
+                metadata: None,
             });
 
             SkillScanResult {

@@ -17,6 +17,16 @@ pub struct CompiledYamlRule {
     pub rule: YamlRule,
 }
 
+fn compile_rule_regex(pattern: &str) -> Result<Regex> {
+    let needs_multiline = pattern.contains('^') || pattern.contains('$');
+    let compiled = if needs_multiline && !pattern.contains("(?m)") && !pattern.contains("(?s)") {
+        format!("(?m){pattern}")
+    } else {
+        pattern.to_string()
+    };
+    Regex::new(&compiled).with_context(|| format!("Invalid regex pattern: {pattern}"))
+}
+
 /// 加载并编译规则包
 pub fn load_rule_pack(yaml: &str) -> Result<Vec<CompiledYamlRule>> {
     let pack: RulePack =
@@ -39,7 +49,7 @@ pub fn compile_rule_pack(pack: RulePack) -> Result<Vec<CompiledYamlRule>> {
         // 编译正则模式
         let mut compiled_patterns = Vec::with_capacity(rule.patterns.len());
         for pattern in &rule.patterns {
-            let re = Regex::new(pattern)
+            let re = compile_rule_regex(pattern)
                 .with_context(|| format!("Invalid regex pattern in rule {}: {}", rule.id, pattern))?;
             compiled_patterns.push(re);
         }
@@ -47,7 +57,7 @@ pub fn compile_rule_pack(pack: RulePack) -> Result<Vec<CompiledYamlRule>> {
         // 编译排除模式
         let mut compiled_exclude_patterns = Vec::with_capacity(rule.exclude_patterns.len());
         for pattern in &rule.exclude_patterns {
-            let re = Regex::new(pattern).with_context(|| {
+            let re = compile_rule_regex(pattern).with_context(|| {
                 format!(
                     "Invalid exclude regex pattern in rule {}: {}",
                     rule.id, pattern
@@ -71,11 +81,31 @@ pub fn compile_rule_pack(pack: RulePack) -> Result<Vec<CompiledYamlRule>> {
 const CORE_RULES_YAML: &str =
     include_str!("../../../resources/security/packs/core/signatures/core_rules.yaml");
 
+/// Cisco parity 补充规则（与 reference/skill_scanner signatures 对齐）
+const CISCO_PARITY_RULES_YAML: &str =
+    include_str!("../../../resources/security/packs/core/signatures/cisco_parity_signatures.yaml");
+
+fn load_merged_builtin_rules() -> Vec<CompiledYamlRule> {
+    let mut rules =
+        load_rule_pack(CORE_RULES_YAML).expect("Failed to compile built-in YAML rule pack");
+    let cisco = load_rule_pack(CISCO_PARITY_RULES_YAML)
+        .expect("Failed to compile Cisco parity YAML rule pack");
+    let mut seen: HashSet<String> = rules.iter().map(|r| r.id.clone()).collect();
+    for rule in cisco {
+        assert!(
+            seen.insert(rule.id.clone()),
+            "Duplicate rule ID across rule packs: {}",
+            rule.id
+        );
+        rules.push(rule);
+    }
+    rules
+}
+
 lazy_static::lazy_static! {
-    /// 内置编译后的规则包
+    /// 内置编译后的规则包（core + Cisco parity）
     static ref BUILTIN_COMPILED_RULES: Vec<CompiledYamlRule> = {
-        load_rule_pack(CORE_RULES_YAML)
-            .expect("Failed to compile built-in YAML rule pack")
+        load_merged_builtin_rules()
     };
 }
 

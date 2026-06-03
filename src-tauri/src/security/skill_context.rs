@@ -125,6 +125,9 @@ pub struct SkillManifest {
     /// 兼容性信息（目标平台、版本等）
     #[serde(default, alias = "compatibility-info")]
     pub compatibility: HashMap<String, String>,
+    /// 许可证字段（可选）
+    #[serde(default)]
+    pub license: Option<String>,
     /// 其他元数据字段
     #[serde(default, alias = "meta")]
     pub metadata: HashMap<String, String>,

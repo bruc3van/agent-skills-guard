@@ -69,6 +69,8 @@ lazy_static! {
         Regex::new(r"socket\.connect").unwrap(),
     ];
 
+    static ref RE_HTTP_URL: Regex = Regex::new(r#"https?://[^\s"'`]+"#).unwrap();
+
     // 描述泛化模式
     static ref RE_GENERIC_DESC: Vec<Regex> = vec![
         Regex::new(r"(?i)^help\s").unwrap(),
@@ -114,6 +116,22 @@ fn has_tool(tools: &[String], capability: &str) -> bool {
 /// 检查代码内容是否匹配指定的正则模式列表
 fn matches_any(content: &str, patterns: &[Regex]) -> bool {
     patterns.iter().any(|re| re.is_match(content))
+}
+
+/// 代码是否使用网络（排除仅 localhost 的开发/健康检查流量）
+fn uses_network_excluding_localhost(content: &str) -> bool {
+    if !matches_any(content, &RE_NETWORK) {
+        return false;
+    }
+    for m in RE_HTTP_URL.find_iter(content) {
+        let url = m.as_str();
+        if !url.contains("127.0.0.1") && !url.contains("localhost") {
+            return true;
+        }
+    }
+    content.contains("socket.")
+        && !content.contains("127.0.0.1")
+        && !content.contains("localhost")
 }
 
 /// 创建一个 Finding 实例（consistency_checker 专用）
@@ -276,7 +294,12 @@ pub fn check_allowed_tools(ctx: &SkillContext) -> Vec<Finding> {
         }
 
         for (file_path, content) in &script_contents {
-            if matches_any(content, check.patterns) {
+            let matched = if check.capability == "Network" {
+                uses_network_excluding_localhost(content)
+            } else {
+                matches_any(content, check.patterns)
+            };
+            if matched {
                 findings.push(make_finding(
                     check.rule_id,
                     check.severity,
@@ -308,7 +331,7 @@ pub fn check_manifest_consistency(ctx: &SkillContext) -> Vec<Finding> {
     // 检查代码是否使用网络
     let code_uses_network = script_contents
         .iter()
-        .any(|(_, content)| matches_any(content, &RE_NETWORK));
+        .any(|(_, content)| uses_network_excluding_localhost(content));
 
     if code_uses_network {
         // TOOL_ABUSE_UNDECLARED_NETWORK: 代码使用网络但 compatibility 不含 network/internet

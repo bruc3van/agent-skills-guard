@@ -48,6 +48,7 @@ fn build_legacy_security_report(
         scanned_files: Vec::new(),
         partial_scan: false,
         skipped_files: Vec::new(),
+        metadata: None,
     })
 }
 
@@ -102,6 +103,7 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
             remediation: None,
             cwe_id: None,
             threat_category: None,
+            same_path_other_rule_ids: None,
         });
     }
 
@@ -117,6 +119,7 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
         remediation: None,
         cwe_id: None,
         threat_category: None,
+        same_path_other_rule_ids: None,
     })
 }
 
@@ -1333,6 +1336,7 @@ mod tests {
             scanned_files: vec!["a.sh".to_string()],
             partial_scan: true,
             skipped_files: vec!["b.bin".to_string()],
+            metadata: None,
         };
 
         let json = serde_json::to_string(&report).unwrap();

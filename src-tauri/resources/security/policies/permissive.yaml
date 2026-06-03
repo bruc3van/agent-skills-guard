@@ -1,0 +1,116 @@
+policy_name: permissive
+policy_version: "1.0"
+preset_base: permissive
+
+disabled_rules: []
+
+severity_overrides:
+  - rule_id: RESOURCE_ABUSE_INFINITE_LOOP
+    severity: Low
+    reason: "Common in examples and tutorials"
+  - rule_id: OBFUSCATION_HEX_BLOB
+    severity: Low
+    reason: "Common in test fixtures with binary data"
+
+hard_trigger_overrides: []
+
+file_limits:
+  max_files: 3000
+  max_depth: 25
+  max_scan_file_size_bytes: 4194304
+
+file_classification:
+  inert_extensions:
+    - ".png"
+    - ".jpg"
+    - ".jpeg"
+    - ".gif"
+    - ".webp"
+    - ".avif"
+    - ".bmp"
+    - ".ico"
+    - ".ttf"
+    - ".woff"
+    - ".woff2"
+
+rule_scoping:
+  doc_path_indicators:
+    - "doc"
+    - "docs"
+    - "references"
+    - "examples"
+    - "tutorials"
+    - "guides"
+    - "test"
+    - "tests"
+    - "fixtures"
+    - "samples"
+    - "demo"
+    - "assets"
+    - "templates"
+    - "data"
+  skip_in_docs:
+    - "CURL_PIPE_SH_MENTION"
+
+pipeline:
+  known_installer_domains:
+    - "sh.rustup.rs"
+    - "astral.sh"
+    - "bun.sh"
+    - "deno.land"
+    - "get.pnpm.io"
+    - "nodejs.org"
+    - "npmjs.com"
+    - "pip.pypa.io"
+    - "brew.sh"
+    - "curl.se"
+    - "git-scm.com"
+    - "golang.org"
+    - "go.dev"
+    - "rustup.rs"
+
+credentials:
+  known_test_values:
+    - "sk_test_"
+    - "pk_test_"
+    - "example-token"
+    - "changeme"
+
+finding_output:
+  dedupe: true
+
+archive:
+  max_depth: 4
+  max_total_size_bytes: 209715200
+  max_file_count: 800
+  max_compression_ratio: 150.0
+
+strict_structure:
+  allowed_extensions:
+    - ".md"
+    - ".py"
+    - ".sh"
+    - ".json"
+    - ".yaml"
+    - ".yml"
+    - ".txt"
+    - ".js"
+    - ".ts"
+    - ".html"
+    - ".css"
+    - ".svg"
+    - ".xml"
+  allowed_subdirs:
+    - "scripts"
+    - "references"
+    - "assets"
+    - "templates"
+    - "data"
+    - "config"
+    - "src"
+    - "lib"
+    - "tests"
+
+trigger:
+  min_description_length: 5
+  keyword_baiting_threshold: 12

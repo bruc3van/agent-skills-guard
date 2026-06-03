@@ -1,0 +1,69 @@
+policy_name: strict
+policy_version: "1.0"
+preset_base: strict
+
+disabled_rules:
+  - DATA_EXFIL_JS_NETWORK
+  - GLOB_HIDDEN_FILE_TARGETING
+  - RESOURCE_ABUSE_INFINITE_LOOP
+
+severity_overrides: []
+
+hard_trigger_overrides: []
+
+file_limits:
+  max_files: 500
+  max_depth: 12
+  max_scan_file_size_bytes: 1048576
+
+file_classification:
+  inert_extensions:
+    - ".png"
+    - ".jpg"
+    - ".jpeg"
+    - ".gif"
+    - ".webp"
+    - ".ico"
+
+rule_scoping:
+  doc_path_indicators:
+    - "doc"
+    - "docs"
+  skip_in_docs: []
+
+pipeline:
+  known_installer_domains:
+    - "sh.rustup.rs"
+    - "bun.sh"
+
+credentials:
+  known_test_values:
+    - "sk_test_"
+    - "example-token"
+
+finding_output:
+  dedupe: true
+
+archive:
+  max_depth: 2
+  max_total_size_bytes: 52428800
+  max_file_count: 200
+  max_compression_ratio: 50.0
+
+strict_structure:
+  allowed_extensions:
+    - ".md"
+    - ".py"
+    - ".sh"
+    - ".json"
+    - ".yaml"
+    - ".yml"
+    - ".txt"
+  allowed_subdirs:
+    - "scripts"
+    - "references"
+    - "assets"
+
+trigger:
+  min_description_length: 20
+  keyword_baiting_threshold: 6

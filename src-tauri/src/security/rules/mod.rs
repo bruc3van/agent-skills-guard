@@ -1,15 +1,15 @@
 //! 安全规则体系
 //!
-//! - `builtin_compat`: 现有硬编码规则（迁移期兼容）
+//! - `types`: 共用类型（Severity, Category, Confidence）
 //! - `loader`: YAML 规则包加载
 //! - `pattern_engine`: 增强版规则匹配引擎
 
-pub mod builtin_compat;
 pub mod loader;
 pub mod pattern_engine;
+pub mod types;
 
-// 从 builtin_compat 重新导出（保持向后兼容）
-pub use builtin_compat::{Category, Confidence, PatternRule, SecurityRules, Severity};
+// 从 types 重新导出
+pub use types::{Category, Confidence, Severity};
 
 use crate::models::security::{IssueSeverity, ThreatCategory};
 use serde::{Deserialize, Serialize};
@@ -85,114 +85,4 @@ pub struct RulePack {
     pub description: String,
     /// 规则列表
     pub rules: Vec<YamlRule>,
-}
-
-/// 统一的规则表示（合并 builtin 和 YAML 规则）
-#[derive(Debug, Clone)]
-pub enum UnifiedRule {
-    /// 内置硬编码规则
-    Builtin(&'static PatternRule),
-    /// YAML 加载的规则
-    Yaml(YamlRule),
-}
-
-impl UnifiedRule {
-    pub fn id(&self) -> &str {
-        match self {
-            UnifiedRule::Builtin(r) => r.id,
-            UnifiedRule::Yaml(r) => &r.id,
-        }
-    }
-
-    pub fn severity(&self) -> Severity {
-        match self {
-            UnifiedRule::Builtin(r) => r.severity,
-            UnifiedRule::Yaml(r) => match r.severity {
-                IssueSeverity::Critical => Severity::Critical,
-                IssueSeverity::High => Severity::High,
-                IssueSeverity::Medium => Severity::Medium,
-                IssueSeverity::Low => Severity::Low,
-                IssueSeverity::Info => Severity::Info,
-            },
-        }
-    }
-
-    pub fn category(&self) -> ThreatCategory {
-        match self {
-            UnifiedRule::Builtin(r) => r.category,
-            UnifiedRule::Yaml(r) => r.category,
-        }
-    }
-
-    pub fn weight(&self) -> i32 {
-        match self {
-            UnifiedRule::Builtin(r) => r.weight,
-            UnifiedRule::Yaml(r) => r.weight,
-        }
-    }
-
-    pub fn hard_trigger(&self) -> bool {
-        match self {
-            UnifiedRule::Builtin(r) => r.hard_trigger,
-            UnifiedRule::Yaml(r) => r.hard_trigger,
-        }
-    }
-
-    pub fn confidence(&self) -> Confidence {
-        match self {
-            UnifiedRule::Builtin(r) => r.confidence,
-            UnifiedRule::Yaml(r) => r.confidence_enum(),
-        }
-    }
-
-    pub fn description(&self) -> &str {
-        match self {
-            UnifiedRule::Builtin(r) => r.description,
-            UnifiedRule::Yaml(r) => &r.description,
-        }
-    }
-
-    pub fn remediation(&self) -> &str {
-        match self {
-            UnifiedRule::Builtin(r) => r.remediation,
-            UnifiedRule::Yaml(r) => &r.remediation,
-        }
-    }
-
-    pub fn cwe_id(&self) -> Option<&str> {
-        match self {
-            UnifiedRule::Builtin(r) => r.cwe_id,
-            UnifiedRule::Yaml(r) => r.cwe_id.as_deref(),
-        }
-    }
-
-    /// 获取适用的文件扩展名（None 表示匹配全部）
-    pub fn file_types(&self) -> Option<&[String]> {
-        match self {
-            UnifiedRule::Builtin(_) => None, // 内置规则使用原有的 rule_applies_to_extension
-            UnifiedRule::Yaml(r) => {
-                if r.file_types.is_empty() {
-                    None
-                } else {
-                    Some(&r.file_types)
-                }
-            }
-        }
-    }
-
-    /// 获取抑制规则列表
-    pub fn suppress_if_matched(&self) -> &[String] {
-        match self {
-            UnifiedRule::Builtin(_) => &[],
-            UnifiedRule::Yaml(r) => &r.suppress_if_matched,
-        }
-    }
-
-    /// 获取排除模式
-    pub fn exclude_patterns(&self) -> &[String] {
-        match self {
-            UnifiedRule::Builtin(_) => &[],
-            UnifiedRule::Yaml(r) => &r.exclude_patterns,
-        }
-    }
 }

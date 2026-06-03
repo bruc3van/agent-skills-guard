@@ -305,6 +305,17 @@ fn extract_zip(
             check_office_threats(&entry_name, &mut findings);
         }
 
+        if is_executable_archive_entry(&entry_name) {
+            findings.push(make_finding(
+                "ARCHIVE_CONTAINS_EXECUTABLE",
+                IssueSeverity::High,
+                ThreatCategory::RemoteExec,
+                "Archive contains executable file",
+                &format!("Archive entry '{}' appears to be an executable", entry_name),
+                Some(entry_name.clone()),
+            ));
+        }
+
         // ── 记录嵌套归档 ──
         if is_archive_extension(&entry_name) {
             nested_archives.push(entry_name.clone());
@@ -843,6 +854,15 @@ fn make_finding(
 }
 
 /// 为每条规则提供修复建议
+fn is_executable_archive_entry(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    [
+        ".exe", ".dll", ".bat", ".cmd", ".ps1", ".msi", ".com", ".scr", ".sh", ".bin",
+    ]
+    .iter()
+    .any(|ext| lower.ends_with(ext))
+}
+
 fn remediation_for_rule(rule_id: &str) -> &'static str {
     match rule_id {
         "ARCHIVE_ZIP_BOMB" => {

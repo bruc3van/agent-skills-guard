@@ -595,7 +595,10 @@ impl SkillManager {
             dir.to_str().context("INVALID_SKILL_DIR_PATH")?,
             skill_id,
             &locale,
-            ScanOptions { skip_readme: true },
+            ScanOptions {
+                skip_readme: true,
+                ..Default::default()
+            },
             None,
         )?;
         self.enforce_installable_report(&report, "安装或更新技能", allow_partial_scan)?;
@@ -648,13 +651,14 @@ impl SkillManager {
         skill.name = name;
         skill.description = description;
 
-        // 安全扫描
+        // 安全扫描（SingleFile 预检：仅 hard_trigger 时写入 DB，避免结构类误报落库）
         let content_str = String::from_utf8_lossy(&content);
         let locale = rust_i18n::locale();
         let report = self.scanner.scan_file(&content_str, "SKILL.md", &locale)?;
 
-        // 更新 skill 信息
-        Self::apply_scan_report(skill, &report);
+        if report.blocked {
+            Self::apply_scan_report(skill, &report);
+        }
         skill.checksum = Some(self.scanner.calculate_checksum(&content));
 
         Ok((content, report))
@@ -733,7 +737,10 @@ impl SkillManager {
             skill_cache_dir.to_str().context("INVALID_SKILL_DIR_PATH")?,
             &skill.id,
             locale,
-            ScanOptions { skip_readme: true },
+            ScanOptions {
+                skip_readme: true,
+                ..Default::default()
+            },
             None,
         )?;
 
@@ -1992,7 +1999,10 @@ impl SkillManager {
                                         path_str,
                                         &existing_skill.id,
                                         &locale,
-                                        ScanOptions { skip_readme: true },
+                                        ScanOptions {
+                skip_readme: true,
+                ..Default::default()
+            },
                                         None,
                                     )?;
 
@@ -2045,7 +2055,10 @@ impl SkillManager {
                                         path_str,
                                         &existing_skill.id,
                                         &locale,
-                                        ScanOptions { skip_readme: true },
+                                        ScanOptions {
+                skip_readme: true,
+                ..Default::default()
+            },
                                         None,
                                     )?;
                                     Self::apply_scan_report(&mut existing_skill, &report);
@@ -2094,7 +2107,10 @@ impl SkillManager {
                                     path_str,
                                     &existing_skill.id,
                                     &locale,
-                                    ScanOptions { skip_readme: true },
+                                    ScanOptions {
+                skip_readme: true,
+                ..Default::default()
+            },
                                     None,
                                 )?;
                                 Self::apply_scan_report(&mut existing_skill, &report);
@@ -2120,7 +2136,10 @@ impl SkillManager {
                                 path_str,
                                 &skill_id,
                                 &locale,
-                                ScanOptions { skip_readme: true },
+                                ScanOptions {
+                skip_readme: true,
+                ..Default::default()
+            },
                                 None,
                             )?;
 
@@ -2439,7 +2458,10 @@ impl SkillManager {
             staging_skill_dir.to_str().context("INVALID_SKILL_DIR_PATH")?,
             &skill.id,
             locale,
-            ScanOptions { skip_readme: true },
+            ScanOptions {
+                skip_readme: true,
+                ..Default::default()
+            },
             None,
         )?;
 

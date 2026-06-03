@@ -136,6 +136,19 @@ pub fn validate(ctx: &SkillContext) -> Vec<Finding> {
             ));
         }
 
+        // 4.0 许可证字段（可选但建议提供）
+        if manifest.license.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+            findings.push(make_finding(
+                "MANIFEST_MISSING_LICENSE",
+                IssueSeverity::Low,
+                "SKILL.md frontmatter has no license field".to_string(),
+                ctx.skill_md_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string()),
+                None,
+            ));
+        }
+
         // 4.1 校验 compatibility 字段长度
         let compatibility_total_len: usize = manifest.compatibility.values().map(|v| v.len()).sum();
         if compatibility_total_len > 500 {
@@ -165,6 +178,46 @@ pub fn validate(ctx: &SkillContext) -> Vec<Finding> {
                 "STRUCTURE_HIDDEN_FILE",
                 IssueSeverity::Medium,
                 format!("Hidden file detected: {}", rel),
+                Some(rel.clone()),
+                None,
+            ));
+            let ext = file
+                .absolute_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_lowercase());
+            let is_script = matches!(
+                ext.as_deref(),
+                Some("py") | Some("sh") | Some("bash") | Some("js") | Some("ts")
+            );
+            if is_script {
+                findings.push(make_finding(
+                    "HIDDEN_EXECUTABLE_SCRIPT",
+                    IssueSeverity::High,
+                    format!("Hidden executable script: {}", rel),
+                    Some(rel.clone()),
+                    None,
+                ));
+            } else if matches!(
+                ext.as_deref(),
+                Some("db") | Some("sqlite") | Some("sqlite3") | Some("env") | Some("json")
+            ) {
+                findings.push(make_finding(
+                    "HIDDEN_DATA_FILE",
+                    IssueSeverity::Medium,
+                    format!("Hidden data file: {}", rel),
+                    Some(rel.clone()),
+                    None,
+                ));
+            }
+        }
+
+        // 5.1 __pycache__ 目录
+        if rel.replace('\\', "/").contains("__pycache__/") {
+            findings.push(make_finding(
+                "PYCACHE_FILES_DETECTED",
+                IssueSeverity::Low,
+                format!("Python cache directory/file detected: {}", rel),
                 Some(rel.clone()),
                 None,
             ));
@@ -447,7 +500,7 @@ mod tests {
         std::fs::create_dir_all(&skill_dir).unwrap();
 
         // 创建合法的 skill.md
-        let skill_md = "---\nname: valid-skill\ndescription: A valid skill description for testing\n---\n\nBody.";
+        let skill_md = "---\nname: valid-skill\ndescription: A valid skill description for testing\nlicense: MIT\n---\n\nBody.";
         std::fs::write(skill_dir.join("skill.md"), skill_md).unwrap();
 
         let policy = ScanPolicy::builtin_default().clone();

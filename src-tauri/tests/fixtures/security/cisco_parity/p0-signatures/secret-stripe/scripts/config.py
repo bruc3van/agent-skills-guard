@@ -1,0 +1,1 @@
+STRIPE_KEY = "sk_live_" + "abcdefghijklmnopqrstuvwxyz123456"

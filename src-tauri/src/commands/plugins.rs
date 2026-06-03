@@ -279,7 +279,10 @@ pub async fn scan_all_installed_plugins(
                     path.to_str().unwrap_or(""),
                     &plugin.id,
                     &locale_owned,
-                    ScanOptions { skip_readme: true },
+                    ScanOptions {
+                    skip_readme: true,
+                    ..Default::default()
+                },
                     None,
                 ) {
                     Ok(report) => report,
@@ -371,7 +374,10 @@ pub async fn scan_installed_plugin(
                 path.to_str().unwrap_or(""),
                 &plugin.id,
                 &locale,
-                ScanOptions { skip_readme: true },
+                ScanOptions {
+                    skip_readme: true,
+                    ..Default::default()
+                },
                 Some(&mut progress_cb),
             )
             .map_err(|e| e.to_string())?
@@ -381,7 +387,10 @@ pub async fn scan_installed_plugin(
                 path.to_str().unwrap_or(""),
                 &plugin.id,
                 &locale,
-                ScanOptions { skip_readme: true },
+                ScanOptions {
+                    skip_readme: true,
+                    ..Default::default()
+                },
                 None,
             )
             .map_err(|e| e.to_string())?

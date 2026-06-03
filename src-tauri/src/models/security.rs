@@ -13,6 +13,19 @@ pub struct SecurityReport {
     pub scanned_files: Vec<String>,       // 已扫描的文件列表
     pub partial_scan: bool,               // 是否存在未完整扫描
     pub skipped_files: Vec<String>,       // 跳过扫描的文件列表
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<SecurityReportMetadata>,
+}
+
+/// 报告级元数据（策略指纹等）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SecurityReportMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_version: Option<String>,
 }
 
 /// 安全等级
@@ -81,6 +94,8 @@ pub struct SecurityIssue {
     pub cwe_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub threat_category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub same_path_other_rule_ids: Option<Vec<String>>,
 }
 
 /// 问题严重程度（5 级统一模型）

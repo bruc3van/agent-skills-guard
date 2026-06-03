@@ -378,12 +378,24 @@ fn default_allowed_subdirs() -> HashSet<String> {
 /// 内置默认策略 YAML
 const DEFAULT_POLICY_YAML: &str =
     include_str!("../../resources/security/policies/default.yaml");
+const STRICT_POLICY_YAML: &str =
+    include_str!("../../resources/security/policies/strict.yaml");
+const PERMISSIVE_POLICY_YAML: &str =
+    include_str!("../../resources/security/policies/permissive.yaml");
 
 lazy_static::lazy_static! {
     /// 默认策略（启动时解析一次）
     static ref DEFAULT_POLICY: ScanPolicy = {
         serde_yaml::from_str(DEFAULT_POLICY_YAML)
             .expect("Failed to parse embedded default policy YAML")
+    };
+    static ref STRICT_POLICY: ScanPolicy = {
+        serde_yaml::from_str(STRICT_POLICY_YAML)
+            .expect("Failed to parse embedded strict policy YAML")
+    };
+    static ref PERMISSIVE_POLICY: ScanPolicy = {
+        serde_yaml::from_str(PERMISSIVE_POLICY_YAML)
+            .expect("Failed to parse embedded permissive policy YAML")
     };
 }
 
@@ -396,6 +408,16 @@ impl ScanPolicy {
     /// 获取内置默认策略
     pub fn builtin_default() -> &'static ScanPolicy {
         &DEFAULT_POLICY
+    }
+
+    /// 严格策略（更少文档降级、更低文件上限）
+    pub fn builtin_strict() -> &'static ScanPolicy {
+        &STRICT_POLICY
+    }
+
+    /// 宽松策略（更多文档降级）
+    pub fn builtin_permissive() -> &'static ScanPolicy {
+        &PERMISSIVE_POLICY
     }
 
     /// 检查规则是否被禁用

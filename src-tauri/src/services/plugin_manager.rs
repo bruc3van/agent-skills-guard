@@ -1203,7 +1203,10 @@ impl PluginManager {
                 resolved.source_path.to_str().context("插件目录路径无效")?,
                 &resolved.plugin.id,
                 locale,
-                ScanOptions { skip_readme: true },
+                ScanOptions {
+                skip_readme: true,
+                ..Default::default()
+            },
                 None,
             )?;
             reports.push((resolved.plugin.clone(), report));
@@ -2764,6 +2767,7 @@ fn merge_reports(reports: &[(Plugin, SecurityReport)], marketplace_name: &str) -
         scanned_files,
         partial_scan: partial_scan || !skipped_files.is_empty(),
         skipped_files,
+        metadata: None,
     }
 }
 

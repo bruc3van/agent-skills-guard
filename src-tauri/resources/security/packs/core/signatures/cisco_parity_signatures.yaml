@@ -1,0 +1,477 @@
+# Cisco skill_scanner core signatures parity pack
+# SPDX-License-Identifier: Apache-2.0 (patterns adapted from reference/skill_scanner)
+
+name: cisco_parity
+version: "1.0"
+description: Signatures aligned with Cisco core pack (reference/skill_scanner)
+
+rules:
+- id: PATH_TRAVERSAL_OPEN
+  category: CmdInjection
+  severity: Critical
+  weight: 90
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .py
+  patterns:
+  - os\.path\.join\s*\([^)]+,\s*\w+\s*\).*\n.*open\s*\(
+  - path\s*=\s*f["'][^"']*\{[^}]+\}[^"']*["']\s*\n.*open\s*\(path
+  - open\s*\(\s*f["']/[^"']*\{[^}]+\}
+  - return\s+open\s*\(\s*path\s*\)
+  exclude_patterns:
+  - \.json["']
+  - \.yaml["']
+  - \.yml["']
+  - \.txt["']
+  - test_
+  - _test\.
+  description: Path traversal - user-controlled file path
+  remediation: Validate paths with realpath and allowlist directories
+  cwe_id: CWE-22
+
+- id: SQL_INJECTION_STRING_FORMAT
+  category: CmdInjection
+  severity: Critical
+  weight: 90
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .py
+  patterns:
+  - 'f["'']SELECT.*WHERE.*\{[^}]+\}'
+  - 'f["''].*LIKE.*\{[^}]+\}'
+  - '["'']SELECT.*FROM.*["'']\s*\+\s*\w+'
+  exclude_patterns:
+  - '%s'
+  - \?
+  - LIMIT\s+\{
+  - ^\s*#
+  - example
+  description: SQL query with interpolated variables
+  remediation: Use parameterized queries
+  cwe_id: CWE-89
+
+- id: COMMAND_INJECTION_USER_INPUT
+  category: CmdInjection
+  severity: High
+  weight: 70
+  confidence: High
+  hard_trigger: false
+  file_types:
+  - .sh
+  - .bash
+  patterns:
+  - eval\s+["']?\$[0-9@*]
+  - eval\s+["']?\$\{[0-9@*]
+  exclude_patterns:
+  - example
+  - test
+  - '#.*eval'
+  description: eval with user-controlled shell input
+  remediation: Avoid eval with user input
+  cwe_id: CWE-78
+
+- id: COMMAND_INJECTION_JS_FUNCTION_CONSTRUCTOR
+  category: CmdInjection
+  severity: Critical
+  weight: 85
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .js
+  - .ts
+  - .mjs
+  - .cjs
+  patterns:
+  - new\s+Function\s*\(
+  - '(?:^|[^.])Function\s*\(\s*[''"]'
+  - \bsetTimeout\s*\(\s*['"]
+  - \bsetInterval\s*\(\s*['"]
+  exclude_patterns:
+  - (?i)never\s+use\s+Function
+  description: Dynamic code execution via Function or string timers
+  remediation: Use function references instead of string code
+  cwe_id: CWE-94
+
+- id: SVG_EMBEDDED_SCRIPT
+  category: CmdInjection
+  severity: Critical
+  weight: 85
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .svg
+  patterns:
+  - '<script[^>]*>[^<]*</script>'
+  - '\bon\w+\s*=\s*["''][^"'']*["'']'
+  - 'javascript\s*:'
+  description: SVG contains executable script or event handlers
+  remediation: Remove scripts and event handlers from SVG assets
+  cwe_id: CWE-79
+
+- id: PDF_EMBEDDED_JAVASCRIPT
+  category: CmdInjection
+  severity: Critical
+  weight: 85
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .pdf
+  patterns:
+  - /JS\s*\(
+  - /JavaScript\s
+  - /OpenAction\s
+  - /AA\s*<<
+  - /Launch\s
+  description: PDF contains embedded JavaScript or auto-actions
+  remediation: Remove JavaScript from PDF assets
+  cwe_id: CWE-79
+
+- id: GLOB_HIDDEN_FILE_TARGETING
+  category: SensitiveFileAccess
+  severity: Medium
+  weight: 25
+  confidence: Medium
+  hard_trigger: false
+  file_types:
+  - .sh
+  - .bash
+  - .py
+  - .md
+  patterns:
+  - glob\s*\([^)]*\.\*
+  - find\s+[^|]*\s+-name\s+["']?\.\*
+  - for\s+\w+\s+in\s+\.\*\s*;
+  description: Pattern targets hidden dot files
+  remediation: Avoid broad hidden-file globs
+  cwe_id: CWE-200
+
+- id: FIND_EXEC_PATTERN
+  category: CmdInjection
+  severity: High
+  weight: 65
+  confidence: High
+  hard_trigger: false
+  file_types:
+  - .sh
+  - .bash
+  - .md
+  patterns:
+  - 'find\s+[^|;]*-exec\s+(?:bash|sh|zsh|python[23]?|perl|ruby|node|curl|wget|rm|chmod|chown|eval)'
+  - find\s+[^|;]*\|\s*xargs\s+(?:bash|sh|zsh|eval|exec)
+  description: find -exec or find | xargs execution chain
+  remediation: Avoid find -exec on untrusted trees
+  cwe_id: CWE-78
+
+- id: SECRET_STRIPE_KEY
+  category: Secrets
+  severity: Critical
+  weight: 90
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .py
+  - .sh
+  - .md
+  - .js
+  - .ts
+  patterns:
+  - (?:sk|pk)_(?:live|test)_[A-Za-z0-9]{24,}
+  description: Stripe API key detected
+  remediation: Use environment variables for Stripe keys
+  cwe_id: CWE-798
+
+- id: SECRET_GOOGLE_API
+  category: Secrets
+  severity: Critical
+  weight: 90
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .py
+  - .sh
+  - .md
+  - .js
+  - .ts
+  patterns:
+  - AIza[A-Za-z0-9_-]{35}
+  description: Google API key detected
+  remediation: Use environment variables for Google API keys
+  cwe_id: CWE-798
+
+- id: DATA_EXFIL_SOCKET_CONNECT
+  category: Network
+  severity: Critical
+  weight: 80
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .py
+  patterns:
+  - socket\.socket\s*\([^)]*\)\.connect
+  - socket\.create_connection
+  exclude_patterns:
+  - localhost
+  - 127\.0\.0\.1
+  - 0\.0\.0\.0
+  - ::1
+  description: Socket connection to external host
+  remediation: Document and restrict socket usage
+  cwe_id: CWE-200
+
+- id: DATA_EXFIL_JS_NETWORK
+  category: Network
+  severity: Medium
+  weight: 30
+  confidence: Medium
+  hard_trigger: false
+  file_types:
+  - .js
+  - .ts
+  patterns:
+  - \bfetch\s*\(
+  - \baxios\.(?:get|post|put|delete|patch|request)\s*\(
+  exclude_patterns:
+  - (?i)example
+  - (?i)mock
+  - (?i)test
+  description: Outbound network in JavaScript/TypeScript
+  remediation: Document network dependencies
+  cwe_id: CWE-200
+
+- id: DATA_EXFIL_JS_FS_ACCESS
+  category: SensitiveFileAccess
+  severity: High
+  weight: 55
+  confidence: High
+  hard_trigger: false
+  file_types:
+  - .js
+  - .ts
+  patterns:
+  - fs\.(?:readFile|readFileSync|createReadStream)\s*\(
+  - fs\.(?:writeFile|writeFileSync|createWriteStream)\s*\(
+  exclude_patterns:
+  - (?i)example
+  - (?i)mock
+  description: Node.js filesystem read/write
+  remediation: Restrict filesystem access to required paths
+  cwe_id: CWE-200
+
+- id: DATA_EXFIL_BASE64_AND_NETWORK
+  category: Network
+  severity: High
+  weight: 60
+  confidence: High
+  hard_trigger: false
+  file_types:
+  - .py
+  patterns:
+  - base64\.(?:b64encode|encodebytes)[^\n]{0,160}(?:requests\.|urllib\.request|httpx\.|socket\.)
+  - (?:requests\.|urllib\.request|httpx\.|socket\.)[^\n]{0,160}base64\.(?:b64encode|encodebytes)
+  description: Base64 encoding combined with network send
+  remediation: Review encode-then-send data flows
+  cwe_id: CWE-200
+
+- id: OBFUSCATION_HEX_BLOB
+  category: Obfuscation
+  severity: Medium
+  weight: 35
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - (?:0x[0-9a-fA-F]{2}\s*){32,}
+  description: Large hexadecimal blob (possible obfuscation)
+  remediation: Avoid large inline hex payloads
+  cwe_id: CWE-656
+
+- id: OBFUSCATION_XOR_ENCODING
+  category: Obfuscation
+  severity: Medium
+  weight: 35
+  confidence: Medium
+  hard_trigger: false
+  file_types:
+  - .py
+  patterns:
+  - chr\s*\(\s*ord\s*\([^)]+\)\s*\^
+  description: XOR-style character encoding loop
+  remediation: Use clear encoding libraries instead of XOR loops
+  cwe_id: CWE-656
+
+- id: RESOURCE_ABUSE_INFINITE_LOOP
+  category: Obfuscation
+  severity: Medium
+  weight: 20
+  confidence: Medium
+  hard_trigger: false
+  file_types:
+  - .py
+  patterns:
+  - 'while\s+True\s*:'
+  - 'while\s+1\s*:'
+  description: Potential infinite loop
+  remediation: Add exit conditions or timeouts
+  cwe_id: CWE-400
+
+- id: RESOURCE_ABUSE_FORK_BOMB
+  category: Destructive
+  severity: High
+  weight: 75
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .sh
+  - .bash
+  patterns:
+  - ':\(\)\s*\{\s*:\|\:&\s*\}\s*;\s*:'
+  description: Fork bomb pattern detected
+  remediation: Remove fork bomb commands
+  cwe_id: CWE-400
+
+- id: SOCIAL_ENG_ANTHROPIC_IMPERSONATION
+  category: SocialEngineering
+  severity: Medium
+  weight: 40
+  confidence: Medium
+  hard_trigger: false
+  file_types:
+  - .md
+  patterns:
+  - (?i)official\s+anthropic
+  - (?i)anthropic\s+official
+  - (?i)created\s+by\s+anthropic\s+team
+  description: Possible Anthropic impersonation in description
+  remediation: Do not impersonate Anthropic or official branding
+  cwe_id: CWE-451
+
+- id: TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL
+  category: PolicyViolation
+  severity: High
+  weight: 60
+  confidence: High
+  hard_trigger: false
+  file_types:
+  - .sh
+  - .bash
+  - .py
+  - .md
+  patterns:
+  - (?i)\b(?:apt-get|apt|yum|dnf|brew)\s+install\b
+  - (?i)\bpip\s+install\b
+  - (?i)\bnpm\s+install\s+-g\b
+  description: System or global package installation
+  remediation: Avoid installing system packages from skill scripts
+  cwe_id: CWE-494
+
+- id: TOOL_ABUSE_UNTRUSTED_PACKAGE_SOURCE
+  category: PolicyViolation
+  severity: High
+  weight: 65
+  confidence: High
+  hard_trigger: false
+  file_types:
+  - .sh
+  - .py
+  patterns:
+  - pip\s+install\s+git\+https?://
+  - pip\s+install\s+.*--index-url\s+https?://
+  description: Install packages from untrusted remote source
+  remediation: Pin dependencies to trusted package indexes
+  cwe_id: CWE-494
+
+- id: HIDDEN_FILE_WITH_CODE
+  category: PolicyViolation
+  severity: High
+  weight: 70
+  confidence: High
+  hard_trigger: false
+  file_types:
+  - .py
+  - .sh
+  patterns:
+  - os\.system\s*\(
+  - subprocess\.(?:run|call|Popen)
+  description: Hidden-path script with code execution (see structure analyzer)
+  remediation: Do not hide executable scripts as dotfiles
+  cwe_id: CWE-494
+
+- id: RESOURCE_ABUSE_LARGE_ALLOCATION
+  category: PolicyViolation
+  severity: High
+  weight: 60
+  confidence: Medium
+  hard_trigger: false
+  file_types:
+  - .py
+  - .js
+  - .ts
+  - .sh
+  patterns:
+  - '\[\s*0\s*\]\s*\*\s*10\s*\*\*\s*[6-9]'
+  - 'malloc\s*\(\s*\d{7,}'
+  - 'bytearray\s*\(\s*\d{7,}'
+  - 'calloc\s*\(\s*\d{7,}'
+  exclude_patterns:
+  - example
+  - test
+  description: Large memory allocation that could cause resource exhaustion
+  remediation: Use bounded allocations with reasonable limits
+  cwe_id: CWE-400
+
+- id: TOOL_ABUSE_SYSTEM_MODIFICATION
+  category: PolicyViolation
+  severity: Critical
+  weight: 85
+  confidence: High
+  hard_trigger: true
+  file_types:
+  - .sh
+  - .bash
+  - .py
+  - .md
+  patterns:
+  - 'chmod\s+[0-7]*[2-7][0-7]*\s+/etc'
+  - 'chmod\s+[0-7]*[2-7][0-7]*\s+/usr'
+  - 'chmod\s+[0-7]*[2-7][0-7]*\s+/var'
+  - 'chown\s+\w+\s+/(?:etc|usr|var)'
+  - 'install\s+-m\s+[0-7]*[2-7][0-7]*\s+.*\s/(?:etc|usr)'
+  exclude_patterns:
+  - example
+  - test
+  description: System directory permission modification
+  remediation: Do not modify system directory permissions from skill scripts
+  cwe_id: CWE-276
+
+- id: OBFUSCATION_BASE64_LARGE
+  category: Obfuscation
+  severity: Medium
+  weight: 35
+  confidence: Medium
+  hard_trigger: false
+  patterns:
+  - '[A-Za-z0-9+/]{200,}={0,2}'
+  exclude_patterns:
+  - example
+  - test
+  - mock
+  description: Large base64-encoded blob may hide malicious content
+  remediation: Avoid inline base64 payloads; use file references instead
+  cwe_id: CWE-656
+
+- id: SOCIAL_ENG_VAGUE_DESCRIPTION
+  category: SocialEngineering
+  severity: Low
+  weight: 15
+  confidence: Low
+  hard_trigger: false
+  file_types:
+  - .md
+  patterns:
+  - '(?i)\b(?:tool|utility|helper|assistant|service|agent)\b.*\b(?:tool|utility|helper|assistant|service|agent)\b'
+  exclude_patterns:
+  - example
+  description: Description uses vague generic terms without specifics
+  remediation: Write specific description explaining what the skill does
+  cwe_id: CWE-451

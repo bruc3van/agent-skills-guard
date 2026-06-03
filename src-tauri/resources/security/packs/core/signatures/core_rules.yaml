@@ -165,6 +165,7 @@ rules:
   hard_trigger: true
   patterns:
   - (?i)\b(?:Invoke-WebRequest|iwr|curl|wget)\b[^\r\n]*?\|\s*(?:IEX|Invoke-Expression)\b
+  - (?i)\b(?:Invoke-WebRequest|iwr)\b[^\n]*\n\s*\|\s*(?:IEX|Invoke-Expression)\b
   description: PowerShell IWR/IEX 管道执行
   remediation: 禁止通过管道直接执行远程内容
   cwe_id: CWE-78
