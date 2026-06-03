@@ -13,6 +13,32 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 
+// ── 模块级扫描常量 ──
+
+/// 最大扫描深度
+const MAX_SCAN_DEPTH: usize = 20;
+
+/// 最大扫描文件数
+const MAX_FILES: usize = 2000;
+
+/// 单文件最大读取字节数 (2 MiB)
+const MAX_BYTES_PER_FILE: u64 = 2 * 1024 * 1024;
+
+/// 归档提取文件最大读取字节数 (4 MiB)
+const MAX_EXTRACTED_FILE_BYTES: u64 = 4 * 1024 * 1024;
+
+/// 常见大目录（依赖/构建产物），默认不深入扫描
+const SKIP_DIR_NAMES: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "__pycache__",
+    ".venv",
+    "venv",
+];
+
 #[derive(Debug, Clone, Copy)]
 enum Utf16Encoding {
     LittleEndian,
@@ -31,7 +57,7 @@ struct MatchResult {
     hard_trigger: bool,
     confidence: Confidence,
     remediation: String,
-    cwe_id: Option<&'static str>,
+    cwe_id: Option<String>,
     line_number: usize,
     code_snippet: String,
     file_path: String,
@@ -102,7 +128,7 @@ impl SecurityScanner {
             rule_id: Some(m.rule_id.clone()),
             confidence: Some(m.confidence.as_str().to_string()),
             remediation: Some(m.remediation.clone()),
-            cwe_id: m.cwe_id.map(|id| id.to_string()),
+            cwe_id: m.cwe_id.clone(),
             threat_category: Some(m.category.as_str().to_string()),
             same_path_other_rule_ids: None,
         }
@@ -208,6 +234,14 @@ impl SecurityScanner {
             }
         }
         *issues = best.into_values().collect();
+        // 按文件路径和行号排序，确保结果顺序一致
+        issues.sort_by(|a, b| {
+            let fp_a = a.file_path.as_deref().unwrap_or("");
+            let fp_b = b.file_path.as_deref().unwrap_or("");
+            fp_a.cmp(fp_b)
+                .then(a.line_number.unwrap_or(0).cmp(&b.line_number.unwrap_or(0)))
+                .then(Self::severity_rank(b.severity).cmp(&Self::severity_rank(a.severity)))
+        });
     }
 
     fn normalized_extension(file_path: &str) -> Option<String> {
@@ -479,12 +513,6 @@ impl SecurityScanner {
             compiled_rule.rule.hard_trigger
         };
 
-        let cwe_id_static: Option<&'static str> = compiled_rule.rule.cwe_id.as_ref().map(|s| {
-            let boxed: Box<str> = s.clone().into_boxed_str();
-            let leaked: &'static mut str = Box::leak(boxed);
-            &*leaked
-        });
-
         matches.push(MatchResult {
             rule_id: compiled_rule.id.clone(),
             rule_name: compiled_rule.rule.description.clone(),
@@ -495,7 +523,7 @@ impl SecurityScanner {
             hard_trigger,
             confidence: compiled_rule.rule.confidence_enum(),
             remediation: compiled_rule.rule.remediation.clone(),
-            cwe_id: cwe_id_static,
+            cwe_id: compiled_rule.rule.cwe_id.clone(),
             line_number,
             code_snippet,
             file_path: file_path.to_string(),
@@ -725,22 +753,6 @@ impl SecurityScanner {
             anyhow::bail!("Directory does not exist: {}", dir_path);
         }
 
-        // 扫描边界：避免被巨型目录/文件拖垮（且不会跟随符号链接）
-        const MAX_SCAN_DEPTH: usize = 20;
-        const MAX_FILES: usize = 2000;
-
-        // 常见大目录（依赖/构建产物），默认不深入扫描
-        const SKIP_DIR_NAMES: &[&str] = &[
-            ".git",
-            "node_modules",
-            "target",
-            "dist",
-            "build",
-            "__pycache__",
-            ".venv",
-            "venv",
-        ];
-
         let mut total = 0usize;
         let mut iter = WalkDir::new(path)
             .follow_links(false)
@@ -835,23 +847,6 @@ impl SecurityScanner {
                 path = dir_path
             ));
         }
-
-        // 扫描边界：避免被巨型目录/文件拖垮（且不会跟随符号链接）
-        const MAX_SCAN_DEPTH: usize = 20;
-        const MAX_FILES: usize = 2000;
-        const MAX_BYTES_PER_FILE: u64 = 2 * 1024 * 1024; // 2MiB
-
-        // 常见大目录（依赖/构建产物），默认不深入扫描
-        const SKIP_DIR_NAMES: &[&str] = &[
-            ".git",
-            "node_modules",
-            "target",
-            "dist",
-            "build",
-            "__pycache__",
-            ".venv",
-            "venv",
-        ];
 
         let mut all_issues = Vec::new();
         let mut all_matches = Vec::new();
@@ -1140,12 +1135,22 @@ impl SecurityScanner {
                 if let Some(ref temp_dir) = extraction.temp_dir {
                     for extracted_path in &extraction.extracted_files {
                         let full_path = std::path::Path::new(extracted_path);
-                        if let Ok(mut f) = std::fs::File::open(full_path) {
+                        if let Ok(f) = std::fs::File::open(full_path) {
                             let mut extracted_buf = Vec::new();
-                            if f.read_to_end(&mut extracted_buf).is_ok() {
+                            // 限制归档提取文件的读取大小
+                            if f.take(MAX_EXTRACTED_FILE_BYTES + 1).read_to_end(&mut extracted_buf).is_ok() {
                                 // 跳过二进制提取文件
                                 if extracted_buf.contains(&0u8) {
                                     continue;
+                                }
+                                // 检查是否超过大小限制
+                                if extracted_buf.len() as u64 > MAX_EXTRACTED_FILE_BYTES {
+                                    log::warn!(
+                                        "Extracted file {} exceeds size limit ({} bytes), truncating",
+                                        full_path.display(),
+                                        MAX_EXTRACTED_FILE_BYTES
+                                    );
+                                    extracted_buf.truncate(MAX_EXTRACTED_FILE_BYTES as usize);
                                 }
                                 let extracted_content =
                                     String::from_utf8_lossy(&extracted_buf).into_owned();

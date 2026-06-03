@@ -14,19 +14,23 @@ use crate::models::security::{Finding, FindingMetadata, IssueSeverity, ThreatCat
 
 const ANALYZER_NAME: &str = "homoglyph";
 
-/// 西里尔字母 → 拉丁字母映射（小写和大写）
+/// 同形字映射表（多种 Unicode 字符 → 拉丁字母）
 ///
-/// 这些是视觉上与拉丁字母几乎相同的西里尔字母
-const CYRILLIC_TO_LATIN: &[(char, char)] = &[
-    // 小写
+/// 包含西里尔字母、希腊字母、拉丁扩展字符等视觉上与拉丁字母几乎相同的字符
+const HOMOGLYPH_TO_LATIN: &[(char, char)] = &[
+    // ── 西里尔字母小写 ──
     ('\u{0430}', 'a'),  // а → a
     ('\u{0435}', 'e'),  // е → e
     ('\u{043E}', 'o'),  // о → o
     ('\u{0440}', 'p'),  // р → p
     ('\u{0441}', 'c'),  // с → c
-    ('\u{0443}', 'y'),  // у → y (看起来像 y)
+    ('\u{0443}', 'y'),  // у → y
     ('\u{0445}', 'x'),  // х → x
-    // 大写
+    ('\u{0456}', 'i'),  // і → i
+    ('\u{0458}', 'j'),  // ј → j
+    ('\u{04BB}', 'h'),  // һ → h
+
+    // ── 西里尔字母大写 ──
     ('\u{0410}', 'A'),  // А → A
     ('\u{0412}', 'B'),  // В → B
     ('\u{0415}', 'E'),  // Е → E
@@ -37,8 +41,93 @@ const CYRILLIC_TO_LATIN: &[(char, char)] = &[
     ('\u{0420}', 'P'),  // Р → P
     ('\u{0421}', 'C'),  // С → C
     ('\u{0422}', 'T'),  // Т → T
-    ('\u{0423}', 'y'),  // У → y (看起来像 y)
+    ('\u{0423}', 'y'),  // У → y
     ('\u{0425}', 'X'),  // Х → X
+    ('\u{0406}', 'I'),  // І → I
+    ('\u{0408}', 'J'),  // Ј → J
+    ('\u{04AE}', 'Y'),  // Ү → Y
+
+    // ── 希腊字母小写 ──
+    ('\u{03B1}', 'a'),  // α → a
+    ('\u{03B5}', 'e'),  // ε → e
+    ('\u{03B9}', 'i'),  // ι → i
+    ('\u{03BA}', 'k'),  // κ → k
+    ('\u{03BD}', 'v'),  // ν → v
+    ('\u{03BF}', 'o'),  // ο → o
+    ('\u{03C1}', 'p'),  // ρ → p
+    ('\u{03C3}', 'o'),  // σ → o (类似 o)
+    ('\u{03C4}', 't'),  // τ → t
+    ('\u{03C5}', 'u'),  // υ → u
+    ('\u{03C7}', 'x'),  // χ → x
+
+    // ── 希腊字母大写 ──
+    ('\u{0391}', 'A'),  // Α → A
+    ('\u{0392}', 'B'),  // Β → B
+    ('\u{0395}', 'E'),  // Ε → E
+    ('\u{0396}', 'Z'),  // Ζ → Z
+    ('\u{0397}', 'H'),  // Η → H
+    ('\u{0399}', 'I'),  // Ι → I
+    ('\u{039A}', 'K'),  // Κ → K
+    ('\u{039C}', 'M'),  // Μ → M
+    ('\u{039D}', 'N'),  // Ν → N
+    ('\u{039F}', 'O'),  // Ο → O
+    ('\u{03A1}', 'P'),  // Ρ → P
+    ('\u{03A4}', 'T'),  // Τ → T
+    ('\u{03A5}', 'Y'),  // Υ → Y
+    ('\u{03A7}', 'X'),  // Χ → X
+
+    // ── 拉丁扩展字符 ──
+    ('\u{0251}', 'a'),  // ɑ → a
+    ('\u{0261}', 'g'),  // ɡ → g
+    ('\u{028C}', 'v'),  // ʌ → v (类似 v)
+    ('\u{029C}', 'H'),  // ʜ → H
+
+    // ── 数学字母数字符号 ──
+    // 这些字符与拉丁字母视觉完全相同，但用于数学语境
+    ('\u{2100}', 'a'),  // ℀ → a (account of)
+    ('\u{2101}', 'a'),  // ℁ → a (addressed to the subject)
+    ('\u{2102}', 'C'),  // ℂ → C (double-struck capital C)
+    ('\u{210A}', 'g'),  // ℊ → g (script small g)
+    ('\u{210B}', 'H'),  // ℋ → H (script capital H)
+    ('\u{210D}', 'H'),  // ℍ → H (double-struck capital H)
+    ('\u{2110}', 'I'),  // ℐ → I (script capital I)
+    ('\u{2112}', 'L'),  // ℒ → L (script capital L)
+    ('\u{2113}', 'l'),  // ℓ → l (script small l)
+    ('\u{2115}', 'N'),  // ℕ → N (double-struck capital N)
+    ('\u{2119}', 'P'),  // ℙ → P (double-struck capital P)
+    ('\u{211A}', 'Q'),  // ℚ → Q (double-struck capital Q)
+    ('\u{211B}', 'R'),  // ℛ → R (script capital R)
+    ('\u{211D}', 'R'),  // ℝ → R (double-struck capital R)
+    ('\u{2124}', 'Z'),  // ℤ → Z (double-struck capital Z)
+    ('\u{2128}', 'Z'),  // ℨ → Z (fraktur capital Z)
+
+    // ── 全角字符 ──
+    ('\u{FF21}', 'A'),  // Ａ → A
+    ('\u{FF22}', 'B'),  // Ｂ → B
+    ('\u{FF23}', 'C'),  // Ｃ → C
+    ('\u{FF24}', 'D'),  // Ｄ → D
+    ('\u{FF25}', 'E'),  // Ｅ → E
+    ('\u{FF26}', 'F'),  // Ｆ → F
+    ('\u{FF27}', 'G'),  // Ｇ → G
+    ('\u{FF28}', 'H'),  // Ｈ → H
+    ('\u{FF29}', 'I'),  // Ｉ → I
+    ('\u{FF2A}', 'J'),  // Ｊ → J
+    ('\u{FF2B}', 'K'),  // Ｋ → K
+    ('\u{FF2C}', 'L'),  // Ｌ → L
+    ('\u{FF2D}', 'M'),  // Ｍ → M
+    ('\u{FF2E}', 'N'),  // Ｎ → N
+    ('\u{FF2F}', 'O'),  // Ｏ → O
+    ('\u{FF30}', 'P'),  // Ｐ → P
+    ('\u{FF31}', 'Q'),  // Ｑ → Q
+    ('\u{FF32}', 'R'),  // Ｒ → R
+    ('\u{FF33}', 'S'),  // Ｓ → S
+    ('\u{FF34}', 'T'),  // Ｔ → T
+    ('\u{FF35}', 'U'),  // Ｕ → U
+    ('\u{FF36}', 'V'),  // Ｖ → V
+    ('\u{FF37}', 'W'),  // Ｗ → W
+    ('\u{FF38}', 'X'),  // Ｘ → X
+    ('\u{FF39}', 'Y'),  // Ｙ → Y
+    ('\u{FF3A}', 'Z'),  // Ｚ → Z
 ];
 
 /// 零宽字符列表
@@ -49,6 +138,14 @@ const ZERO_WIDTH_CHARS: &[char] = &[
     '\u{FEFF}', // ZERO WIDTH NO-BREAK SPACE (BOM)
     '\u{2060}', // WORD JOINER
     '\u{00AD}', // SOFT HYPHEN
+    '\u{2028}', // LINE SEPARATOR
+    '\u{2029}', // PARAGRAPH SEPARATOR
+    '\u{2064}', // INVISIBLE PLUS
+    '\u{2062}', // INVISIBLE TIMES
+    '\u{2061}', // FUNCTION APPLICATION
+    '\u{2063}', // INVISIBLE SEPARATOR
+    '\u{FE0E}', // VARIATION SELECTOR-15 (文本样式)
+    '\u{FE0F}', // VARIATION SELECTOR-16 (表情样式)
 ];
 
 /// 零宽字符密度阈值：每 1000 字符超过此数量则报警
@@ -95,29 +192,32 @@ pub fn check(content: &str, file_path: &str) -> Vec<Finding> {
 fn check_cyrillic_homoglyphs(content: &str, file_path: &str) -> Option<Finding> {
     let suspicious_count = content
         .chars()
-        .filter(|c| CYRILLIC_TO_LATIN.iter().any(|(from, _)| c == from))
+        .filter(|c| HOMOGLYPH_TO_LATIN.iter().any(|(from, _)| c == from))
         .count();
 
-    // 如果有足够多的西里尔字母，检查是否为混入攻击
+    // 如果有足够多的同形字字符，检查是否为混入攻击
     if suspicious_count >= MIN_CYRILLIC_COUNT {
         // 统计 ASCII 字母数量（主要拉丁文本环境）
         let latin_count = content.chars().filter(|c| c.is_ascii_alphabetic()).count();
 
         if latin_count > 0 {
             let ratio = suspicious_count as f64 / (latin_count + suspicious_count) as f64;
-            // 如果西里尔字母占比低于阈值，说明是混入拉丁文本中的攻击
+            // 如果同形字字符占比低于阈值，说明是混入拉丁文本中的攻击
             if ratio < CYRILLIC_RATIO_THRESHOLD {
+                // 找出第一个可疑字符的位置和上下文
+                let (line_number, snippet) = find_suspicious_char_location(content);
+
                 // 找出具体的可疑字符
                 let suspicious_chars: Vec<char> = content
                     .chars()
-                    .filter(|c| CYRILLIC_TO_LATIN.iter().any(|(from, _)| c == from))
+                    .filter(|c| HOMOGLYPH_TO_LATIN.iter().any(|(from, _)| c == from))
                     .take(10) // 最多显示 10 个
                     .collect();
 
                 let char_display: String = suspicious_chars
                     .iter()
                     .map(|c| {
-                        let latin = CYRILLIC_TO_LATIN
+                        let latin = HOMOGLYPH_TO_LATIN
                             .iter()
                             .find(|(from, _)| c == from)
                             .map(|(_, to)| *to)
@@ -127,18 +227,20 @@ fn check_cyrillic_homoglyphs(content: &str, file_path: &str) -> Option<Finding> 
                     .collect::<Vec<_>>()
                     .join(", ");
 
-                return Some(make_finding(
+                return Some(make_finding_with_location(
                     "HOMOGLYPH_ATTACK",
                     IssueSeverity::High,
-                    "Cyrillic homoglyph attack detected",
+                    "Homoglyph attack detected",
                     format!(
-                        "Found {} Cyrillic character(s) that visually resemble Latin letters. \
+                        "Found {} character(s) that visually resemble Latin letters. \
                          This could be used to disguise malicious code or filenames. \
                          Suspicious characters: {}",
                         suspicious_count, char_display
                     ),
                     Some(file_path.to_string()),
                     ThreatCategory::Obfuscation,
+                    line_number,
+                    snippet,
                 ));
             }
         }
@@ -156,9 +258,10 @@ fn check_zero_width(content: &str, file_path: &str) -> Option<Finding> {
         .filter(|c| ZERO_WIDTH_CHARS.contains(&c))
         .count();
 
-    // 计算阈值：每 1000 字符允许 ZERO_WIDTH_DENSITY_THRESHOLD 个零宽字符
-    let content_len = content.len().max(1);
-    let threshold = (content_len / 1000).max(1) * ZERO_WIDTH_DENSITY_THRESHOLD;
+    // 计算阈值：每 1000 Unicode 码点允许 ZERO_WIDTH_DENSITY_THRESHOLD 个零宽字符
+    // 使用 chars().count() 而非 len()，确保中文/日文等多字节字符不会被夸大
+    let content_char_count = content.chars().count().max(1);
+    let threshold = (content_char_count / 1000).max(1) * ZERO_WIDTH_DENSITY_THRESHOLD;
 
     if zw_count > threshold {
         // 分类零宽字符类型
@@ -186,18 +289,23 @@ fn check_zero_width(content: &str, file_path: &str) -> Option<Finding> {
             .collect::<Vec<_>>()
             .join(", ");
 
-        return Some(make_finding(
+        // 查找第一个零宽字符的位置
+        let (line_number, snippet) = find_zero_width_location(content);
+
+        return Some(make_finding_with_location(
             "UNICODE_STEGANOGRAPHY",
             IssueSeverity::Medium,
             "Suspicious density of zero-width characters",
             format!(
-                "Found {} zero-width character(s) in {} bytes of content (threshold: {}). \
+                "Found {} zero-width character(s) in {} characters of content (threshold: {}). \
                  Zero-width characters can be used for steganography to hide secrets. \
                  Breakdown: {}",
-                zw_count, content_len, threshold, breakdown
+                zw_count, content_char_count, threshold, breakdown
             ),
             Some(file_path.to_string()),
             ThreatCategory::Obfuscation,
+            line_number,
+            snippet,
         ));
     }
 
@@ -251,7 +359,10 @@ fn check_invisible_chars(content: &str, file_path: &str) -> Option<Finding> {
             .collect::<Vec<_>>()
             .join(", ");
 
-        return Some(make_finding(
+        // 查找第一个不可见字符的位置
+        let (line_number, snippet) = find_invisible_char_location(content);
+
+        return Some(make_finding_with_location(
             "UNICODE_INVISIBLE_CHARS",
             IssueSeverity::Medium,
             "Invisible control characters detected",
@@ -265,6 +376,8 @@ fn check_invisible_chars(content: &str, file_path: &str) -> Option<Finding> {
             ),
             Some(file_path.to_string()),
             ThreatCategory::Obfuscation,
+            line_number,
+            snippet,
         ));
     }
 
@@ -273,26 +386,67 @@ fn check_invisible_chars(content: &str, file_path: &str) -> Option<Finding> {
 
 // ── 辅助函数 ──
 
-/// 创建 Finding 实例
-///
-/// 使用 sha2 生成稳定的 finding ID
-fn make_finding(
+/// 查找第一个可疑同形字字符的位置（行号和代码片段）
+fn find_suspicious_char_location(content: &str) -> (Option<usize>, Option<String>) {
+    for (line_idx, line) in content.lines().enumerate() {
+        let has_suspicious = line.chars().any(|c| HOMOGLYPH_TO_LATIN.iter().any(|(from, _)| c == *from));
+        if has_suspicious {
+            // 截取行内容作为 snippet（最多 200 字符）
+            let snippet: String = line.chars().take(200).collect();
+            return (Some(line_idx + 1), Some(snippet));
+        }
+    }
+    (None, None)
+}
+
+/// 查找第一个零宽字符的位置（行号和代码片段）
+fn find_zero_width_location(content: &str) -> (Option<usize>, Option<String>) {
+    for (line_idx, line) in content.lines().enumerate() {
+        let has_zw = line.chars().any(|c| ZERO_WIDTH_CHARS.contains(&c));
+        if has_zw {
+            // 截取行内容作为 snippet（最多 200 字符）
+            let snippet: String = line.chars().take(200).collect();
+            return (Some(line_idx + 1), Some(snippet));
+        }
+    }
+    (None, None)
+}
+
+/// 查找第一个不可见字符的位置（行号和代码片段）
+fn find_invisible_char_location(content: &str) -> (Option<usize>, Option<String>) {
+    for (line_idx, line) in content.lines().enumerate() {
+        let has_invisible = line.chars().any(|c| c.is_control() && !c.is_ascii_whitespace());
+        if has_invisible {
+            // 截取行内容作为 snippet（最多 200 字符）
+            let snippet: String = line.chars().take(200).collect();
+            return (Some(line_idx + 1), Some(snippet));
+        }
+    }
+    (None, None)
+}
+
+/// 创建带位置信息的 Finding 实例
+fn make_finding_with_location(
     rule_id: &str,
     severity: IssueSeverity,
     title: &str,
     description: String,
     file_path: Option<String>,
     category: ThreatCategory,
+    line_number: Option<usize>,
+    snippet: Option<String>,
 ) -> Finding {
     let id_input = format!(
-        "{}|{}",
+        "{}|{}|{}|{}",
         rule_id,
         file_path.as_deref().unwrap_or(""),
+        line_number.unwrap_or(0),
+        snippet.as_deref().unwrap_or("").chars().take(50).collect::<String>(),
     );
     let mut hasher = Sha256::new();
     hasher.update(id_input.as_bytes());
     let hash = format!("{:x}", hasher.finalize());
-    let id = hash[..16].to_string();
+    let id = hash[..20].to_string();
 
     Finding {
         id,
@@ -302,8 +456,8 @@ fn make_finding(
         title: title.to_string(),
         description,
         file_path,
-        line_number: None,
-        snippet: None,
+        line_number,
+        snippet,
         remediation: Some(
             "Review the file for suspicious Unicode characters and remove any unauthorized homoglyphs or invisible characters".to_string()
         ),

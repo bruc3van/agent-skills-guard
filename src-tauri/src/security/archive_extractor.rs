@@ -19,6 +19,87 @@ use zip::ZipArchive;
 use crate::models::security::{Finding, FindingMetadata, IssueSeverity, ThreatCategory};
 use crate::security::policy::ScanPolicy;
 
+// ── 安全路径校验 ──
+
+/// 检查路径是否安全（在目标目录内）
+///
+/// 防护措施：
+/// 1. 拒绝绝对路径（Unix 以 `/` 开头，Windows 以 `\\` 或盘符开头）
+/// 2. 拒绝包含 `..` 的路径
+/// 3. 规范化后验证最终路径确实在目标目录内
+fn is_path_safe(entry_name: &str, target_dir: &Path) -> bool {
+    let entry_path = Path::new(entry_name);
+
+    // 拒绝绝对路径
+    if entry_path.is_absolute() {
+        return false;
+    }
+
+    // 检查路径组件中是否有 ..
+    for component in entry_path.components() {
+        match component {
+            std::path::Component::ParentDir => return false,
+            std::path::Component::RootDir => return false,
+            _ => {}
+        }
+    }
+
+    // 构建目标路径并规范化检查
+    let out_path = target_dir.join(entry_name);
+
+    // 尝试规范化路径（如果文件已存在）
+    // 对于新创建的文件，我们检查其父目录
+    if let Some(parent) = out_path.parent() {
+        // 确保父目录存在以便 canonicalize
+        let _ = fs::create_dir_all(parent);
+    }
+
+    // 使用 canonicalize 验证路径
+    // 注意：对于尚不存在的文件，canonicalize 会失败
+    // 所以我们检查规范化后的路径前缀
+    match out_path.canonicalize() {
+        Ok(canonical) => {
+            let target_canonical = target_dir.canonicalize().unwrap_or_else(|_| target_dir.to_path_buf());
+            canonical.starts_with(&target_canonical)
+        }
+        Err(_) => {
+            // 如果无法规范化（文件不存在），检查路径组件
+            // 确保没有路径穿越
+            let mut depth: i32 = 0;
+            for component in entry_path.components() {
+                match component {
+                    std::path::Component::Normal(_) => depth += 1,
+                    std::path::Component::ParentDir => depth -= 1,
+                    _ => {}
+                }
+                if depth < 0 {
+                    return false;
+                }
+            }
+            true
+        }
+    }
+}
+
+/// 检查 TAR 条目是否为 symlink
+fn is_tar_symlink(entry: &tar::Entry<'_, impl io::Read>) -> bool {
+    // 检查 entry_type
+    let entry_type = entry.header().entry_type();
+    if entry_type.is_symlink() || entry_type == tar::EntryType::Symlink {
+        return true;
+    }
+
+    // 在某些 TAR 实现中，symlink 可能被标记为 Regular
+    // 但 link_name 会指向目标
+    if let Ok(link_name) = entry.link_name() {
+        if link_name.is_some() {
+            return true;
+        }
+    }
+
+    false
+}
+
 // ── 公共类型 ──
 
 /// 归档提取结果
@@ -227,15 +308,15 @@ fn extract_zip(
 
         let entry_name = entry.name().to_string();
 
-        // ── 路径穿越检查 ──
-        if entry_name.contains("..") {
+        // ── 路径安全检查（穿越 + 绝对路径） ──
+        if !is_path_safe(&entry_name, temp_dir.path()) {
             findings.push(make_finding(
                 "ARCHIVE_PATH_TRAVERSAL",
                 IssueSeverity::Critical,
                 ThreatCategory::SensitiveFileAccess,
-                "Path traversal detected in archive entry",
+                "Unsafe path detected in archive entry",
                 &format!(
-                    "Archive entry '{}' contains '..' which may escape the extraction directory",
+                    "Archive entry '{}' contains unsafe path components (.., absolute path, or symlink target)",
                     entry_name
                 ),
                 Some(entry_name.clone()),
@@ -323,30 +404,63 @@ fn extract_zip(
 
         // ── 跳过目录条目 ──
         if entry.is_dir() {
-            // 确保目录存在
+            // 确保目录存在（路径已经过安全检查）
             let out_path = temp_dir.path().join(entry.name());
-            let _ = fs::create_dir_all(&out_path);
+            if let Err(e) = fs::create_dir_all(&out_path) {
+                findings.push(make_finding(
+                    "ARCHIVE_EXTRACTION_FAILED",
+                    IssueSeverity::Medium,
+                    ThreatCategory::Obfuscation,
+                    "Failed to create directory for archive entry",
+                    &format!("Cannot create directory '{}': {}", out_path.display(), e),
+                    Some(entry_name.clone()),
+                ));
+            }
             continue;
         }
 
         // ── Symlink 检测 ──
-        // 检查 unix_mode 中的 symlink 位
-        if let Some(mode) = entry.unix_mode() {
+        // 多重检测：unix_mode 位 + 文件名启发式
+        let is_symlink = if let Some(mode) = entry.unix_mode() {
             // 0xA000 是 symlink 的文件类型位
-            if mode & 0xA000 == 0xA000 {
-                findings.push(make_finding(
-                    "ARCHIVE_SYMLINK",
-                    IssueSeverity::Critical,
-                    ThreatCategory::Destructive,
-                    "Symlink detected in archive entry",
-                    &format!(
-                        "Entry '{}' is a symbolic link which may point outside the archive",
-                        entry_name
-                    ),
-                    Some(entry_name.clone()),
-                ));
-                continue;
-            }
+            mode & 0xA000 == 0xA000
+        } else {
+            // Windows 上 unix_mode() 返回 None，使用启发式检测
+            // 检查是否为常见的 symlink 文件名模式
+            entry_name.ends_with(".lnk") || entry_name.contains("->")
+        };
+
+        if is_symlink {
+            findings.push(make_finding(
+                "ARCHIVE_SYMLINK",
+                IssueSeverity::Critical,
+                ThreatCategory::Destructive,
+                "Symlink detected in archive entry",
+                &format!(
+                    "Entry '{}' is a symbolic link which may point outside the archive",
+                    entry_name
+                ),
+                Some(entry_name.clone()),
+            ));
+            continue;
+        }
+
+        // ── 单条目大小限制 ──
+        let entry_size = entry.size();
+        let max_single_entry_size = policy.archive.max_total_size_bytes / 4; // 单条目最大为总限制的 1/4
+        if entry_size > max_single_entry_size {
+            findings.push(make_finding(
+                "ARCHIVE_ENTRY_TOO_LARGE",
+                IssueSeverity::High,
+                ThreatCategory::Obfuscation,
+                "Single archive entry exceeds size limit",
+                &format!(
+                    "Entry '{}' is {} bytes, exceeding single entry limit of {} bytes",
+                    entry_name, entry_size, max_single_entry_size
+                ),
+                Some(entry_name.clone()),
+            ));
+            continue;
         }
 
         // ── 解压文件 ──
@@ -473,23 +587,63 @@ fn is_archive_extension(name: &str) -> bool {
 }
 
 /// 计算嵌套归档的最大深度
-/// 简单策略：统计嵌套归档列表中同时出现在其他归档内部的条目数量
+///
+/// 算法：通过路径层级分析来估算嵌套深度
+/// 1. 对每个归档条目，计算其路径深度（目录层级数）
+/// 2. 如果一个归档路径包含另一个归档路径作为前缀，则增加深度
+/// 3. 返回最大检测到的深度
 fn calculate_nested_depth(nested_archives: &[String]) -> usize {
-    // 如果存在至少一个嵌套归档，视为深度 1
-    // 更精确的深度检测需要递归扫描嵌套归档，此处简化
     if nested_archives.is_empty() {
-        0
-    } else {
-        // 找出那些路径前缀出现在其他条目中的条目（即被嵌套在另一层归档中）
-        let mut depth = 1;
-        for (i, outer) in nested_archives.iter().enumerate() {
-            for (j, inner) in nested_archives.iter().enumerate() {
-                if i != j && inner.starts_with(outer.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '.')) {
-                    depth = depth.max(2);
+        return 0;
+    }
+
+    // 提取每个归档条目的目录路径部分
+    let archive_paths: Vec<String> = nested_archives
+        .iter()
+        .filter_map(|path| {
+            let p = Path::new(path);
+            // 获取目录部分（去掉文件名）
+            p.parent().map(|parent| {
+                let parent_str = parent.to_string_lossy().to_string();
+                if parent_str.is_empty() {
+                    ".".to_string()
+                } else {
+                    parent_str
                 }
+            })
+        })
+        .collect();
+
+    // 计算路径深度（目录层级数）
+    let max_depth = archive_paths
+        .iter()
+        .map(|path| path.matches('/').count() + path.matches('\\').count())
+        .max()
+        .unwrap_or(0);
+
+    // 检查是否有嵌套关系（一个路径是另一个的子路径）
+    let mut has_nesting = false;
+    for (i, outer) in archive_paths.iter().enumerate() {
+        for (j, inner) in archive_paths.iter().enumerate() {
+            if i != j && inner.starts_with(outer.as_str()) && inner.len() > outer.len() {
+                has_nesting = true;
+                break;
             }
         }
-        depth
+        if has_nesting {
+            break;
+        }
+    }
+
+    // 返回深度：基础深度 1 + 嵌套检测加成
+    if has_nesting {
+        (max_depth + 1).min(3) // 最大限制为 3 层
+    } else {
+        if max_depth > 0 {
+            1 // 有路径但无嵌套
+        } else {
+            nested_archives.len().min(2) // 根据数量估算
+        }
     }
 }
 
@@ -597,14 +751,27 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
                 }
             };
 
-            // 路径穿越检查
-            if entry_path.contains("..") {
+            // 路径安全检查（穿越 + 绝对路径）
+            if !is_path_safe(&entry_path, temp_dir.path()) {
                 findings.push(make_finding(
                     "ARCHIVE_PATH_TRAVERSAL",
                     IssueSeverity::Critical,
                     ThreatCategory::Destructive,
-                    "Path traversal in archive entry",
-                    &format!("Entry '{}' contains '..' which may write outside target directory", entry_path),
+                    "Unsafe path in archive entry",
+                    &format!("Entry '{}' contains unsafe path components", entry_path),
+                    Some(entry_path.clone()),
+                ));
+                continue;
+            }
+
+            // TAR symlink 检测
+            if is_tar_symlink(&entry) {
+                findings.push(make_finding(
+                    "ARCHIVE_SYMLINK",
+                    IssueSeverity::Critical,
+                    ThreatCategory::Destructive,
+                    "Symlink detected in TAR entry",
+                    &format!("Entry '{}' is a symbolic link which may point outside the archive", entry_path),
                     Some(entry_path.clone()),
                 ));
                 continue;
@@ -626,13 +793,32 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
             let out_path = temp_dir.path().join(&entry_path);
 
             if entry.header().entry_type().is_dir() {
-                let _ = fs::create_dir_all(&out_path);
+                if let Err(e) = fs::create_dir_all(&out_path) {
+                    findings.push(make_finding(
+                        "ARCHIVE_EXTRACTION_FAILED",
+                        IssueSeverity::Medium,
+                        ThreatCategory::Obfuscation,
+                        "Failed to create directory for TAR entry",
+                        &format!("Cannot create directory '{}': {}", out_path.display(), e),
+                        Some(entry_path.clone()),
+                    ));
+                }
                 continue;
             }
 
             // 创建父目录
             if let Some(parent) = out_path.parent() {
-                let _ = fs::create_dir_all(parent);
+                if let Err(e) = fs::create_dir_all(parent) {
+                    findings.push(make_finding(
+                        "ARCHIVE_EXTRACTION_FAILED",
+                        IssueSeverity::Medium,
+                        ThreatCategory::Obfuscation,
+                        "Failed to create parent directory",
+                        &format!("Cannot create directory '{}': {}", parent.display(), e),
+                        Some(entry_path.clone()),
+                    ));
+                    continue;
+                }
             }
 
             // 检查文件大小
@@ -733,14 +919,27 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
                 }
             };
 
-            // 路径穿越检查
-            if entry_path.contains("..") {
+            // 路径安全检查（穿越 + 绝对路径）
+            if !is_path_safe(&entry_path, temp_dir.path()) {
                 findings.push(make_finding(
                     "ARCHIVE_PATH_TRAVERSAL",
                     IssueSeverity::Critical,
                     ThreatCategory::Destructive,
-                    "Path traversal in archive entry",
-                    &format!("Entry '{}' contains '..' which may write outside target directory", entry_path),
+                    "Unsafe path in archive entry",
+                    &format!("Entry '{}' contains unsafe path components", entry_path),
+                    Some(entry_path.clone()),
+                ));
+                continue;
+            }
+
+            // TAR symlink 检测
+            if is_tar_symlink(&entry) {
+                findings.push(make_finding(
+                    "ARCHIVE_SYMLINK",
+                    IssueSeverity::Critical,
+                    ThreatCategory::Destructive,
+                    "Symlink detected in TAR entry",
+                    &format!("Entry '{}' is a symbolic link which may point outside the archive", entry_path),
                     Some(entry_path.clone()),
                 ));
                 continue;
@@ -762,13 +961,32 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
             let out_path = temp_dir.path().join(&entry_path);
 
             if entry.header().entry_type().is_dir() {
-                let _ = fs::create_dir_all(&out_path);
+                if let Err(e) = fs::create_dir_all(&out_path) {
+                    findings.push(make_finding(
+                        "ARCHIVE_EXTRACTION_FAILED",
+                        IssueSeverity::Medium,
+                        ThreatCategory::Obfuscation,
+                        "Failed to create directory for TAR entry",
+                        &format!("Cannot create directory '{}': {}", out_path.display(), e),
+                        Some(entry_path.clone()),
+                    ));
+                }
                 continue;
             }
 
             // 创建父目录
             if let Some(parent) = out_path.parent() {
-                let _ = fs::create_dir_all(parent);
+                if let Err(e) = fs::create_dir_all(parent) {
+                    findings.push(make_finding(
+                        "ARCHIVE_EXTRACTION_FAILED",
+                        IssueSeverity::Medium,
+                        ThreatCategory::Obfuscation,
+                        "Failed to create parent directory",
+                        &format!("Cannot create directory '{}': {}", parent.display(), e),
+                        Some(entry_path.clone()),
+                    ));
+                    continue;
+                }
             }
 
             // 检查文件大小

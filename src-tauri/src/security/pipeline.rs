@@ -239,6 +239,17 @@ lazy_static! {
         ("iex", TaintType::CodeExecution),
         ("tee", TaintType::FileWrite),
     ];
+
+    // ── extract_command_name 辅助正则 ──
+
+    // 匹配 env VAR=val 前缀
+    static ref RE_ENV_PREFIX: Regex = Regex::new(r"(?i)^env(?:\s+\w+=\S+)*\s+").unwrap();
+
+    // 匹配 sudo 前缀（含可选参数）
+    static ref RE_SUDO_PREFIX: Regex = Regex::new(r"(?i)^sudo\s+(?:-\S+\s+)*").unwrap();
+
+    // URL 提取正则
+    static ref RE_URL_EXTRACT: Regex = Regex::new(r#"https?://[^\s'"`]+"#).unwrap();
 }
 
 // ── Taint 追踪类型 ──
@@ -300,11 +311,9 @@ fn split_pipeline(line: &str) -> Vec<String> {
 fn extract_command_name(cmd: &str) -> String {
     let trimmed = cmd.trim();
     // 跳过 env VAR=val 前缀
-    let re_env_prefix = Regex::new(r"(?i)^env(?:\s+\w+=\S+)*\s+").unwrap();
-    let after_env = re_env_prefix.replace(trimmed, "");
+    let after_env = RE_ENV_PREFIX.replace(trimmed, "");
     // 跳过 sudo
-    let re_sudo = Regex::new(r"(?i)^sudo\s+(?:-\S+\s+)*").unwrap();
-    let after_sudo = re_sudo.replace(&after_env, "");
+    let after_sudo = RE_SUDO_PREFIX.replace(&after_env, "");
     // 提取第一个 token
     after_sudo
         .split_whitespace()
@@ -518,12 +527,18 @@ fn check_taint_flow(content: &str, file_path: &str) -> Vec<Finding> {
 // ── 辅助函数 ──
 
 /// 生成稳定的 Finding ID
+///
+/// 改进：使用 snippet 内容的前 100 字符参与 hash，而不是 snippet.len()
+/// 避免不同 snippet 但长度相同导致 ID 碰撞
 fn make_finding_id(rule_id: &str, file_path: &str, line: usize, snippet: &str) -> String {
-    let id_input = format!("{}|{}|{}|{}", rule_id, file_path, line, snippet.len());
+    // 截取 snippet 的前 100 字符参与 hash，避免 ID 过长
+    let snippet_prefix: String = snippet.chars().take(100).collect();
+    let id_input = format!("{}|{}|{}|{}", rule_id, file_path, line, snippet_prefix);
     let mut hasher = Sha256::new();
     hasher.update(id_input.as_bytes());
     let hash = format!("{:x}", hasher.finalize());
-    hash[..16].to_string()
+    // 使用更长的 hash（20 字符 vs 16 字符）减少碰撞概率
+    hash[..20].to_string()
 }
 
 /// 创建 Finding 实例
@@ -565,13 +580,24 @@ fn make_finding(
 }
 
 /// 检查 URL 中是否包含已知安装器域名
+///
+/// 改进：只检查 URL 模式中的域名，而不是整个文件内容
+/// 避免注释中提到域名导致整个文件的恶意检测被跳过
 fn is_known_installer(content: &str, policy: &ScanPolicy) -> bool {
-    let lower = content.to_lowercase();
-    policy
-        .pipeline
-        .known_installer_domains
-        .iter()
-        .any(|domain| lower.contains(&domain.to_lowercase()))
+    // 提取内容中的 URL
+    let urls: Vec<String> = RE_URL_EXTRACT
+        .find_iter(content)
+        .map(|m| m.as_str().to_lowercase())
+        .collect();
+
+    // 只在 URL 中检查已知安装器域名
+    urls.iter().any(|url| {
+        policy
+            .pipeline
+            .known_installer_domains
+            .iter()
+            .any(|domain| url.contains(&domain.to_lowercase()))
+    })
 }
 
 /// 检查文件路径是否在文档目录中
@@ -579,23 +605,27 @@ fn is_known_installer(content: &str, policy: &ScanPolicy) -> bool {
 /// 使用路径段匹配（而非子串匹配），避免 `/tmp/test.sh` 被误判为文档路径。
 /// 匹配规则：路径中某个目录段完全等于指示符，或以指示符开头后跟 `-`（如 `docs-internal`）。
 /// 不匹配文件名中的指示符（如 `test.sh`）。
+///
+/// 改进：同时支持 Windows 路径分隔符 `\`
 fn is_in_doc_context(file_path: &str, policy: &ScanPolicy) -> bool {
     let lower = file_path.to_lowercase();
-    // 将路径标准化为以 / 分隔的段列表，同时检查 "indicator/" 子串
-    // 这样 /a/docs/b.md 和 /a/docs-internal/b.md 都能匹配
+    // 将路径标准化，同时支持 / 和 \ 分隔符
+    // 这样 /a/docs/b.md 和 C:\a\docs\b.md 都能匹配
     policy
         .rule_scoping
         .doc_path_indicators
         .iter()
         .any(|indicator| {
             let ind_lower = indicator.to_lowercase();
-            // 检查 indicator/ 是否出现在路径中（作为目录段）
-            let dir_pattern = format!("{}/", ind_lower);
-            if lower.contains(&dir_pattern) {
+            // 检查 indicator/ 或 indicator\ 是否出现在路径中（作为目录段）
+            let dir_pattern_unix = format!("{}/", ind_lower);
+            let dir_pattern_win = format!("{}\\", ind_lower);
+            if lower.contains(&dir_pattern_unix) || lower.contains(&dir_pattern_win) {
                 return true;
             }
             // 检查路径段是否以 indicator- 开头（如 docs-internal）
-            lower.split('/').any(|segment| {
+            // 同时支持 / 和 \ 分隔符
+            lower.split(&['/', '\\'][..]).any(|segment| {
                 segment.starts_with(&format!("{}-", ind_lower))
             })
         })
@@ -611,13 +641,30 @@ fn extract_snippet(content: &str, pattern: &Regex, max_len: usize) -> Option<Str
             .unwrap_or(content.len());
         let snippet = &content[start..end];
         if snippet.len() > max_len {
-            Some(format!("{}...", &snippet[..max_len]))
+            // 安全地截断 UTF-8 字符串，避免在多字节字符中间切片
+            let safe_end = find_safe_utf8_boundary(snippet, max_len);
+            Some(format!("{}...", &snippet[..safe_end]))
         } else {
             Some(snippet.to_string())
         }
     } else {
         None
     }
+}
+
+/// 找到 UTF-8 安全的字符串切分位置
+///
+/// 从 max_len 位置向前搜索，找到最近的 UTF-8 字符边界
+fn find_safe_utf8_boundary(s: &str, max_len: usize) -> usize {
+    if max_len >= s.len() {
+        return s.len();
+    }
+    // 从 max_len 位置向前搜索，找到最近的 UTF-8 字符边界
+    let mut boundary = max_len;
+    while boundary > 0 && !s.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    boundary
 }
 
 /// 查找匹配行的行号（1-based）
@@ -1512,7 +1559,7 @@ grep pattern file"#;
             Some("pipeline")
         );
         assert!(f.remediation.is_some());
-        assert!(f.id.len() == 16);
+        assert!(f.id.len() == 20, "Finding ID length should be 20, got {}", f.id.len());
     }
 
     // ── 多规则组合测试 ──

@@ -285,7 +285,7 @@ fn default_archive_max_file_count() -> usize {
     500
 }
 fn default_archive_max_compression_ratio() -> f64 {
-    100.0
+    20.0 // 行业标准：10:1 到 20:1 为合理上限
 }
 fn default_min_description_length() -> usize {
     10
