@@ -178,6 +178,7 @@ rules:
   - .ts
   patterns:
   - (?:sk|pk)_(?:live|test)_[A-Za-z0-9]{24,}
+  - (?:sk|pk)_(?:live|test)_["']\s*\+\s*["'][A-Za-z0-9]{24,}
   description: Stripe API key detected
   remediation: Use environment variables for Stripe keys
   cwe_id: CWE-798

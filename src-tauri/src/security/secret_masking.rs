@@ -190,7 +190,12 @@ mod tests {
     #[test]
     fn test_mask_openai_key() {
         // OpenAI key format: sk-{20+}T3BlbkFJ{20+}
-        let input = concat!("sk-", "abcdefghijklmnopqrst", "T3BlbkFJ", "abcdefghijklmnopqrst");
+        let input = concat!(
+            "sk-",
+            "abcdefghijklmnopqrst",
+            "T3BlbkFJ",
+            "abcdefghijklmnopqrst"
+        );
         let masked = mask_secrets(input);
         // OpenAI key should be masked
         assert!(
