@@ -134,7 +134,7 @@ impl SecurityScanner {
         }
     }
 
-    fn issue_from_finding(finding: &crate::models::security::Finding) -> SecurityIssue {
+    pub(crate) fn issue_from_finding(finding: &crate::models::security::Finding) -> SecurityIssue {
         use crate::models::security::ThreatCategory;
         let code_snippet = finding.snippet.as_ref().map(|s| {
             if finding.category == ThreatCategory::Secrets {
@@ -219,11 +219,16 @@ impl SecurityScanner {
                 .as_deref()
                 .map(|s| s.chars().take(80).collect::<String>())
                 .unwrap_or_default();
+            // 无行号时用 snippet 前 20 字符作为区分，避免不同 finding 被错误合并
+            let line_key = match issue.line_number {
+                Some(n) => n.to_string(),
+                None => format!("n:{}", snippet_key.chars().take(20).collect::<String>()),
+            };
             let key = format!(
                 "{}:{}:{}:{}",
                 issue.rule_id.as_deref().unwrap_or(""),
                 issue.file_path.as_deref().unwrap_or(""),
-                issue.line_number.unwrap_or(0),
+                line_key,
                 snippet_key
             );
             match best.get(&key) {
@@ -753,10 +758,17 @@ impl SecurityScanner {
             anyhow::bail!("Directory does not exist: {}", dir_path);
         }
 
+        // 使用策略中配置的深度限制，与 scan_directory_with_options 保持一致
+        let max_depth = options
+            .policy
+            .as_ref()
+            .map(|p| p.file_limits.max_depth)
+            .unwrap_or(MAX_SCAN_DEPTH);
+
         let mut total = 0usize;
         let mut iter = WalkDir::new(path)
             .follow_links(false)
-            .max_depth(MAX_SCAN_DEPTH)
+            .max_depth(max_depth)
             .into_iter();
 
         while let Some(next) = iter.next() {
@@ -793,12 +805,16 @@ impl SecurityScanner {
                 }
             }
 
-            // 跳过二进制文件（与实际扫描逻辑保持一致，保证进度条准确）
+            // 跳过二进制文件（与 scan_directory_with_options 逻辑对齐）
+            // UTF-16 编码的文本文件不应被跳过
             if let Ok(mut f) = std::fs::File::open(entry.path()) {
                 let mut sample = [0u8; 512];
                 if let Ok(n) = std::io::Read::read(&mut f, &mut sample) {
                     if sample[..n].contains(&0u8) {
-                        continue;
+                        // 检查是否为 UTF-16 编码（含 BOM 或统计特征）
+                        if Self::detect_utf16_encoding(&sample[..n]).is_none() {
+                            continue;
+                        }
                     }
                 }
             }
@@ -895,9 +911,10 @@ impl SecurityScanner {
         }
 
         // 递归遍历目录（不跟随 symlink），扫描文本文件内容
+        // 使用策略中配置的深度限制，与 SkillContext::for_directory 保持一致
         let mut iter = WalkDir::new(path)
             .follow_links(false)
-            .max_depth(MAX_SCAN_DEPTH)
+            .max_depth(policy.file_limits.max_depth)
             .into_iter();
 
         while let Some(next) = iter.next() {
@@ -1318,16 +1335,25 @@ impl SecurityScanner {
 
         matches.extend(self.collect_matches_for_content(content, file_path, &policy));
 
-        let issues: Vec<SecurityIssue> = matches.iter().map(Self::issue_from_match).collect();
+        // ── 辅助分析器（与 scan_directory_with_options 保持一致） ──
+        let mut all_issues: Vec<SecurityIssue> = matches.iter().map(Self::issue_from_match).collect();
+        let mut blocked = false;
+        let mut hard_trigger_issues: Vec<String> = Vec::new();
+
+        // Homoglyph/unicode 隐写检测
+        for finding in crate::security::homoglyph::check(content, file_path) {
+            all_issues.push(Self::issue_from_finding(&finding));
+        }
+
+        // 资产目录 Prompt 注入 / 可疑 URL 检测
+        for finding in crate::security::asset_checks::check_content(content, file_path) {
+            all_issues.push(Self::issue_from_finding(&finding));
+        }
 
         // 检查是否有硬触发规则匹配（阻止安装）
-        let hard_trigger_matches: Vec<&MatchResult> =
-            matches.iter().filter(|m| m.hard_trigger).collect();
-
-        let blocked = !hard_trigger_matches.is_empty();
-        let hard_trigger_issues: Vec<String> = hard_trigger_matches
-            .iter()
-            .map(|m| {
+        for m in matches.iter().filter(|m| m.hard_trigger) {
+            blocked = true;
+            hard_trigger_issues.push(
                 t!(
                     "security.hard_trigger_issue",
                     locale = locale,
@@ -1336,9 +1362,11 @@ impl SecurityScanner {
                     line = m.line_number,
                     description = &m.description
                 )
-                .to_string()
-            })
-            .collect();
+                .to_string(),
+            );
+        }
+
+        Self::finalize_issues(&mut all_issues);
 
         // 计算安全评分（基于权重）
         let score = self.calculate_score_weighted(&matches);
@@ -1351,7 +1379,7 @@ impl SecurityScanner {
             skill_id,
             score,
             level,
-            issues,
+            issues: all_issues,
             recommendations,
             blocked,
             hard_trigger_issues,

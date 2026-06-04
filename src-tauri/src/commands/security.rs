@@ -166,8 +166,17 @@ pub async fn scan_all_installed_skills(
                     })
                     .collect();
                 result.report.issues.extend(cross_issues.clone());
-                // 同步更新 score（简单扣分：每条 cross-skill issue 扣 5 分）
-                let penalty: i32 = cross_issues.len() as i32 * 5;
+                // 按 severity 加权扣分（与 calculate_score_weighted 的权重体系对齐）
+                let penalty: i32 = cross_issues
+                    .iter()
+                    .map(|issue| match issue.severity {
+                        crate::models::security::IssueSeverity::Critical => 15,
+                        crate::models::security::IssueSeverity::High => 10,
+                        crate::models::security::IssueSeverity::Medium => 5,
+                        crate::models::security::IssueSeverity::Low => 2,
+                        crate::models::security::IssueSeverity::Info => 1,
+                    })
+                    .sum();
                 result.score = (result.score - penalty).max(0);
                 result.report.score = result.score;
                 result.level = SecurityLevel::from_score(result.score).as_str().to_string();
@@ -413,7 +422,69 @@ pub async fn scan_skill_archive(
         ));
     }
 
-    // 读取文件内容
+    // 归档文件：提取到临时目录后扫描整个目录
+    if crate::security::archive_extractor::detect_archive_type(&archive_path).is_some() {
+        let canonical_str = canonical.to_string_lossy().to_string();
+        let policy = crate::security::policy::ScanPolicy::builtin_default().clone();
+        let extraction =
+            crate::security::archive_extractor::extract_archive(&canonical_str, &policy);
+
+        // 归档提取本身的安全发现（ZIP bomb、路径穿越等）
+        let mut archive_findings = extraction.findings.clone();
+        let mut blocked = false;
+        let mut hard_trigger_issues: Vec<String> = Vec::new();
+
+        for finding in &archive_findings {
+            if finding.severity == crate::models::security::IssueSeverity::Critical {
+                blocked = true;
+                hard_trigger_issues.push(format!(
+                    "{}: {}",
+                    finding.rule_id, finding.description
+                ));
+            }
+        }
+
+        if let Some(ref temp_dir) = extraction.temp_dir {
+            let temp_path = temp_dir.path().to_str().unwrap_or("");
+            let mut report = scanner
+                .scan_directory_with_options(
+                    temp_path,
+                    &archive_path,
+                    &locale,
+                    crate::security::ScanOptions {
+                        skip_readme: false,
+                        policy: Some(policy),
+                    },
+                    None,
+                )
+                .map_err(|e| {
+                    t!(
+                        "common.errors.scan_failed",
+                        locale = locale,
+                        path = &archive_path,
+                        error = e.to_string()
+                    )
+                    .to_string()
+                })?;
+
+            // 合并归档提取自身的 findings
+            let archive_issues: Vec<crate::models::security::SecurityIssue> = archive_findings
+                .drain(..)
+                .map(|f| SecurityScanner::issue_from_finding(&f))
+                .collect();
+            report.issues.extend(archive_issues);
+            if blocked {
+                report.blocked = true;
+                report.hard_trigger_issues.extend(hard_trigger_issues);
+            }
+
+            return Ok(report);
+        }
+
+        // 无法提取时，回退到纯文本扫描
+    }
+
+    // 普通文件：读取内容后扫描
     let content = std::fs::read_to_string(path).map_err(|e| {
         t!(
             "common.errors.read_failed",
