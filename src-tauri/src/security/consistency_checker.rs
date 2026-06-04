@@ -567,12 +567,18 @@ pub fn check_description_quality(ctx: &SkillContext) -> Vec<Finding> {
     findings
 }
 
-/// 截断字符串到指定长度
+/// 截断字符串到指定长度（按字符边界安全截断）
 fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        // 找到不超过 max_len 的最大字符边界
+        let boundary = s.char_indices()
+            .take_while(|(idx, _)| *idx <= max_len)
+            .last()
+            .map(|(idx, c)| idx + c.len_utf8())
+            .unwrap_or(0);
+        format!("{}...", &s[..boundary.min(s.len())])
     }
 }
 
