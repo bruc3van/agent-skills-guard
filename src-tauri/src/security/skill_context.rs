@@ -177,6 +177,8 @@ pub struct SkillContext {
     pub asset_files: Vec<PathBuf>,
     /// 扫描策略
     pub scan_policy: ScanPolicy,
+    /// 内存中的文件内容（单文件扫描或无需落盘时使用，键为相对路径）
+    pub file_contents: HashMap<String, String>,
 }
 
 impl SkillContext {
@@ -193,7 +195,22 @@ impl SkillContext {
             script_files: Vec::new(),
             asset_files: Vec::new(),
             scan_policy,
+            file_contents: HashMap::new(),
         }
+    }
+
+    /// 读取文件文本：优先使用 `file_contents`，否则从磁盘读取
+    pub fn read_text_file(&self, file: &SkillFile) -> Option<String> {
+        let rel = file.relative_path.to_string_lossy().to_string();
+        if let Some(content) = self.file_contents.get(&rel) {
+            return Some(content.clone());
+        }
+        if let Some(abs) = file.absolute_path.to_str() {
+            if let Some(content) = self.file_contents.get(abs) {
+                return Some(content.clone());
+            }
+        }
+        std::fs::read_to_string(&file.absolute_path).ok()
     }
 
     /// 获取 Skill 名称（优先使用 manifest 中的名称，否则从目录名推断）
@@ -278,18 +295,46 @@ impl SkillContext {
 
     /// 为单文件扫描构建上下文
     pub fn for_single_file(content: &str, file_path: &str, policy: ScanPolicy) -> Self {
-        let (manifest, instruction_body) = Self::parse_frontmatter(content);
+        use std::path::Path;
+
+        let path = Path::new(file_path);
+        let file_type = SkillFileType::from_path(path);
+
+        let (manifest, instruction_body) = if file_type == SkillFileType::Markdown {
+            let (m, body) = Self::parse_frontmatter(content);
+            (m, Some(body))
+        } else {
+            (None, Some(content.to_string()))
+        };
+        let mut files = Vec::new();
+        let mut script_files = Vec::new();
+        let mut file_contents = HashMap::new();
+        file_contents.insert(file_path.to_string(), content.to_string());
+
+        if file_type == SkillFileType::Script {
+            script_files.push(path.to_path_buf());
+            files.push(SkillFile {
+                relative_path: path.to_path_buf(),
+                absolute_path: path.to_path_buf(),
+                file_type,
+                size_bytes: content.len() as u64,
+                is_binary: false,
+                is_hidden: false,
+            });
+        }
+
         Self {
             scan_mode: ScanMode::SingleFile,
             skill_dir: None,
-            skill_md_path: Some(PathBuf::from(file_path)),
+            skill_md_path: Some(path.to_path_buf()),
             manifest,
-            instruction_body: Some(instruction_body),
-            files: Vec::new(),
+            instruction_body,
+            files,
             referenced_files: Vec::new(),
-            script_files: Vec::new(),
+            script_files,
             asset_files: Vec::new(),
             scan_policy: policy,
+            file_contents,
         }
     }
 
@@ -403,6 +448,7 @@ impl SkillContext {
             script_files,
             asset_files,
             scan_policy: policy,
+            file_contents: HashMap::new(),
         })
     }
 }

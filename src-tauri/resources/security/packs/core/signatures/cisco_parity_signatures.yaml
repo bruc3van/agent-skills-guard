@@ -410,9 +410,9 @@ rules:
   - .sh
   patterns:
   - '\[\s*0\s*\]\s*\*\s*10\s*\*\*\s*[6-9]'
-  - 'malloc\s*\(\s*\d{7,}'
-  - 'bytearray\s*\(\s*\d{7,}'
-  - 'calloc\s*\(\s*\d{7,}'
+  - 'malloc\s*\(\s*[\d_]{7,}'
+  - 'bytearray\s*\(\s*[\d_]{7,}'
+  - 'calloc\s*\(\s*[\d_]{7,}'
   exclude_patterns:
   - example
   - test

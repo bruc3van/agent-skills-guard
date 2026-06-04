@@ -353,6 +353,42 @@ fn make_cross_skill_finding(
     }
 }
 
+/// 从已安装 Skill 目录构建跨 Skill 分析上下文（递归读取可扫描文本文件）
+pub fn build_scan_context_from_skill_dir(
+    skill_id: String,
+    skill_name: String,
+    description: String,
+    dir_path: &std::path::Path,
+) -> Option<SkillScanContext> {
+    use crate::security::policy::ScanPolicy;
+    use crate::security::skill_context::SkillContext;
+
+    if !dir_path.is_dir() {
+        return None;
+    }
+
+    let dir_str = dir_path.to_str()?;
+    let ctx =
+        SkillContext::for_directory(dir_str, ScanPolicy::builtin_default().clone()).ok()?;
+
+    let mut file_contents = HashMap::new();
+    for file in &ctx.files {
+        if file.is_binary {
+            continue;
+        }
+        if let Some(text) = ctx.read_text_file(file) {
+            file_contents.insert(file.relative_path.to_string_lossy().to_string(), text);
+        }
+    }
+
+    Some(SkillScanContext {
+        skill_id,
+        skill_name,
+        description,
+        file_contents,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

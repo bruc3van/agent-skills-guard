@@ -1168,7 +1168,7 @@ pub fn analyze(ctx: &SkillContext) -> Vec<Finding> {
     // 2. 扫描所有脚本文件
     for file in &ctx.files {
         if file.file_type == SkillFileType::Script && !file.is_binary {
-            if let Ok(content) = std::fs::read_to_string(&file.absolute_path) {
+            if let Some(content) = ctx.read_text_file(file) {
                 let rel = file.relative_path.to_string_lossy().to_string();
                 scan_targets.push((rel, content));
             }

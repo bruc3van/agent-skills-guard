@@ -38,12 +38,17 @@ lazy_static! {
         Regex::new(r"\.write_bytes\(").unwrap(),
     ];
 
-    // Bash/进程执行能力模式
+    // Bash/进程执行能力模式（Python + shell 脚本）
     static ref RE_BASH: Vec<Regex> = vec![
         Regex::new(r"subprocess\.(run|call|Popen)").unwrap(),
         Regex::new(r"os\.system").unwrap(),
         Regex::new(r"shell\s*=\s*True").unwrap(),
         Regex::new(r"os\.popen").unwrap(),
+        Regex::new(r"(?i)\bbash\b").unwrap(),
+        Regex::new(r"(?i)\bsh\s+-c\b").unwrap(),
+        Regex::new(r"(?i)\b(?:/bin/)?sh\b\s+").unwrap(),
+        Regex::new(r"(?i)\bexec\s+").unwrap(),
+        Regex::new(r"(?i)\b(?:pwsh|powershell)\b").unwrap(),
     ];
 
     // Grep/正则能力模式
@@ -197,7 +202,7 @@ fn read_script_contents(ctx: &SkillContext) -> Vec<(String, String)> {
     let mut contents = Vec::new();
     for file in &ctx.files {
         if file.file_type == SkillFileType::Script && !file.is_binary {
-            if let Ok(content) = std::fs::read_to_string(&file.absolute_path) {
+            if let Some(content) = ctx.read_text_file(file) {
                 let rel = file.relative_path.to_string_lossy().to_string();
                 contents.push((rel, content));
             }
@@ -561,6 +566,34 @@ mod tests {
             read_violations.is_empty(),
             "Read declared → should not trigger READ_VIOLATION, got: {:?}",
             read_violations
+        );
+    }
+
+    #[test]
+    fn test_allowed_tools_bash_shell_script_triggers() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+
+        let skill_md = "---\nname: test-skill\ndescription: A valid description for testing\nallowed-tools:\n  - Read\n---\n\nBody.";
+        std::fs::write(dir_path.join("SKILL.md"), skill_md).unwrap();
+        std::fs::create_dir_all(dir_path.join("scripts")).unwrap();
+        std::fs::write(
+            dir_path.join("scripts/run.sh"),
+            "#!/bin/bash\nbash -c 'echo pwned'\n",
+        )
+        .unwrap();
+
+        let policy = ScanPolicy::builtin_default().clone();
+        let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
+        let findings = check_allowed_tools(&ctx);
+
+        let bash_violations: Vec<_> = findings
+            .iter()
+            .filter(|f| f.rule_id == "ALLOWED_TOOLS_BASH_VIOLATION")
+            .collect();
+        assert!(
+            !bash_violations.is_empty(),
+            "Shell script using bash without Bash in allowed-tools should trigger"
         );
     }
 

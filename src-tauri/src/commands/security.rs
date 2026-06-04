@@ -118,28 +118,12 @@ pub async fn scan_all_installed_skills(
             if !path.exists() || !path.is_dir() {
                 return None;
             }
-            let mut file_contents = HashMap::new();
-            if let Ok(entries) = std::fs::read_dir(&path) {
-                for entry in entries.flatten() {
-                    let entry_path = entry.path();
-                    if entry_path.is_file() {
-                        if let Ok(content) = std::fs::read_to_string(&entry_path) {
-                            let rel = entry_path
-                                .strip_prefix(&path)
-                                .unwrap_or(&entry_path)
-                                .to_string_lossy()
-                                .to_string();
-                            file_contents.insert(rel, content);
-                        }
-                    }
-                }
-            }
-            Some(SkillScanContext {
-                skill_id: skill.id.clone(),
-                skill_name: skill.name.clone(),
-                description: skill.description.clone().unwrap_or_default(),
-                file_contents,
-            })
+            cross_skill::build_scan_context_from_skill_dir(
+                skill.id.clone(),
+                skill.name.clone(),
+                skill.description.clone().unwrap_or_default(),
+                &path,
+            )
         })
         .collect();
 
@@ -165,22 +149,15 @@ pub async fn scan_all_installed_skills(
                         same_path_other_rule_ids: None,
                     })
                     .collect();
-                result.report.issues.extend(cross_issues.clone());
-                // 按 severity 加权扣分（与 calculate_score_weighted 的权重体系对齐）
-                let penalty: i32 = cross_issues
-                    .iter()
-                    .map(|issue| match issue.severity {
-                        crate::models::security::IssueSeverity::Critical => 15,
-                        crate::models::security::IssueSeverity::High => 10,
-                        crate::models::security::IssueSeverity::Medium => 5,
-                        crate::models::security::IssueSeverity::Low => 2,
-                        crate::models::security::IssueSeverity::Info => 1,
-                    })
-                    .sum();
-                result.score = (result.score - penalty).max(0);
-                result.report.score = result.score;
-                result.level = SecurityLevel::from_score(result.score).as_str().to_string();
-                result.report.level = SecurityLevel::from_score(result.score);
+                result.report.issues.extend(cross_issues);
+                let new_score = SecurityScanner::score_from_issues(
+                    &result.report.issues,
+                    result.report.blocked,
+                );
+                result.score = new_score;
+                result.report.score = new_score;
+                result.level = SecurityLevel::from_score(new_score).as_str().to_string();
+                result.report.level = SecurityLevel::from_score(new_score);
             }
         }
     }
