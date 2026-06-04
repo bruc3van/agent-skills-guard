@@ -22,9 +22,7 @@ lazy_static! {
 /// 路径是否位于 assets/references/templates/data 目录
 pub fn is_asset_path(file_path: &str) -> bool {
     let lower = file_path.replace('\\', "/").to_lowercase();
-    ASSET_DIR_SEGMENTS
-        .iter()
-        .any(|seg| lower.contains(seg))
+    ASSET_DIR_SEGMENTS.iter().any(|seg| lower.contains(seg))
 }
 
 /// 扫描资产类文件内容

@@ -104,12 +104,7 @@ pub fn detect_content_type(data: &[u8]) -> ContentType {
     }
 
     // ZIP: PK\x03\x04
-    if data.len() >= 4
-        && data[0] == b'P'
-        && data[1] == b'K'
-        && data[2] == 0x03
-        && data[3] == 0x04
-    {
+    if data.len() >= 4 && data[0] == b'P' && data[1] == b'K' && data[2] == 0x03 && data[3] == 0x04 {
         return ContentType::Zip;
     }
 
@@ -259,12 +254,7 @@ pub fn check_magic(file_path: &str, data: &[u8]) -> Option<Finding> {
     let expected_desc = describe_expected_for_ext(&ext);
     let actual_desc = detected.as_str();
 
-    let finding = make_finding(
-        file_path,
-        &expected_desc,
-        actual_desc,
-        expected_severity,
-    );
+    let finding = make_finding(file_path, &expected_desc, actual_desc, expected_severity);
 
     Some(finding)
 }
@@ -287,13 +277,12 @@ fn mismatch_severity(ext: &str, detected: ContentType) -> Option<IssueSeverity> 
         }
 
         // 图片扩展名：如果内容是脚本/可执行 → High
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "tiff" | "avif" => {
-            match detected {
-                Pe | Elf | MachO | Zip | Pdf | Office | OfficeXml | Gzip | Tar | ShellScript
-                | PythonScript | JavaScript | Html | Svg => Some(IssueSeverity::High),
-                _ => None,
-            }
-        }
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "tiff" | "avif" => match detected
+        {
+            Pe | Elf | MachO | Zip | Pdf | Office | OfficeXml | Gzip | Tar | ShellScript
+            | PythonScript | JavaScript | Html | Svg => Some(IssueSeverity::High),
+            _ => None,
+        },
 
         // 可执行扩展名：这些扩展名本就可能是可执行 → 不检查
         "exe" | "dll" | "so" | "dylib" | "bin" => None,
@@ -332,12 +321,7 @@ fn describe_expected_for_ext(ext: &str) -> String {
 }
 
 /// 构造 Finding
-fn make_finding(
-    file_path: &str,
-    expected: &str,
-    actual: &str,
-    severity: IssueSeverity,
-) -> Finding {
+fn make_finding(file_path: &str, expected: &str, actual: &str, severity: IssueSeverity) -> Finding {
     let raw = format!("FILE_MAGIC_MISMATCH:{}:{}", file_path, actual);
     let hash = {
         let mut hasher = Sha256::new();

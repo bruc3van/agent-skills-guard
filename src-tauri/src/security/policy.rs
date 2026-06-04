@@ -297,8 +297,8 @@ fn default_keyword_baiting_threshold() -> usize {
 fn default_inert_extensions() -> HashSet<String> {
     [
         ".ttf", ".otf", ".woff", ".woff2", ".eot", ".png", ".jpg", ".jpeg", ".gif", ".webp",
-        ".avif", ".bmp", ".ico", ".icns", ".tif", ".tiff", ".heic", ".heif", ".pyc", ".pyo",
-        ".db", ".sqlite", ".sqlite3",
+        ".avif", ".bmp", ".ico", ".icns", ".tif", ".tiff", ".heic", ".heif", ".pyc", ".pyo", ".db",
+        ".sqlite", ".sqlite3",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -307,8 +307,17 @@ fn default_inert_extensions() -> HashSet<String> {
 
 fn default_doc_path_indicators() -> HashSet<String> {
     [
-        "doc", "docs", "references", "examples", "tutorials", "guides", "test", "tests",
-        "fixtures", "samples", "demo",
+        "doc",
+        "docs",
+        "references",
+        "examples",
+        "tutorials",
+        "guides",
+        "test",
+        "tests",
+        "fixtures",
+        "samples",
+        "demo",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -357,9 +366,29 @@ fn default_known_test_values() -> HashSet<String> {
 
 fn default_allowed_extensions() -> HashSet<String> {
     [
-        ".md", ".py", ".sh", ".json", ".yaml", ".yml", ".txt", ".js", ".ts", ".html", ".css",
-        ".svg", ".xml", ".xsd", ".toml", ".cfg", ".ini", ".env", ".gitignore", ".gitattributes",
-        ".editorconfig", ".prettierrc", ".eslintrc",
+        ".md",
+        ".py",
+        ".sh",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".txt",
+        ".js",
+        ".ts",
+        ".html",
+        ".css",
+        ".svg",
+        ".xml",
+        ".xsd",
+        ".toml",
+        ".cfg",
+        ".ini",
+        ".env",
+        ".gitignore",
+        ".gitattributes",
+        ".editorconfig",
+        ".prettierrc",
+        ".eslintrc",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -367,19 +396,26 @@ fn default_allowed_extensions() -> HashSet<String> {
 }
 
 fn default_allowed_subdirs() -> HashSet<String> {
-    ["scripts", "references", "assets", "templates", "data", "config", "src", "lib"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
+    [
+        "scripts",
+        "references",
+        "assets",
+        "templates",
+        "data",
+        "config",
+        "src",
+        "lib",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 // ── 默认策略实例（编译时嵌入） ──
 
 /// 内置默认策略 YAML
-const DEFAULT_POLICY_YAML: &str =
-    include_str!("../../resources/security/policies/default.yaml");
-const STRICT_POLICY_YAML: &str =
-    include_str!("../../resources/security/policies/strict.yaml");
+const DEFAULT_POLICY_YAML: &str = include_str!("../../resources/security/policies/default.yaml");
+const STRICT_POLICY_YAML: &str = include_str!("../../resources/security/policies/strict.yaml");
 const PERMISSIVE_POLICY_YAML: &str =
     include_str!("../../resources/security/policies/permissive.yaml");
 

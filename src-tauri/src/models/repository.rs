@@ -78,28 +78,33 @@ mod tests {
 
     #[test]
     fn from_github_url_handles_basic_url() {
-        let (owner, repo) = Repository::from_github_url("https://github.com/anthropics/skills").unwrap();
+        let (owner, repo) =
+            Repository::from_github_url("https://github.com/anthropics/skills").unwrap();
         assert_eq!(owner, "anthropics");
         assert_eq!(repo, "skills");
     }
 
     #[test]
     fn from_github_url_strips_tree_branch() {
-        let (owner, repo) = Repository::from_github_url("https://github.com/anthropics/skills/tree/main").unwrap();
+        let (owner, repo) =
+            Repository::from_github_url("https://github.com/anthropics/skills/tree/main").unwrap();
         assert_eq!(owner, "anthropics");
         assert_eq!(repo, "skills");
     }
 
     #[test]
     fn from_github_url_strips_blob_path() {
-        let (owner, repo) = Repository::from_github_url("https://github.com/owner/repo/blob/main/README.md").unwrap();
+        let (owner, repo) =
+            Repository::from_github_url("https://github.com/owner/repo/blob/main/README.md")
+                .unwrap();
         assert_eq!(owner, "owner");
         assert_eq!(repo, "repo");
     }
 
     #[test]
     fn from_github_url_strips_git_suffix() {
-        let (owner, repo) = Repository::from_github_url("https://github.com/owner/repo.git").unwrap();
+        let (owner, repo) =
+            Repository::from_github_url("https://github.com/owner/repo.git").unwrap();
         assert_eq!(owner, "owner");
         assert_eq!(repo, "repo");
     }

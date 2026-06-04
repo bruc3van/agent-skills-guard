@@ -146,7 +146,9 @@ impl<'de> serde::Deserialize<'de> for IssueSeverity {
             "Warning" => Ok(IssueSeverity::Medium),
             _ => Err(D::Error::unknown_variant(
                 &s,
-                &["Critical", "High", "Medium", "Low", "Info", "Error", "Warning"],
+                &[
+                    "Critical", "High", "Medium", "Low", "Info", "Error", "Warning",
+                ],
             )),
         }
     }
@@ -167,18 +169,18 @@ pub enum IssueCategory {
 /// 威胁分类（内部统一分类体系，覆盖 Cisco 语义和现有分类）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThreatCategory {
-    Destructive,          // 破坏性操作
-    RemoteExec,           // 远程下载执行
-    CmdInjection,         // 命令注入
-    Network,              // 网络外传
-    PrivilegeEscalation,  // 权限提升
-    Secrets,              // 凭据/密钥泄露
-    Persistence,          // 持久化
-    SensitiveFileAccess,  // 敏感文件访问
-    PromptInjection,      // Prompt 注入/指令覆盖
-    SocialEngineering,    // 社会工程/误导描述
-    PolicyViolation,      // 策略违规（allowed-tools 等）
-    Obfuscation,          // 混淆/伪装/隐写
+    Destructive,         // 破坏性操作
+    RemoteExec,          // 远程下载执行
+    CmdInjection,        // 命令注入
+    Network,             // 网络外传
+    PrivilegeEscalation, // 权限提升
+    Secrets,             // 凭据/密钥泄露
+    Persistence,         // 持久化
+    SensitiveFileAccess, // 敏感文件访问
+    PromptInjection,     // Prompt 注入/指令覆盖
+    SocialEngineering,   // 社会工程/误导描述
+    PolicyViolation,     // 策略违规（allowed-tools 等）
+    Obfuscation,         // 混淆/伪装/隐写
 }
 
 impl ThreatCategory {

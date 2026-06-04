@@ -1138,8 +1138,14 @@ mod tests {
     #[test]
     fn archive_download_error_includes_every_attempted_branch_for_non_404_errors() {
         let error = format_archive_download_error(&[
-            ("main".to_string(), "HTTP 500 Internal Server Error".to_string()),
-            ("master".to_string(), "HTTP 500 Internal Server Error".to_string()),
+            (
+                "main".to_string(),
+                "HTTP 500 Internal Server Error".to_string(),
+            ),
+            (
+                "master".to_string(),
+                "HTTP 500 Internal Server Error".to_string(),
+            ),
         ]);
 
         assert!(error.contains("尝试的分支均下载失败"));

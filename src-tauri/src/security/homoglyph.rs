@@ -19,115 +19,109 @@ const ANALYZER_NAME: &str = "homoglyph";
 /// 包含西里尔字母、希腊字母、拉丁扩展字符等视觉上与拉丁字母几乎相同的字符
 const HOMOGLYPH_TO_LATIN: &[(char, char)] = &[
     // ── 西里尔字母小写 ──
-    ('\u{0430}', 'a'),  // а → a
-    ('\u{0435}', 'e'),  // е → e
-    ('\u{043E}', 'o'),  // о → o
-    ('\u{0440}', 'p'),  // р → p
-    ('\u{0441}', 'c'),  // с → c
-    ('\u{0443}', 'y'),  // у → y
-    ('\u{0445}', 'x'),  // х → x
-    ('\u{0456}', 'i'),  // і → i
-    ('\u{0458}', 'j'),  // ј → j
-    ('\u{04BB}', 'h'),  // һ → h
-
+    ('\u{0430}', 'a'), // а → a
+    ('\u{0435}', 'e'), // е → e
+    ('\u{043E}', 'o'), // о → o
+    ('\u{0440}', 'p'), // р → p
+    ('\u{0441}', 'c'), // с → c
+    ('\u{0443}', 'y'), // у → y
+    ('\u{0445}', 'x'), // х → x
+    ('\u{0456}', 'i'), // і → i
+    ('\u{0458}', 'j'), // ј → j
+    ('\u{04BB}', 'h'), // һ → h
     // ── 西里尔字母大写 ──
-    ('\u{0410}', 'A'),  // А → A
-    ('\u{0412}', 'B'),  // В → B
-    ('\u{0415}', 'E'),  // Е → E
-    ('\u{041A}', 'K'),  // К → K
-    ('\u{041C}', 'M'),  // М → M
-    ('\u{041D}', 'H'),  // Н → H
-    ('\u{041E}', 'O'),  // О → O
-    ('\u{0420}', 'P'),  // Р → P
-    ('\u{0421}', 'C'),  // С → C
-    ('\u{0422}', 'T'),  // Т → T
-    ('\u{0423}', 'y'),  // У → y
-    ('\u{0425}', 'X'),  // Х → X
-    ('\u{0406}', 'I'),  // І → I
-    ('\u{0408}', 'J'),  // Ј → J
-    ('\u{04AE}', 'Y'),  // Ү → Y
-
+    ('\u{0410}', 'A'), // А → A
+    ('\u{0412}', 'B'), // В → B
+    ('\u{0415}', 'E'), // Е → E
+    ('\u{041A}', 'K'), // К → K
+    ('\u{041C}', 'M'), // М → M
+    ('\u{041D}', 'H'), // Н → H
+    ('\u{041E}', 'O'), // О → O
+    ('\u{0420}', 'P'), // Р → P
+    ('\u{0421}', 'C'), // С → C
+    ('\u{0422}', 'T'), // Т → T
+    ('\u{0423}', 'y'), // У → y
+    ('\u{0425}', 'X'), // Х → X
+    ('\u{0406}', 'I'), // І → I
+    ('\u{0408}', 'J'), // Ј → J
+    ('\u{04AE}', 'Y'), // Ү → Y
     // ── 希腊字母小写 ──
-    ('\u{03B1}', 'a'),  // α → a
-    ('\u{03B5}', 'e'),  // ε → e
-    ('\u{03B9}', 'i'),  // ι → i
-    ('\u{03BA}', 'k'),  // κ → k
-    ('\u{03BD}', 'v'),  // ν → v
-    ('\u{03BF}', 'o'),  // ο → o
-    ('\u{03C1}', 'p'),  // ρ → p
-    ('\u{03C3}', 'o'),  // σ → o (类似 o)
-    ('\u{03C4}', 't'),  // τ → t
-    ('\u{03C5}', 'u'),  // υ → u
-    ('\u{03C7}', 'x'),  // χ → x
-
+    ('\u{03B1}', 'a'), // α → a
+    ('\u{03B5}', 'e'), // ε → e
+    ('\u{03B9}', 'i'), // ι → i
+    ('\u{03BA}', 'k'), // κ → k
+    ('\u{03BD}', 'v'), // ν → v
+    ('\u{03BF}', 'o'), // ο → o
+    ('\u{03C1}', 'p'), // ρ → p
+    ('\u{03C3}', 'o'), // σ → o (类似 o)
+    ('\u{03C4}', 't'), // τ → t
+    ('\u{03C5}', 'u'), // υ → u
+    ('\u{03C7}', 'x'), // χ → x
     // ── 希腊字母大写 ──
-    ('\u{0391}', 'A'),  // Α → A
-    ('\u{0392}', 'B'),  // Β → B
-    ('\u{0395}', 'E'),  // Ε → E
-    ('\u{0396}', 'Z'),  // Ζ → Z
-    ('\u{0397}', 'H'),  // Η → H
-    ('\u{0399}', 'I'),  // Ι → I
-    ('\u{039A}', 'K'),  // Κ → K
-    ('\u{039C}', 'M'),  // Μ → M
-    ('\u{039D}', 'N'),  // Ν → N
-    ('\u{039F}', 'O'),  // Ο → O
-    ('\u{03A1}', 'P'),  // Ρ → P
-    ('\u{03A4}', 'T'),  // Τ → T
-    ('\u{03A5}', 'Y'),  // Υ → Y
-    ('\u{03A7}', 'X'),  // Χ → X
-
+    ('\u{0391}', 'A'), // Α → A
+    ('\u{0392}', 'B'), // Β → B
+    ('\u{0395}', 'E'), // Ε → E
+    ('\u{0396}', 'Z'), // Ζ → Z
+    ('\u{0397}', 'H'), // Η → H
+    ('\u{0399}', 'I'), // Ι → I
+    ('\u{039A}', 'K'), // Κ → K
+    ('\u{039C}', 'M'), // Μ → M
+    ('\u{039D}', 'N'), // Ν → N
+    ('\u{039F}', 'O'), // Ο → O
+    ('\u{03A1}', 'P'), // Ρ → P
+    ('\u{03A4}', 'T'), // Τ → T
+    ('\u{03A5}', 'Y'), // Υ → Y
+    ('\u{03A7}', 'X'), // Χ → X
     // ── 拉丁扩展字符 ──
-    ('\u{0251}', 'a'),  // ɑ → a
-    ('\u{0261}', 'g'),  // ɡ → g
-    ('\u{028C}', 'v'),  // ʌ → v (类似 v)
-    ('\u{029C}', 'H'),  // ʜ → H
-
+    ('\u{0251}', 'a'), // ɑ → a
+    ('\u{0261}', 'g'), // ɡ → g
+    ('\u{028C}', 'v'), // ʌ → v (类似 v)
+    ('\u{029C}', 'H'), // ʜ → H
     // ── 数学字母数字符号 ──
     // 这些字符与拉丁字母视觉完全相同，但用于数学语境
-    ('\u{2100}', 'a'),  // ℀ → a (account of)
-    ('\u{2101}', 'a'),  // ℁ → a (addressed to the subject)
-    ('\u{2102}', 'C'),  // ℂ → C (double-struck capital C)
-    ('\u{210A}', 'g'),  // ℊ → g (script small g)
-    ('\u{210B}', 'H'),  // ℋ → H (script capital H)
-    ('\u{210D}', 'H'),  // ℍ → H (double-struck capital H)
-    ('\u{2110}', 'I'),  // ℐ → I (script capital I)
-    ('\u{2112}', 'L'),  // ℒ → L (script capital L)
-    ('\u{2113}', 'l'),  // ℓ → l (script small l)
-    ('\u{2115}', 'N'),  // ℕ → N (double-struck capital N)
-    ('\u{2119}', 'P'),  // ℙ → P (double-struck capital P)
-    ('\u{211A}', 'Q'),  // ℚ → Q (double-struck capital Q)
-    ('\u{211B}', 'R'),  // ℛ → R (script capital R)
-    ('\u{211D}', 'R'),  // ℝ → R (double-struck capital R)
-    ('\u{2124}', 'Z'),  // ℤ → Z (double-struck capital Z)
-    ('\u{2128}', 'Z'),  // ℨ → Z (fraktur capital Z)
-
+    ('\u{2100}', 'a'), // ℀ → a (account of)
+    ('\u{2101}', 'a'), // ℁ → a (addressed to the subject)
+    ('\u{2102}', 'C'), // ℂ → C (double-struck capital C)
+    ('\u{210A}', 'g'), // ℊ → g (script small g)
+    ('\u{210B}', 'H'), // ℋ → H (script capital H)
+    ('\u{210D}', 'H'), // ℍ → H (double-struck capital H)
+    ('\u{2110}', 'I'), // ℐ → I (script capital I)
+    ('\u{2112}', 'L'), // ℒ → L (script capital L)
+    ('\u{2113}', 'l'), // ℓ → l (script small l)
+    ('\u{2115}', 'N'), // ℕ → N (double-struck capital N)
+    ('\u{2119}', 'P'), // ℙ → P (double-struck capital P)
+    ('\u{211A}', 'Q'), // ℚ → Q (double-struck capital Q)
+    ('\u{211B}', 'R'), // ℛ → R (script capital R)
+    ('\u{211D}', 'R'), // ℝ → R (double-struck capital R)
+    ('\u{2124}', 'Z'), // ℤ → Z (double-struck capital Z)
+    ('\u{2128}', 'Z'), // ℨ → Z (fraktur capital Z)
     // ── 全角字符 ──
-    ('\u{FF21}', 'A'),  // Ａ → A
-    ('\u{FF22}', 'B'),  // Ｂ → B
-    ('\u{FF23}', 'C'),  // Ｃ → C
-    ('\u{FF24}', 'D'),  // Ｄ → D
-    ('\u{FF25}', 'E'),  // Ｅ → E
-    ('\u{FF26}', 'F'),  // Ｆ → F
-    ('\u{FF27}', 'G'),  // Ｇ → G
-    ('\u{FF28}', 'H'),  // Ｈ → H
-    ('\u{FF29}', 'I'),  // Ｉ → I
-    ('\u{FF2A}', 'J'),  // Ｊ → J
-    ('\u{FF2B}', 'K'),  // Ｋ → K
-    ('\u{FF2C}', 'L'),  // Ｌ → L
-    ('\u{FF2D}', 'M'),  // Ｍ → M
-    ('\u{FF2E}', 'N'),  // Ｎ → N
-    ('\u{FF2F}', 'O'),  // Ｏ → O
-    ('\u{FF30}', 'P'),  // Ｐ → P
-    ('\u{FF31}', 'Q'),  // Ｑ → Q
-    ('\u{FF32}', 'R'),  // Ｒ → R
-    ('\u{FF33}', 'S'),  // Ｓ → S
-    ('\u{FF34}', 'T'),  // Ｔ → T
-    ('\u{FF35}', 'U'),  // Ｕ → U
-    ('\u{FF36}', 'V'),  // Ｖ → V
-    ('\u{FF37}', 'W'),  // Ｗ → W
-    ('\u{FF38}', 'X'),  // Ｘ → X
-    ('\u{FF39}', 'Y'),  // Ｙ → Y
-    ('\u{FF3A}', 'Z'),  // Ｚ → Z
+    ('\u{FF21}', 'A'), // Ａ → A
+    ('\u{FF22}', 'B'), // Ｂ → B
+    ('\u{FF23}', 'C'), // Ｃ → C
+    ('\u{FF24}', 'D'), // Ｄ → D
+    ('\u{FF25}', 'E'), // Ｅ → E
+    ('\u{FF26}', 'F'), // Ｆ → F
+    ('\u{FF27}', 'G'), // Ｇ → G
+    ('\u{FF28}', 'H'), // Ｈ → H
+    ('\u{FF29}', 'I'), // Ｉ → I
+    ('\u{FF2A}', 'J'), // Ｊ → J
+    ('\u{FF2B}', 'K'), // Ｋ → K
+    ('\u{FF2C}', 'L'), // Ｌ → L
+    ('\u{FF2D}', 'M'), // Ｍ → M
+    ('\u{FF2E}', 'N'), // Ｎ → N
+    ('\u{FF2F}', 'O'), // Ｏ → O
+    ('\u{FF30}', 'P'), // Ｐ → P
+    ('\u{FF31}', 'Q'), // Ｑ → Q
+    ('\u{FF32}', 'R'), // Ｒ → R
+    ('\u{FF33}', 'S'), // Ｓ → S
+    ('\u{FF34}', 'T'), // Ｔ → T
+    ('\u{FF35}', 'U'), // Ｕ → U
+    ('\u{FF36}', 'V'), // Ｖ → V
+    ('\u{FF37}', 'W'), // Ｗ → W
+    ('\u{FF38}', 'X'), // Ｘ → X
+    ('\u{FF39}', 'Y'), // Ｙ → Y
+    ('\u{FF3A}', 'Z'), // Ｚ → Z
 ];
 
 /// 零宽字符列表
@@ -389,7 +383,9 @@ fn check_invisible_chars(content: &str, file_path: &str) -> Option<Finding> {
 /// 查找第一个可疑同形字字符的位置（行号和代码片段）
 fn find_suspicious_char_location(content: &str) -> (Option<usize>, Option<String>) {
     for (line_idx, line) in content.lines().enumerate() {
-        let has_suspicious = line.chars().any(|c| HOMOGLYPH_TO_LATIN.iter().any(|(from, _)| c == *from));
+        let has_suspicious = line
+            .chars()
+            .any(|c| HOMOGLYPH_TO_LATIN.iter().any(|(from, _)| c == *from));
         if has_suspicious {
             // 截取行内容作为 snippet（最多 200 字符）
             let snippet: String = line.chars().take(200).collect();
@@ -415,7 +411,9 @@ fn find_zero_width_location(content: &str) -> (Option<usize>, Option<String>) {
 /// 查找第一个不可见字符的位置（行号和代码片段）
 fn find_invisible_char_location(content: &str) -> (Option<usize>, Option<String>) {
     for (line_idx, line) in content.lines().enumerate() {
-        let has_invisible = line.chars().any(|c| c.is_control() && !c.is_ascii_whitespace());
+        let has_invisible = line
+            .chars()
+            .any(|c| c.is_control() && !c.is_ascii_whitespace());
         if has_invisible {
             // 截取行内容作为 snippet（最多 200 字符）
             let snippet: String = line.chars().take(200).collect();
@@ -441,7 +439,12 @@ fn make_finding_with_location(
         rule_id,
         file_path.as_deref().unwrap_or(""),
         line_number.unwrap_or(0),
-        snippet.as_deref().unwrap_or("").chars().take(50).collect::<String>(),
+        snippet
+            .as_deref()
+            .unwrap_or("")
+            .chars()
+            .take(50)
+            .collect::<String>(),
     );
     let mut hasher = Sha256::new();
     hasher.update(id_input.as_bytes());
@@ -501,7 +504,10 @@ mod tests {
             "Should detect Cyrillic homoglyph attack"
         );
         assert_eq!(homoglyph_findings[0].analyzer, "homoglyph");
-        assert!(matches!(homoglyph_findings[0].severity, IssueSeverity::High));
+        assert!(matches!(
+            homoglyph_findings[0].severity,
+            IssueSeverity::High
+        ));
     }
 
     #[test]
@@ -572,7 +578,10 @@ mod tests {
             !invisible_findings.is_empty(),
             "Should detect invisible control characters"
         );
-        assert!(matches!(invisible_findings[0].severity, IssueSeverity::Medium));
+        assert!(matches!(
+            invisible_findings[0].severity,
+            IssueSeverity::Medium
+        ));
     }
 
     #[test]
@@ -674,11 +683,15 @@ mod tests {
             "Should detect homoglyph"
         );
         assert!(
-            findings.iter().any(|f| f.rule_id == "UNICODE_STEGANOGRAPHY"),
+            findings
+                .iter()
+                .any(|f| f.rule_id == "UNICODE_STEGANOGRAPHY"),
             "Should detect steganography"
         );
         assert!(
-            findings.iter().any(|f| f.rule_id == "UNICODE_INVISIBLE_CHARS"),
+            findings
+                .iter()
+                .any(|f| f.rule_id == "UNICODE_INVISIBLE_CHARS"),
             "Should detect invisible chars"
         );
     }

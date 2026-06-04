@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::security::policy::ScanPolicy;
 
+const SKIP_DIR_NAMES: &[&str] = &["node_modules", "target", "dist", "build", ".venv", "venv"];
+
 // ── ScanMode ──
 
 /// 扫描模式：单文件或整个目录
@@ -53,37 +55,29 @@ impl SkillFileType {
             "md" | "markdown" | "mdx" => SkillFileType::Markdown,
 
             // 脚本
-            "sh" | "bash" | "zsh" | "fish" | "ps1" | "bat" | "cmd"
-            | "py" | "pyw" | "rb" | "pl" | "php"
-            | "js" | "mjs" | "cjs" | "jsx" | "ts" | "mts" | "cts" | "tsx"
-            | "lua" | "r" | "rs" | "go" | "java" | "kt" | "kts"
-            | "swift" | "dart" | "ex" | "exs" | "clj" | "cljs"
-            | "hs" | "elm" | "v" | "zig" => SkillFileType::Script,
+            "sh" | "bash" | "zsh" | "fish" | "ps1" | "bat" | "cmd" | "py" | "pyw" | "rb" | "pl"
+            | "php" | "js" | "mjs" | "cjs" | "jsx" | "ts" | "mts" | "cts" | "tsx" | "lua" | "r"
+            | "rs" | "go" | "java" | "kt" | "kts" | "swift" | "dart" | "ex" | "exs" | "clj"
+            | "cljs" | "hs" | "elm" | "v" | "zig" => SkillFileType::Script,
 
             // 配置
-            "json" | "json5" | "jsonc"
-            | "yaml" | "yml"
-            | "toml" | "ini" | "cfg" | "conf"
-            | "env" | "properties"
-            | "xml" | "xsd" | "xsl" | "xslt"
-            | "gitignore" | "gitattributes" | "editorconfig"
-            | "prettierrc" | "eslintrc" | "stylelintrc"
+            "json" | "json5" | "jsonc" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf"
+            | "env" | "properties" | "xml" | "xsd" | "xsl" | "xslt" | "gitignore"
+            | "gitattributes" | "editorconfig" | "prettierrc" | "eslintrc" | "stylelintrc"
             | "dockerignore" | "npmrc" | "nvmrc" => SkillFileType::Config,
 
             // 静态资源（惰性扩展名）
-            "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp"
-            | "ico" | "icns" | "tif" | "tiff" | "heic" | "heif"
-            | "svg"
-            | "ttf" | "otf" | "woff" | "woff2" | "eot"
-            | "mp3" | "mp4" | "wav" | "ogg" | "webm" | "flac" | "aac"
-            | "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx"
-            | "zip" | "gz" | "tar" | "rar" | "7z" | "bz2" | "xz"
-            | "pyc" | "pyo" | "class" | "o" | "so" | "dll" | "dylib"
-            | "exe" | "msi" | "dmg" => SkillFileType::Asset,
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp" | "ico" | "icns" | "tif"
+            | "tiff" | "heic" | "heif" | "svg" | "ttf" | "otf" | "woff" | "woff2" | "eot"
+            | "mp3" | "mp4" | "wav" | "ogg" | "webm" | "flac" | "aac" | "pdf" | "doc" | "docx"
+            | "xls" | "xlsx" | "ppt" | "pptx" | "zip" | "gz" | "tar" | "rar" | "7z" | "bz2"
+            | "xz" | "pyc" | "pyo" | "class" | "o" | "so" | "dll" | "dylib" | "exe" | "msi"
+            | "dmg" => SkillFileType::Asset,
 
             // 二进制可识别格式
-            "bin" | "dat" | "db" | "sqlite" | "sqlite3"
-            | "wasm" | "jar" | "war" | "ear" => SkillFileType::Binary,
+            "bin" | "dat" | "db" | "sqlite" | "sqlite3" | "wasm" | "jar" | "war" | "ear" => {
+                SkillFileType::Binary
+            }
 
             _ => SkillFileType::Unknown,
         }
@@ -248,18 +242,12 @@ impl SkillContext {
 
     /// 获取所有脚本文件的路径
     pub fn script_paths(&self) -> Vec<&Path> {
-        self.script_files
-            .iter()
-            .map(|p| p.as_path())
-            .collect()
+        self.script_files.iter().map(|p| p.as_path()).collect()
     }
 
     /// 获取所有资产文件的路径
     pub fn asset_paths(&self) -> Vec<&Path> {
-        self.asset_files
-            .iter()
-            .map(|p| p.as_path())
-            .collect()
+        self.asset_files.iter().map(|p| p.as_path()).collect()
     }
 
     /// 检查某个文件是否在引用列表中
@@ -352,14 +340,29 @@ impl SkillContext {
         let mut script_files = Vec::new();
         let mut asset_files = Vec::new();
 
-        for entry in WalkDir::new(path)
+        let mut file_count = 0usize;
+        let mut iter = WalkDir::new(path)
             .follow_links(false)
             .max_depth(policy.file_limits.max_depth)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+            .into_iter();
+
+        while let Some(next) = iter.next() {
+            let entry = match next {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
             if entry.file_type().is_dir() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if SKIP_DIR_NAMES.contains(&name) {
+                        iter.skip_current_dir();
+                    }
+                }
                 continue;
+            }
+
+            if file_count >= policy.file_limits.max_files {
+                break;
             }
 
             let abs_path = entry.path().to_path_buf();
@@ -377,15 +380,10 @@ impl SkillContext {
                 skill_md_path = Some(abs_path.clone());
             }
 
-            let ext = abs_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
+            let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let file_type = SkillFileType::from_extension(ext);
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            let is_hidden = rel_path
-                .split('/')
-                .any(|seg| seg.starts_with('.'));
+            let is_hidden = rel_path.split('/').any(|seg| seg.starts_with('.'));
 
             let is_binary = if let Ok(mut f) = std::fs::File::open(&abs_path) {
                 let mut sample = [0u8; 512];
@@ -414,6 +412,7 @@ impl SkillContext {
                 asset_files.push(PathBuf::from(rel_path.clone()));
             }
             files.push(skill_file);
+            file_count += 1;
         }
 
         let (manifest, instruction_body) = if let Some(ref md_path) = skill_md_path {
@@ -508,10 +507,7 @@ mod tests {
             policy,
         );
         assert_eq!(ctx.scan_mode, ScanMode::Directory);
-        assert_eq!(
-            ctx.skill_dir,
-            Some(PathBuf::from("/tmp/test-skill"))
-        );
+        assert_eq!(ctx.skill_dir, Some(PathBuf::from("/tmp/test-skill")));
         assert_eq!(ctx.skill_name(), "test-skill");
         assert_eq!(ctx.file_count(), 0);
         assert_eq!(ctx.total_size_bytes(), 0);
@@ -577,7 +573,8 @@ mod tests {
             policy,
         );
 
-        ctx.referenced_files.push(PathBuf::from("/tmp/skill/run.sh"));
+        ctx.referenced_files
+            .push(PathBuf::from("/tmp/skill/run.sh"));
         assert!(ctx.is_referenced(Path::new("/tmp/skill/run.sh")));
         assert!(!ctx.is_referenced(Path::new("/tmp/skill/unreferenced.txt")));
     }
@@ -586,9 +583,8 @@ mod tests {
     fn test_file_type_script_coverage() {
         // 验证常见脚本扩展名都覆盖
         let script_exts = vec![
-            "sh", "bash", "py", "rb", "pl", "php", "js", "mjs", "ts", "mts",
-            "tsx", "jsx", "lua", "r", "rs", "go", "java", "kt", "swift", "dart",
-            "ex", "hs", "elm", "v", "zig",
+            "sh", "bash", "py", "rb", "pl", "php", "js", "mjs", "ts", "mts", "tsx", "jsx", "lua",
+            "r", "rs", "go", "java", "kt", "swift", "dart", "ex", "hs", "elm", "v", "zig",
         ];
         for ext in script_exts {
             assert_eq!(
@@ -603,8 +599,17 @@ mod tests {
     #[test]
     fn test_file_type_config_coverage() {
         let config_exts = vec![
-            "json", "json5", "yaml", "yml", "toml", "ini", "cfg",
-            "env", "xml", "gitignore", "editorconfig",
+            "json",
+            "json5",
+            "yaml",
+            "yml",
+            "toml",
+            "ini",
+            "cfg",
+            "env",
+            "xml",
+            "gitignore",
+            "editorconfig",
         ];
         for ext in config_exts {
             assert_eq!(
@@ -664,10 +669,7 @@ mod tests {
 
         assert_eq!(ctx.scan_mode, ScanMode::SingleFile);
         assert!(ctx.skill_dir.is_none());
-        assert_eq!(
-            ctx.skill_md_path,
-            Some(PathBuf::from("/tmp/test.md"))
-        );
+        assert_eq!(ctx.skill_md_path, Some(PathBuf::from("/tmp/test.md")));
         let manifest = ctx.manifest.as_ref().expect("manifest should exist");
         assert_eq!(manifest.name, "test-skill");
         assert_eq!(manifest.description, "A test");
@@ -687,10 +689,7 @@ mod tests {
         let ctx = SkillContext::for_single_file(content, "/tmp/plain.md", policy);
 
         assert_eq!(ctx.scan_mode, ScanMode::SingleFile);
-        assert!(
-            ctx.manifest.is_none()
-                || ctx.manifest.as_ref().unwrap().name.is_empty()
-        );
+        assert!(ctx.manifest.is_none() || ctx.manifest.as_ref().unwrap().name.is_empty());
         assert_eq!(
             ctx.instruction_body.as_deref(),
             Some("Just plain instructions, no frontmatter.")
@@ -705,7 +704,8 @@ mod tests {
         let dir_path = dir.path();
 
         // 创建一个 skill.md
-        let skill_md_content = "---\nname: dir-skill\nallowed-tools:\n  - bash\n---\n\nDo something.";
+        let skill_md_content =
+            "---\nname: dir-skill\nallowed-tools:\n  - bash\n---\n\nDo something.";
         std::fs::write(dir_path.join("skill.md"), skill_md_content).unwrap();
 
         // 创建一个脚本文件
@@ -729,10 +729,7 @@ mod tests {
         let manifest = ctx.manifest.as_ref().expect("manifest should exist");
         assert_eq!(manifest.name, "dir-skill");
         assert_eq!(manifest.allowed_tools, vec!["bash"]);
-        assert_eq!(
-            ctx.instruction_body.as_deref(),
-            Some("Do something.")
-        );
+        assert_eq!(ctx.instruction_body.as_deref(), Some("Do something."));
 
         // 应该发现 4 个文件
         assert_eq!(ctx.file_count(), 4);
@@ -766,10 +763,7 @@ mod tests {
         assert_eq!(ctx.scan_mode, ScanMode::Directory);
         assert_eq!(ctx.file_count(), 0);
         assert!(ctx.skill_md_path.is_none());
-        assert!(
-            ctx.manifest.is_none()
-                || ctx.manifest.as_ref().unwrap().name.is_empty()
-        );
+        assert!(ctx.manifest.is_none() || ctx.manifest.as_ref().unwrap().name.is_empty());
     }
 
     #[test]
@@ -823,10 +817,7 @@ mod tests {
 
         // 只应发现 shallow.txt（深度 1），不应发现 a/b/c/deep.txt（深度 4）
         assert_eq!(ctx.file_count(), 1);
-        assert_eq!(
-            ctx.files[0].relative_path.to_string_lossy(),
-            "shallow.txt"
-        );
+        assert_eq!(ctx.files[0].relative_path.to_string_lossy(), "shallow.txt");
     }
 
     #[test]

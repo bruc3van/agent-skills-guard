@@ -10,7 +10,9 @@ fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/security/cisco_parity")
 }
 
-fn rule_id_set(report: &agent_skills_guard_lib::models::security::SecurityReport) -> HashSet<String> {
+fn rule_id_set(
+    report: &agent_skills_guard_lib::models::security::SecurityReport,
+) -> HashSet<String> {
     report
         .issues
         .iter()
@@ -66,7 +68,12 @@ fn load_manifest() -> ParityManifest {
 
 fn run_case(case: &ParityCase) {
     let dir = fixture_root().join(&case.path);
-    assert!(dir.is_dir(), "fixture dir missing for {}: {:?}", case.id, dir);
+    assert!(
+        dir.is_dir(),
+        "fixture dir missing for {}: {:?}",
+        case.id,
+        dir
+    );
 
     let scanner = SecurityScanner::new();
     let report = scanner

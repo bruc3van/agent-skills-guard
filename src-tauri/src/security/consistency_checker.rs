@@ -110,9 +110,7 @@ fn has_tool(tools: &[String], capability: &str) -> bool {
     let cap_norm = normalize_tool_name(capability);
     tools.iter().any(|t| {
         let t_norm = normalize_tool_name(t);
-        t_norm == cap_norm
-            || t_norm.contains(&cap_norm)
-            || cap_norm.contains(&t_norm)
+        t_norm == cap_norm || t_norm.contains(&cap_norm) || cap_norm.contains(&t_norm)
     })
 }
 
@@ -134,9 +132,7 @@ fn uses_network_excluding_localhost(content: &str) -> bool {
             return true;
         }
     }
-    content.contains("socket.")
-        && !content.contains("127.0.0.1")
-        && !content.contains("localhost")
+    content.contains("socket.") && !content.contains("127.0.0.1") && !content.contains("localhost")
 }
 
 /// 创建一个 Finding 实例（consistency_checker 专用）
@@ -153,9 +149,7 @@ fn make_finding(
         "{}|{}|{}",
         rule_id,
         file_path.as_deref().unwrap_or(""),
-        line_number
-            .map(|l| l.to_string())
-            .unwrap_or_default()
+        line_number.map(|l| l.to_string()).unwrap_or_default()
     );
     let mut hasher = Sha256::new();
     hasher.update(id_input.as_bytes());
@@ -163,18 +157,45 @@ fn make_finding(
     let id = hash[..16].to_string();
 
     let (title, category) = match rule_id {
-        "ALLOWED_TOOLS_READ_VIOLATION" => ("Undeclared Read capability", ThreatCategory::PolicyViolation),
-        "ALLOWED_TOOLS_WRITE_VIOLATION" => ("Undeclared Write capability", ThreatCategory::PolicyViolation),
-        "ALLOWED_TOOLS_BASH_VIOLATION" => ("Undeclared Bash capability", ThreatCategory::PolicyViolation),
-        "ALLOWED_TOOLS_GREP_VIOLATION" => ("Undeclared Grep capability", ThreatCategory::PolicyViolation),
-        "ALLOWED_TOOLS_GLOB_VIOLATION" => ("Undeclared Glob capability", ThreatCategory::PolicyViolation),
+        "ALLOWED_TOOLS_READ_VIOLATION" => (
+            "Undeclared Read capability",
+            ThreatCategory::PolicyViolation,
+        ),
+        "ALLOWED_TOOLS_WRITE_VIOLATION" => (
+            "Undeclared Write capability",
+            ThreatCategory::PolicyViolation,
+        ),
+        "ALLOWED_TOOLS_BASH_VIOLATION" => (
+            "Undeclared Bash capability",
+            ThreatCategory::PolicyViolation,
+        ),
+        "ALLOWED_TOOLS_GREP_VIOLATION" => (
+            "Undeclared Grep capability",
+            ThreatCategory::PolicyViolation,
+        ),
+        "ALLOWED_TOOLS_GLOB_VIOLATION" => (
+            "Undeclared Glob capability",
+            ThreatCategory::PolicyViolation,
+        ),
         "ALLOWED_TOOLS_NETWORK_USAGE" => ("Network usage detected", ThreatCategory::Network),
-        "TOOL_ABUSE_UNDECLARED_NETWORK" => ("Undeclared network usage", ThreatCategory::PolicyViolation),
-        "SOCIAL_ENG_MISLEADING_DESC" => ("Misleading description", ThreatCategory::SocialEngineering),
-        "TRIGGER_OVERLY_GENERIC" => ("Overly generic description", ThreatCategory::SocialEngineering),
-        "TRIGGER_DESCRIPTION_TOO_SHORT" => ("Description too short", ThreatCategory::SocialEngineering),
+        "TOOL_ABUSE_UNDECLARED_NETWORK" => {
+            ("Undeclared network usage", ThreatCategory::PolicyViolation)
+        }
+        "SOCIAL_ENG_MISLEADING_DESC" => {
+            ("Misleading description", ThreatCategory::SocialEngineering)
+        }
+        "TRIGGER_OVERLY_GENERIC" => (
+            "Overly generic description",
+            ThreatCategory::SocialEngineering,
+        ),
+        "TRIGGER_DESCRIPTION_TOO_SHORT" => {
+            ("Description too short", ThreatCategory::SocialEngineering)
+        }
         "TRIGGER_VAGUE_DESCRIPTION" => ("Vague description", ThreatCategory::SocialEngineering),
-        "TRIGGER_KEYWORD_BAITING" => ("Keyword baiting detected", ThreatCategory::SocialEngineering),
+        "TRIGGER_KEYWORD_BAITING" => (
+            "Keyword baiting detected",
+            ThreatCategory::SocialEngineering,
+        ),
         _ => ("Consistency violation", ThreatCategory::PolicyViolation),
     };
 
@@ -362,9 +383,9 @@ pub fn check_manifest_consistency(ctx: &SkillContext) -> Vec<Finding> {
         }
 
         // SOCIAL_ENG_MISLEADING_DESC: 描述含简单功能词但代码使用网络
-        let desc_has_simple_feature = RE_SIMPLE_FEATURE.iter().any(|re| {
-            re.is_match(&manifest.description)
-        });
+        let desc_has_simple_feature = RE_SIMPLE_FEATURE
+            .iter()
+            .any(|re| re.is_match(&manifest.description));
 
         if desc_has_simple_feature {
             findings.push(make_finding(
@@ -422,19 +443,76 @@ pub fn check_description_quality(ctx: &SkillContext) -> Vec<Finding> {
 
     // TRIGGER_VAGUE_DESCRIPTION: 泛化词占比 > 40% 且具体技术词 < 2
     let vague_words = [
-        "help", "helper", "assistant", "tool", "utility", "useful",
-        "general", "simple", "basic", "easy", "quick", "fast",
-        "good", "nice", "best", "great", "smart", "powerful",
-        "automate", "manage", "handle", "process", "support",
+        "help",
+        "helper",
+        "assistant",
+        "tool",
+        "utility",
+        "useful",
+        "general",
+        "simple",
+        "basic",
+        "easy",
+        "quick",
+        "fast",
+        "good",
+        "nice",
+        "best",
+        "great",
+        "smart",
+        "powerful",
+        "automate",
+        "manage",
+        "handle",
+        "process",
+        "support",
     ];
     let tech_words = [
-        "api", "http", "json", "yaml", "docker", "kubernetes", "aws",
-        "azure", "gcp", "sql", "database", "regex", "parser", "compiler",
-        "terraform", "ansible", "ci/cd", "git", "ssh", "ssl", "tls",
-        "rest", "grpc", "websocket", "oauth", "jwt", "encryption",
-        "hash", "token", "webhook", "microservice", "container",
-        "linux", "python", "javascript", "typescript", "rust", "go",
-        "react", "vue", "angular", "node", "express", "flask", "django",
+        "api",
+        "http",
+        "json",
+        "yaml",
+        "docker",
+        "kubernetes",
+        "aws",
+        "azure",
+        "gcp",
+        "sql",
+        "database",
+        "regex",
+        "parser",
+        "compiler",
+        "terraform",
+        "ansible",
+        "ci/cd",
+        "git",
+        "ssh",
+        "ssl",
+        "tls",
+        "rest",
+        "grpc",
+        "websocket",
+        "oauth",
+        "jwt",
+        "encryption",
+        "hash",
+        "token",
+        "webhook",
+        "microservice",
+        "container",
+        "linux",
+        "python",
+        "javascript",
+        "typescript",
+        "rust",
+        "go",
+        "react",
+        "vue",
+        "angular",
+        "node",
+        "express",
+        "flask",
+        "django",
     ];
 
     let desc_lower = description.to_lowercase();
@@ -442,14 +520,8 @@ pub fn check_description_quality(ctx: &SkillContext) -> Vec<Finding> {
     let total_words = words.len();
 
     if total_words > 0 {
-        let vague_count = words
-            .iter()
-            .filter(|w| vague_words.contains(w))
-            .count();
-        let tech_count = words
-            .iter()
-            .filter(|w| tech_words.contains(w))
-            .count();
+        let vague_count = words.iter().filter(|w| vague_words.contains(w)).count();
+        let tech_count = words.iter().filter(|w| tech_words.contains(w)).count();
 
         let vague_ratio = vague_count as f64 / total_words as f64;
         if vague_ratio > 0.4 && tech_count < 2 {
@@ -534,14 +606,20 @@ mod tests {
         });
         let ctx = make_test_ctx(manifest);
         let findings = check_allowed_tools(&ctx);
-        assert!(findings.is_empty(), "Empty allowed_tools should produce no findings");
+        assert!(
+            findings.is_empty(),
+            "Empty allowed_tools should produce no findings"
+        );
     }
 
     #[test]
     fn test_allowed_tools_no_manifest_no_findings() {
         let ctx = make_test_ctx(None);
         let findings = check_allowed_tools(&ctx);
-        assert!(findings.is_empty(), "No manifest should produce no findings");
+        assert!(
+            findings.is_empty(),
+            "No manifest should produce no findings"
+        );
     }
 
     #[test]
@@ -552,7 +630,11 @@ mod tests {
 
         let skill_md = "---\nname: test-skill\ndescription: A valid description for testing\nallowed-tools:\n  - Read\n---\n\nBody.";
         std::fs::write(dir_path.join("skill.md"), skill_md).unwrap();
-        std::fs::write(dir_path.join("helper.py"), "with open('data.txt', 'r') as f:\n    content = f.read()").unwrap();
+        std::fs::write(
+            dir_path.join("helper.py"),
+            "with open('data.txt', 'r') as f:\n    content = f.read()",
+        )
+        .unwrap();
 
         let policy = ScanPolicy::builtin_default().clone();
         let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
@@ -605,7 +687,11 @@ mod tests {
 
         let skill_md = "---\nname: test-skill\ndescription: A valid description for testing\nallowed-tools:\n  - Read\n---\n\nBody.";
         std::fs::write(dir_path.join("skill.md"), skill_md).unwrap();
-        std::fs::write(dir_path.join("run.py"), "import subprocess\nsubprocess.run(['ls', '-la'])").unwrap();
+        std::fs::write(
+            dir_path.join("run.py"),
+            "import subprocess\nsubprocess.run(['ls', '-la'])",
+        )
+        .unwrap();
 
         let policy = ScanPolicy::builtin_default().clone();
         let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
@@ -631,7 +717,11 @@ mod tests {
 
         let skill_md = "---\nname: test-skill\ndescription: A valid description for testing\nallowed-tools:\n  - Read\n  - Network\n---\n\nBody.";
         std::fs::write(dir_path.join("skill.md"), skill_md).unwrap();
-        std::fs::write(dir_path.join("fetch.py"), "import requests\nrequests.get('https://example.com')").unwrap();
+        std::fs::write(
+            dir_path.join("fetch.py"),
+            "import requests\nrequests.get('https://example.com')",
+        )
+        .unwrap();
 
         let policy = ScanPolicy::builtin_default().clone();
         let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
@@ -656,7 +746,11 @@ mod tests {
 
         let skill_md = "---\nname: test-skill\ndescription: A valid description for testing\ncompatibility:\n  platform: linux\n---\n\nBody.";
         std::fs::write(dir_path.join("skill.md"), skill_md).unwrap();
-        std::fs::write(dir_path.join("fetch.py"), "import requests\nrequests.get('https://example.com')").unwrap();
+        std::fs::write(
+            dir_path.join("fetch.py"),
+            "import requests\nrequests.get('https://example.com')",
+        )
+        .unwrap();
 
         let policy = ScanPolicy::builtin_default().clone();
         let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
@@ -680,7 +774,11 @@ mod tests {
 
         let skill_md = "---\nname: test-skill\ndescription: A valid description for testing\ncompatibility:\n  platform: linux\n  network: required\n---\n\nBody.";
         std::fs::write(dir_path.join("skill.md"), skill_md).unwrap();
-        std::fs::write(dir_path.join("fetch.py"), "import requests\nrequests.get('https://example.com')").unwrap();
+        std::fs::write(
+            dir_path.join("fetch.py"),
+            "import requests\nrequests.get('https://example.com')",
+        )
+        .unwrap();
 
         let policy = ScanPolicy::builtin_default().clone();
         let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
@@ -741,7 +839,8 @@ mod tests {
         // 8+ 个逗号分隔关键词（7 个逗号 = 8 个项），非 example/such as 引导
         let manifest = Some(SkillManifest {
             name: "test".to_string(),
-            description: "tool for api, http, json, yaml, docker, kubernetes, aws, azure, gcp".to_string(),
+            description: "tool for api, http, json, yaml, docker, kubernetes, aws, azure, gcp"
+                .to_string(),
             ..Default::default()
         });
         let ctx = make_test_ctx(manifest);
@@ -783,7 +882,8 @@ mod tests {
         // 泛化词占比 > 40% 且具体技术词 < 2
         let manifest = Some(SkillManifest {
             name: "test".to_string(),
-            description: "A good helper tool for general simple basic easy quick useful".to_string(),
+            description: "A good helper tool for general simple basic easy quick useful"
+                .to_string(),
             ..Default::default()
         });
         let ctx = make_test_ctx(manifest);
@@ -812,7 +912,9 @@ mod tests {
 
         // 应该有 TRIGGER_OVERLY_GENERIC 和 TRIGGER_DESCRIPTION_TOO_SHORT
         assert!(
-            findings.iter().any(|f| f.rule_id == "TRIGGER_OVERLY_GENERIC"),
+            findings
+                .iter()
+                .any(|f| f.rule_id == "TRIGGER_OVERLY_GENERIC"),
             "check() should include TRIGGER_OVERLY_GENERIC"
         );
     }

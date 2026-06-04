@@ -280,9 +280,9 @@ pub async fn scan_all_installed_plugins(
                     &plugin.id,
                     &locale_owned,
                     ScanOptions {
-                    skip_readme: true,
-                    ..Default::default()
-                },
+                        skip_readme: true,
+                        ..Default::default()
+                    },
                     None,
                 ) {
                     Ok(report) => report,

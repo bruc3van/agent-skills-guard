@@ -165,11 +165,7 @@ fn make_finding(
     description: String,
     file_path: Option<String>,
 ) -> Finding {
-    let id_input = format!(
-        "{}|{}",
-        rule_id,
-        file_path.as_deref().unwrap_or(""),
-    );
+    let id_input = format!("{}|{}", rule_id, file_path.as_deref().unwrap_or(""),);
     let mut hasher = Sha256::new();
     hasher.update(id_input.as_bytes());
     let hash = format!("{:x}", hasher.finalize());
@@ -286,10 +282,7 @@ fn make_oversized_finding(
         format!(
             "File '{}' is {} bytes, exceeding the scan limit of {} bytes. \
              Only the first {} bytes will be scanned.",
-            rel,
-            file.size_bytes,
-            max_size,
-            max_size,
+            rel, file.size_bytes, max_size, max_size,
         ),
         Some(rel),
     )
@@ -317,7 +310,13 @@ mod tests {
     }
 
     /// 创建测试文件
-    fn make_test_file(rel: &str, ext: &str, file_type: SkillFileType, is_binary: bool, size: u64) -> SkillFile {
+    fn make_test_file(
+        rel: &str,
+        ext: &str,
+        file_type: SkillFileType,
+        is_binary: bool,
+        size: u64,
+    ) -> SkillFile {
         SkillFile {
             relative_path: PathBuf::from(rel),
             absolute_path: PathBuf::from(format!("/tmp/test-skill/{}", rel)),
@@ -356,7 +355,10 @@ mod tests {
 
         // .png 是惰性资产，不产生 UNANALYZABLE_BINARY
         assert!(
-            !result.findings.iter().any(|f| f.rule_id == "UNANALYZABLE_BINARY"),
+            !result
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "UNANALYZABLE_BINARY"),
             "Known inert .png should not produce UNANALYZABLE_BINARY finding"
         );
         // 分数：可分析 1000 / 总 6000 = 16.7%
@@ -364,7 +366,10 @@ mod tests {
         assert!((result.score - expected_score).abs() < 0.01);
         // 应产生 LOW_ANALYZABILITY（分数 < 70%）
         assert!(
-            result.findings.iter().any(|f| f.rule_id == "LOW_ANALYZABILITY"),
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "LOW_ANALYZABILITY"),
             "Should produce LOW_ANALYZABILITY when score < 70%"
         );
     }
@@ -383,7 +388,11 @@ mod tests {
             .iter()
             .filter(|f| f.rule_id == "UNANALYZABLE_BINARY")
             .collect();
-        assert_eq!(unanalyzable.len(), 1, "Should produce exactly one UNANALYZABLE_BINARY finding");
+        assert_eq!(
+            unanalyzable.len(),
+            1,
+            "Should produce exactly one UNANALYZABLE_BINARY finding"
+        );
         assert_eq!(unanalyzable[0].file_path.as_deref(), Some("mystery.xyz"));
         assert!(matches!(unanalyzable[0].severity, IssueSeverity::Medium));
     }
@@ -393,20 +402,21 @@ mod tests {
         let policy = ScanPolicy::builtin_default().clone();
         let max_size = policy.file_limits.max_scan_file_size_bytes;
 
-        let files = vec![
-            make_test_file(
-                "huge_data.bin",
-                "bin",
-                SkillFileType::Binary,
-                true,
-                max_size + 1,
-            ),
-        ];
+        let files = vec![make_test_file(
+            "huge_data.bin",
+            "bin",
+            SkillFileType::Binary,
+            true,
+            max_size + 1,
+        )];
         let ctx = make_test_ctx(files);
         let result = assess(&ctx);
 
         assert!(
-            result.findings.iter().any(|f| f.rule_id == "OVERSIZED_FILE"),
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "OVERSIZED_FILE"),
             "Should produce OVERSIZED_FILE for file exceeding scan limit"
         );
     }
@@ -428,7 +438,13 @@ mod tests {
             })
             .collect();
         // 加一个可分析文件确保不触发 LOW_ANALYZABILITY
-        files.push(make_test_file("skill.md", "md", SkillFileType::Markdown, false, 1000));
+        files.push(make_test_file(
+            "skill.md",
+            "md",
+            SkillFileType::Markdown,
+            false,
+            1000,
+        ));
 
         let ctx = make_test_ctx(files);
         let result = assess(&ctx);
@@ -438,7 +454,11 @@ mod tests {
             .iter()
             .filter(|f| f.rule_id == "EXCESSIVE_FILE_COUNT")
             .collect();
-        assert_eq!(excessive.len(), 1, "Should produce exactly one EXCESSIVE_FILE_COUNT finding");
+        assert_eq!(
+            excessive.len(),
+            1,
+            "Should produce exactly one EXCESSIVE_FILE_COUNT finding"
+        );
         assert!(matches!(excessive[0].severity, IssueSeverity::Info));
     }
 
@@ -454,7 +474,10 @@ mod tests {
         // 可分析分数 = 10%
         assert!(result.score < 70.0);
         assert!(
-            result.findings.iter().any(|f| f.rule_id == "LOW_ANALYZABILITY"),
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "LOW_ANALYZABILITY"),
             "Should produce LOW_ANALYZABILITY when score < 70%"
         );
     }
@@ -511,9 +534,13 @@ mod tests {
 
     #[test]
     fn test_finding_analyzer_is_set() {
-        let files = vec![
-            make_test_file("mystery.xyz", "xyz", SkillFileType::Unknown, true, 1000),
-        ];
+        let files = vec![make_test_file(
+            "mystery.xyz",
+            "xyz",
+            SkillFileType::Unknown,
+            true,
+            1000,
+        )];
         let ctx = make_test_ctx(files);
         let result = assess(&ctx);
 
@@ -550,11 +577,17 @@ mod tests {
 
         // 应同时产生 UNANALYZABLE_BINARY 和 OVERSIZED_FILE
         assert!(
-            result.findings.iter().any(|f| f.rule_id == "UNANALYZABLE_BINARY"),
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "UNANALYZABLE_BINARY"),
             "Should detect unanalyzable binary"
         );
         assert!(
-            result.findings.iter().any(|f| f.rule_id == "OVERSIZED_FILE"),
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "OVERSIZED_FILE"),
             "Should detect oversized file"
         );
     }
@@ -574,6 +607,10 @@ mod tests {
             .iter()
             .filter(|f| f.rule_id == "UNANALYZABLE_BINARY")
             .collect();
-        assert_eq!(unanalyzable.len(), 2, "Should produce one finding per unknown binary");
+        assert_eq!(
+            unanalyzable.len(),
+            2,
+            "Should produce one finding per unknown binary"
+        );
     }
 }

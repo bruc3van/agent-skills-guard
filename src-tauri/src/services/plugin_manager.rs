@@ -1204,9 +1204,9 @@ impl PluginManager {
                 &resolved.plugin.id,
                 locale,
                 ScanOptions {
-                skip_readme: true,
-                ..Default::default()
-            },
+                    skip_readme: true,
+                    ..Default::default()
+                },
                 None,
             )?;
             reports.push((resolved.plugin.clone(), report));

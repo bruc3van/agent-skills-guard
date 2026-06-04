@@ -49,8 +49,9 @@ pub fn compile_rule_pack(pack: RulePack) -> Result<Vec<CompiledYamlRule>> {
         // 编译正则模式
         let mut compiled_patterns = Vec::with_capacity(rule.patterns.len());
         for pattern in &rule.patterns {
-            let re = compile_rule_regex(pattern)
-                .with_context(|| format!("Invalid regex pattern in rule {}: {}", rule.id, pattern))?;
+            let re = compile_rule_regex(pattern).with_context(|| {
+                format!("Invalid regex pattern in rule {}: {}", rule.id, pattern)
+            })?;
             compiled_patterns.push(re);
         }
 
@@ -158,7 +159,10 @@ rules:
 "#;
         let result = load_rule_pack(yaml);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Duplicate rule ID"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Duplicate rule ID"));
     }
 
     #[test]
@@ -180,10 +184,7 @@ rules:
     fn test_load_builtin_yaml_rules() {
         let rules = get_builtin_compiled_rules();
         // 验证内置 YAML 规则已加载
-        assert!(
-            !rules.is_empty(),
-            "Builtin YAML rules should not be empty"
-        );
+        assert!(!rules.is_empty(), "Builtin YAML rules should not be empty");
         // 验证规则数量与 Rust 硬编码规则一致（约 72 条）
         assert!(
             rules.len() >= 65,
@@ -192,7 +193,10 @@ rules:
         );
         // 验证关键规则存在
         let rule_ids: Vec<&str> = rules.iter().map(|r| r.id.as_str()).collect();
-        assert!(rule_ids.contains(&"RM_RF_ROOT"), "Should contain RM_RF_ROOT");
+        assert!(
+            rule_ids.contains(&"RM_RF_ROOT"),
+            "Should contain RM_RF_ROOT"
+        );
         assert!(
             rule_ids.contains(&"CURL_PIPE_SH"),
             "Should contain CURL_PIPE_SH"

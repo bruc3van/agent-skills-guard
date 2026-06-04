@@ -59,7 +59,9 @@ fn is_path_safe(entry_name: &str, target_dir: &Path) -> bool {
     // 所以我们检查规范化后的路径前缀
     match out_path.canonicalize() {
         Ok(canonical) => {
-            let target_canonical = target_dir.canonicalize().unwrap_or_else(|_| target_dir.to_path_buf());
+            let target_canonical = target_dir
+                .canonicalize()
+                .unwrap_or_else(|_| target_dir.to_path_buf());
             canonical.starts_with(&target_canonical)
         }
         Err(_) => {
@@ -129,9 +131,7 @@ impl ArchiveType {
     /// 从文件扩展名解析
     pub fn from_path(path: &str) -> Option<Self> {
         let lower = path.to_lowercase();
-        let ext = Path::new(&lower)
-            .extension()
-            .and_then(|e| e.to_str())?;
+        let ext = Path::new(&lower).extension().and_then(|e| e.to_str())?;
 
         match ext {
             "zip" => Some(Self::Zip),
@@ -140,9 +140,7 @@ impl ArchiveType {
             "tar" => Some(Self::Tar),
             "gz" => {
                 // 检查是否为 .tar.gz
-                let stem = Path::new(&lower)
-                    .file_stem()
-                    .and_then(|s| s.to_str())?;
+                let stem = Path::new(&lower).file_stem().and_then(|s| s.to_str())?;
                 if stem.ends_with(".tar") {
                     Some(Self::TarGz)
                 } else {
@@ -160,10 +158,7 @@ impl ArchiveType {
 
     /// 是否为 Office 文档（基于 OOXML/ZIP）
     pub fn is_office(&self) -> bool {
-        matches!(
-            self,
-            Self::OfficeDocx | Self::OfficeXlsx | Self::OfficePptx
-        )
+        matches!(self, Self::OfficeDocx | Self::OfficeXlsx | Self::OfficePptx)
     }
 
     /// 是否为 ZIP 格式（含 Office）
@@ -195,7 +190,10 @@ pub fn extract_archive(archive_path: &str, policy: &ScanPolicy) -> ExtractionRes
                     IssueSeverity::Medium,
                     ThreatCategory::Obfuscation,
                     "Unsupported archive format",
-                    &format!("Cannot extract '{}': unsupported archive type", archive_path),
+                    &format!(
+                        "Cannot extract '{}': unsupported archive type",
+                        archive_path
+                    ),
                     Some(archive_path.to_string()),
                 )],
             }
@@ -203,9 +201,10 @@ pub fn extract_archive(archive_path: &str, policy: &ScanPolicy) -> ExtractionRes
     };
 
     match archive_type {
-        ArchiveType::Zip | ArchiveType::OfficeDocx | ArchiveType::OfficeXlsx | ArchiveType::OfficePptx => {
-            extract_zip(archive_path, policy, &archive_type)
-        }
+        ArchiveType::Zip
+        | ArchiveType::OfficeDocx
+        | ArchiveType::OfficeXlsx
+        | ArchiveType::OfficePptx => extract_zip(archive_path, policy, &archive_type),
         ArchiveType::Tar => extract_tar(archive_path, policy, false),
         ArchiveType::TarGz => extract_tar(archive_path, policy, true),
         ArchiveType::TarBz2 | ArchiveType::TarXz => {
@@ -338,8 +337,11 @@ fn extract_zip(
                     &format!(
                         "Entry '{}' has compression ratio {:.1}:1 (threshold: {:.1}:1), \
                          compressed {} bytes -> uncompressed {} bytes",
-                        entry_name, ratio, policy.archive.max_compression_ratio,
-                        compressed, uncompressed
+                        entry_name,
+                        ratio,
+                        policy.archive.max_compression_ratio,
+                        compressed,
+                        uncompressed
                     ),
                     Some(entry_name.clone()),
                 ));
@@ -489,10 +491,7 @@ fn extract_zip(
                         IssueSeverity::Medium,
                         ThreatCategory::Obfuscation,
                         "Failed to extract archive entry",
-                        &format!(
-                            "Cannot extract '{}': {}",
-                            entry_name, e
-                        ),
+                        &format!("Cannot extract '{}': {}", entry_name, e),
                         Some(entry_name.clone()),
                     ));
                     continue;
@@ -504,10 +503,7 @@ fn extract_zip(
                     IssueSeverity::Medium,
                     ThreatCategory::Obfuscation,
                     "Failed to create output file for archive entry",
-                    &format!(
-                        "Cannot create file '{}': {}",
-                        out_path.display(), e
-                    ),
+                    &format!("Cannot create file '{}': {}", out_path.display(), e),
                     Some(entry_name.clone()),
                 ));
                 continue;
@@ -583,7 +579,9 @@ fn check_office_threats(entry_name: &str, findings: &mut Vec<Finding>) {
 fn is_archive_extension(name: &str) -> bool {
     let lower = name.to_lowercase();
     let archive_exts = ["zip", "tar", "gz", "bz2", "xz", "rar", "7z"];
-    archive_exts.iter().any(|ext| lower.ends_with(&format!(".{}", ext)))
+    archive_exts
+        .iter()
+        .any(|ext| lower.ends_with(&format!(".{}", ext)))
 }
 
 /// 计算嵌套归档的最大深度
@@ -771,7 +769,10 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
                     IssueSeverity::Critical,
                     ThreatCategory::Destructive,
                     "Symlink detected in TAR entry",
-                    &format!("Entry '{}' is a symbolic link which may point outside the archive", entry_path),
+                    &format!(
+                        "Entry '{}' is a symbolic link which may point outside the archive",
+                        entry_path
+                    ),
                     Some(entry_path.clone()),
                 ));
                 continue;
@@ -784,7 +785,10 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
                     IssueSeverity::Medium,
                     ThreatCategory::Obfuscation,
                     "Archive contains too many files",
-                    &format!("File count exceeds limit ({})", policy.archive.max_file_count),
+                    &format!(
+                        "File count exceeds limit ({})",
+                        policy.archive.max_file_count
+                    ),
                     Some(archive_path.to_string()),
                 ));
                 break;
@@ -830,7 +834,10 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
                     IssueSeverity::Medium,
                     ThreatCategory::Obfuscation,
                     "Archive uncompressed size exceeds limit",
-                    &format!("Total size exceeds limit ({})", policy.archive.max_total_size_bytes),
+                    &format!(
+                        "Total size exceeds limit ({})",
+                        policy.archive.max_total_size_bytes
+                    ),
                     Some(archive_path.to_string()),
                 ));
                 break;
@@ -939,7 +946,10 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
                     IssueSeverity::Critical,
                     ThreatCategory::Destructive,
                     "Symlink detected in TAR entry",
-                    &format!("Entry '{}' is a symbolic link which may point outside the archive", entry_path),
+                    &format!(
+                        "Entry '{}' is a symbolic link which may point outside the archive",
+                        entry_path
+                    ),
                     Some(entry_path.clone()),
                 ));
                 continue;
@@ -952,7 +962,10 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
                     IssueSeverity::Medium,
                     ThreatCategory::Obfuscation,
                     "Archive contains too many files",
-                    &format!("File count exceeds limit ({})", policy.archive.max_file_count),
+                    &format!(
+                        "File count exceeds limit ({})",
+                        policy.archive.max_file_count
+                    ),
                     Some(archive_path.to_string()),
                 ));
                 break;
@@ -998,7 +1011,10 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
                     IssueSeverity::Medium,
                     ThreatCategory::Obfuscation,
                     "Archive uncompressed size exceeds limit",
-                    &format!("Total size exceeds limit ({})", policy.archive.max_total_size_bytes),
+                    &format!(
+                        "Total size exceeds limit ({})",
+                        policy.archive.max_total_size_bytes
+                    ),
                     Some(archive_path.to_string()),
                 ));
                 break;
@@ -1140,14 +1156,11 @@ mod tests {
 
     /// 创建一个包含指定条目的 ZIP 文件，返回临时文件路径（.zip 后缀）
     fn create_test_zip(entries: Vec<(&str, &[u8])>) -> tempfile::NamedTempFile {
-        let tmp = tempfile::Builder::new()
-            .suffix(".zip")
-            .tempfile()
-            .unwrap();
+        let tmp = tempfile::Builder::new().suffix(".zip").tempfile().unwrap();
         let file = fs::File::create(tmp.path()).unwrap();
         let mut zip = ZipWriter::new(file);
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
         for (name, data) in entries {
             zip.start_file(name, options).unwrap();
@@ -1163,9 +1176,18 @@ mod tests {
         assert_eq!(detect_archive_type("file.zip"), Some(ArchiveType::Zip));
         assert_eq!(detect_archive_type("file.tar"), Some(ArchiveType::Tar));
         assert_eq!(detect_archive_type("file.tar.gz"), Some(ArchiveType::TarGz));
-        assert_eq!(detect_archive_type("file.docx"), Some(ArchiveType::OfficeDocx));
-        assert_eq!(detect_archive_type("file.xlsx"), Some(ArchiveType::OfficeXlsx));
-        assert_eq!(detect_archive_type("file.pptx"), Some(ArchiveType::OfficePptx));
+        assert_eq!(
+            detect_archive_type("file.docx"),
+            Some(ArchiveType::OfficeDocx)
+        );
+        assert_eq!(
+            detect_archive_type("file.xlsx"),
+            Some(ArchiveType::OfficeXlsx)
+        );
+        assert_eq!(
+            detect_archive_type("file.pptx"),
+            Some(ArchiveType::OfficePptx)
+        );
         assert_eq!(detect_archive_type("file.txt"), None);
         assert_eq!(detect_archive_type("file.xyz"), None);
     }
@@ -1185,7 +1207,10 @@ mod tests {
         assert_eq!(result.extracted_files.len(), 2, "Should extract 2 files");
         // 不应有 critical findings
         assert!(
-            result.findings.iter().all(|f| f.severity != IssueSeverity::Critical),
+            result
+                .findings
+                .iter()
+                .all(|f| f.severity != IssueSeverity::Critical),
             "No critical findings expected for normal ZIP"
         );
     }
@@ -1194,7 +1219,10 @@ mod tests {
     fn test_extract_zip_path_traversal() {
         // 路径穿越：条目名包含 ..
         let entries = vec![
-            ("../../etc/passwd", b"root:x:0:0:root:/root:/bin/bash" as &[u8]),
+            (
+                "../../etc/passwd",
+                b"root:x:0:0:root:/root:/bin/bash" as &[u8],
+            ),
             ("safe.txt", b"safe content" as &[u8]),
         ];
         let tmp = create_test_zip(entries);
@@ -1212,10 +1240,7 @@ mod tests {
         assert_eq!(traversal_findings[0].severity, IssueSeverity::Critical);
 
         // 路径穿越条目不应被解压
-        let has_passwd = result
-            .extracted_files
-            .iter()
-            .any(|f| f.contains("passwd"));
+        let has_passwd = result.extracted_files.iter().any(|f| f.contains("passwd"));
         assert!(!has_passwd, "Path traversal entry should not be extracted");
 
         // safe.txt 应被正常解压
@@ -1230,14 +1255,11 @@ mod tests {
     fn test_extract_zip_bomb() {
         // 创建一个压缩比极高的 ZIP
         // 我们用 Deflate 模式并写入大量重复数据
-        let tmp = tempfile::Builder::new()
-            .suffix(".zip")
-            .tempfile()
-            .unwrap();
+        let tmp = tempfile::Builder::new().suffix(".zip").tempfile().unwrap();
         let file = fs::File::create(tmp.path()).unwrap();
         let mut zip = ZipWriter::new(file);
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         zip.start_file("bomb.txt", options).unwrap();
         // 写入 10MB 重复数据，Deflate 压缩后会很小
@@ -1369,7 +1391,10 @@ mod tests {
     fn test_extract_unsupported_format() {
         let result = extract_archive("/tmp/file.rar", &default_policy());
         assert!(
-            result.findings.iter().any(|f| f.rule_id == "ARCHIVE_UNSUPPORTED"),
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "ARCHIVE_UNSUPPORTED"),
             "Should report unsupported format"
         );
     }
@@ -1378,22 +1403,25 @@ mod tests {
     fn test_extract_nonexistent_file() {
         let result = extract_archive("/tmp/nonexistent_12345.zip", &default_policy());
         assert!(
-            result.findings.iter().any(|f| f.rule_id == "ARCHIVE_EXTRACTION_FAILED"),
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "ARCHIVE_EXTRACTION_FAILED"),
             "Should report extraction failure for missing file"
         );
     }
 
     #[test]
     fn test_extract_corrupted_zip() {
-        let tmp = tempfile::Builder::new()
-            .suffix(".zip")
-            .tempfile()
-            .unwrap();
+        let tmp = tempfile::Builder::new().suffix(".zip").tempfile().unwrap();
         fs::write(tmp.path(), b"this is not a zip file").unwrap();
 
         let result = extract_archive(tmp.path().to_str().unwrap(), &default_policy());
         assert!(
-            result.findings.iter().any(|f| f.rule_id == "ARCHIVE_EXTRACTION_FAILED"),
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "ARCHIVE_EXTRACTION_FAILED"),
             "Should report extraction failure for corrupted ZIP"
         );
     }

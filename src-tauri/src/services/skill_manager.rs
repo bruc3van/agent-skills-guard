@@ -556,10 +556,7 @@ impl SkillManager {
         allow_partial_scan: bool,
     ) -> Result<()> {
         if report.blocked || !report.hard_trigger_issues.is_empty() {
-            let mut error_msg = format!(
-                "SECURITY_CHECK_BLOCKED: {}\n",
-                operation
-            );
+            let mut error_msg = format!("SECURITY_CHECK_BLOCKED: {}\n", operation);
             for (idx, issue) in report.hard_trigger_issues.iter().enumerate() {
                 error_msg.push_str(&format!("{}. {}\n", idx + 1, issue));
             }
@@ -567,10 +564,7 @@ impl SkillManager {
         }
 
         if report.partial_scan && !allow_partial_scan {
-            let mut error_msg = format!(
-                "SECURITY_PARTIAL_SCAN_BLOCKED: {}\n",
-                operation
-            );
+            let mut error_msg = format!("SECURITY_PARTIAL_SCAN_BLOCKED: {}\n", operation);
             if report.skipped_files.is_empty() {
                 error_msg.push_str("1. 扫描过程中存在被截断或跳过的文件\n");
             } else {
@@ -672,7 +666,8 @@ impl SkillManager {
         allow_partial_scan: bool,
     ) -> Result<()> {
         let locale = rust_i18n::locale();
-        self.prepare_skill_installation(skill_id, &locale, allow_partial_scan).await?;
+        self.prepare_skill_installation(skill_id, &locale, allow_partial_scan)
+            .await?;
         self.confirm_skill_installation(skill_id, install_path, allow_partial_scan, Vec::new())?;
         Ok(())
     }
@@ -831,8 +826,7 @@ impl SkillManager {
         file_path: &str,
         ref_sha: &str,
     ) -> String {
-        let (owner, repo_name) = match crate::models::Repository::from_github_url(repository_url)
-        {
+        let (owner, repo_name) = match crate::models::Repository::from_github_url(repository_url) {
             Ok(v) => v,
             Err(e) => {
                 log::warn!("无法解析仓库 URL，回退为 ref={}：{}", ref_sha, e);
@@ -1080,7 +1074,10 @@ impl SkillManager {
             allow_partial_scan,
             target_tools,
         );
-        self.installing.lock().unwrap_or_else(|e| e.into_inner()).remove(skill_id);
+        self.installing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(skill_id);
         result
     }
 
@@ -1225,10 +1222,7 @@ impl SkillManager {
             } else {
                 format_tool_link_failures(&link_failures)
             };
-            anyhow::bail!(
-                "LINK_CREATION_ALL_FAILED: {}",
-                detail
-            );
+            anyhow::bail!("LINK_CREATION_ALL_FAILED: {}", detail);
         }
         skill.local_path = Some(source_path_str.clone());
 
@@ -1265,7 +1259,12 @@ impl SkillManager {
 
         log::info!("Canceling installation for skill: {}", skill_id);
 
-        if self.installing.lock().unwrap_or_else(|e| e.into_inner()).contains(skill_id) {
+        if self
+            .installing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(skill_id)
+        {
             anyhow::bail!("SKILL_INSTALL_IN_PROGRESS");
         }
 
@@ -1325,7 +1324,9 @@ impl SkillManager {
                             updated.security_report = None;
                             updated.scanned_at = None;
                         } else {
-                            updated.local_path = skill.local_paths.as_ref()
+                            updated.local_path = skill
+                                .local_paths
+                                .as_ref()
                                 .and_then(|paths| paths.last().cloned());
                         }
                         needs_update = true;
@@ -1398,16 +1399,21 @@ impl SkillManager {
         }
 
         // Second pass: delete orphaned __cache__ skills where cache dir no longer exists
-        let orphaned: Vec<String> = skills.iter()
+        let orphaned: Vec<String> = skills
+            .iter()
             .filter(|s| {
-                if s.installed { return false; }
+                if s.installed {
+                    return false;
+                }
                 // 检查 staging_path 残留
                 if let Some(staging) = &s.staging_path {
                     return !PathBuf::from(staging).exists();
                 }
                 // 向后兼容：检查 __cache__:/__staging__: 前缀
                 if let Some(local_path) = &s.local_path {
-                    if local_path.starts_with(CACHE_LOCAL_PATH_PREFIX) || local_path.starts_with(STAGING_LOCAL_PATH_PREFIX) {
+                    if local_path.starts_with(CACHE_LOCAL_PATH_PREFIX)
+                        || local_path.starts_with(STAGING_LOCAL_PATH_PREFIX)
+                    {
                         let actual_path = local_path
                             .strip_prefix(CACHE_LOCAL_PATH_PREFIX)
                             .or_else(|| local_path.strip_prefix(STAGING_LOCAL_PATH_PREFIX))
@@ -1556,7 +1562,9 @@ impl SkillManager {
                 // 如果没有剩余路径
                 if skill.is_local_only && skill.repository_url == LOCAL_REPOSITORY_URL {
                     // 本地技能：直接删除 DB 记录（与 reconcile_stale_skills 行为一致）
-                    self.db.delete_skill(&skill.id).context("删除技能记录失败")?;
+                    self.db
+                        .delete_skill(&skill.id)
+                        .context("删除技能记录失败")?;
                     log::info!("已删除本地技能记录: {}", skill.name);
                     return Ok(());
                 }
@@ -1775,7 +1783,9 @@ impl SkillManager {
         // 从已安装技能的 local_path 提取父目录（跳过旧版临时缓存/staging标记）
         for skill in &existing_skills {
             if let Some(local_path) = &skill.local_path {
-                if local_path.starts_with(CACHE_LOCAL_PATH_PREFIX) || local_path.starts_with(STAGING_LOCAL_PATH_PREFIX) {
+                if local_path.starts_with(CACHE_LOCAL_PATH_PREFIX)
+                    || local_path.starts_with(STAGING_LOCAL_PATH_PREFIX)
+                {
                     continue;
                 }
                 if let Some(parent) = PathBuf::from(local_path).parent() {
@@ -2000,9 +2010,9 @@ impl SkillManager {
                                         &existing_skill.id,
                                         &locale,
                                         ScanOptions {
-                skip_readme: true,
-                ..Default::default()
-            },
+                                            skip_readme: true,
+                                            ..Default::default()
+                                        },
                                         None,
                                     )?;
 
@@ -2016,13 +2026,15 @@ impl SkillManager {
 
                             // 二次匹配：按目录名为 local::* 技能查找已有记录，避免技能被移动+编辑后产生重复
                             let dir_name = path.file_name().unwrap_or_default().to_string_lossy();
-                            let existing_by_dir = index_by_dirname
-                                .get(dir_name.as_ref())
-                                .and_then(|indices| {
-                                    indices.iter().find(|&&i| {
-                                        existing_skills[i].id.starts_with("local::")
-                                            && !existing_skills[i].installed
-                                    }).map(|&i| &existing_skills[i])
+                            let existing_by_dir =
+                                index_by_dirname.get(dir_name.as_ref()).and_then(|indices| {
+                                    indices
+                                        .iter()
+                                        .find(|&&i| {
+                                            existing_skills[i].id.starts_with("local::")
+                                                && !existing_skills[i].installed
+                                        })
+                                        .map(|&i| &existing_skills[i])
                                 });
                             if let Some(mut existing_skill) = existing_by_dir.cloned() {
                                 log::info!(
@@ -2031,7 +2043,8 @@ impl SkillManager {
                                     existing_skill.local_path,
                                     path
                                 );
-                                let checksum_changed = existing_skill.checksum.as_deref() != Some(checksum.as_str());
+                                let checksum_changed =
+                                    existing_skill.checksum.as_deref() != Some(checksum.as_str());
                                 existing_skill.local_path = Some(local_path_str.clone());
                                 existing_skill.local_paths = Some(vec![local_path_str.clone()]);
                                 existing_skill.source_path = Some(local_path_str.clone());
@@ -2056,9 +2069,9 @@ impl SkillManager {
                                         &existing_skill.id,
                                         &locale,
                                         ScanOptions {
-                skip_readme: true,
-                ..Default::default()
-            },
+                                            skip_readme: true,
+                                            ..Default::default()
+                                        },
                                         None,
                                     )?;
                                     Self::apply_scan_report(&mut existing_skill, &report);
@@ -2070,13 +2083,15 @@ impl SkillManager {
                             }
 
                             // Fallback: match by checksum for renamed directories
-                            let existing_by_checksum = index_by_checksum
-                                .get(&checksum)
-                                .and_then(|indices| {
-                                    indices.iter().find(|&&i| {
-                                        !existing_skills[i].installed
-                                            && existing_skills[i].repository_url == "local"
-                                    }).map(|&i| &existing_skills[i])
+                            let existing_by_checksum =
+                                index_by_checksum.get(&checksum).and_then(|indices| {
+                                    indices
+                                        .iter()
+                                        .find(|&&i| {
+                                            !existing_skills[i].installed
+                                                && existing_skills[i].repository_url == "local"
+                                        })
+                                        .map(|&i| &existing_skills[i])
                                 });
                             if let Some(mut existing_skill) = existing_by_checksum.cloned() {
                                 log::info!(
@@ -2108,9 +2123,9 @@ impl SkillManager {
                                     &existing_skill.id,
                                     &locale,
                                     ScanOptions {
-                skip_readme: true,
-                ..Default::default()
-            },
+                                        skip_readme: true,
+                                        ..Default::default()
+                                    },
                                     None,
                                 )?;
                                 Self::apply_scan_report(&mut existing_skill, &report);
@@ -2137,9 +2152,9 @@ impl SkillManager {
                                 &skill_id,
                                 &locale,
                                 ScanOptions {
-                skip_readme: true,
-                ..Default::default()
-            },
+                                    skip_readme: true,
+                                    ..Default::default()
+                                },
                                 None,
                             )?;
 
@@ -2301,17 +2316,20 @@ impl SkillManager {
                                 return false;
                             }
                             // Also check: if any local_path was under this tool's dir and is now stale
-                            let skill_path_was_in_tool_dir = updated.local_paths.as_ref()
-                                .map(|paths| paths.iter().any(|p| {
-                                    let p_buf = PathBuf::from(p);
-                                    path_is_inside_dir_resolving_links(&p_buf, &tool_dir)
-                                }))
+                            let skill_path_was_in_tool_dir = updated
+                                .local_paths
+                                .as_ref()
+                                .map(|paths| {
+                                    paths.iter().any(|p| {
+                                        let p_buf = PathBuf::from(p);
+                                        path_is_inside_dir_resolving_links(&p_buf, &tool_dir)
+                                    })
+                                })
                                 .unwrap_or(false);
                             let any_stale_in_tool_dir = stale_paths.iter().any(|sp| {
                                 let sp_buf = PathBuf::from(sp);
-                                normalize_path_for_compare(&sp_buf).starts_with(
-                                    &normalize_path_for_compare(&tool_dir)
-                                )
+                                normalize_path_for_compare(&sp_buf)
+                                    .starts_with(&normalize_path_for_compare(&tool_dir))
                             });
                             if skill_path_was_in_tool_dir && any_stale_in_tool_dir {
                                 return false;
@@ -2455,7 +2473,9 @@ impl SkillManager {
 
         // 扫描最新版本
         let scan_report = self.scanner.scan_directory_with_options(
-            staging_skill_dir.to_str().context("INVALID_SKILL_DIR_PATH")?,
+            staging_skill_dir
+                .to_str()
+                .context("INVALID_SKILL_DIR_PATH")?,
             &skill.id,
             locale,
             ScanOptions {
@@ -2757,9 +2777,11 @@ impl SkillManager {
                                                 "无法移动 staging 缓存到仓库缓存，将尝试复制: {}",
                                                 rename_err
                                             );
-                                            if let Err(copy_err) =
-                                                self.copy_dir_recursive(&extract_dir, &extracted_dest, &mut 0)
-                                            {
+                                            if let Err(copy_err) = self.copy_dir_recursive(
+                                                &extract_dir,
+                                                &extracted_dest,
+                                                &mut 0,
+                                            ) {
                                                 log::warn!("同步仓库缓存(复制)失败: {}", copy_err);
                                             } else {
                                                 log::info!(
@@ -3088,12 +3110,10 @@ fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 mod tests {
     use super::{
         build_local_skill_id, build_synced_tool_state, create_or_reuse_tool_link,
-        find_tool_id_for_scan_dir,
-        install_base_conflicting_tool, paths_point_to_same_location,
-        refresh_existing_tool_links_for_skill,
-        resolve_update_install_paths, resolve_update_target_install_dir,
-        restore_installation_backup, tool_skill_path_is_compatible_with_source, ToolSkillDir,
-        STAGING_LOCAL_PATH_PREFIX,
+        find_tool_id_for_scan_dir, install_base_conflicting_tool, paths_point_to_same_location,
+        refresh_existing_tool_links_for_skill, resolve_update_install_paths,
+        resolve_update_target_install_dir, restore_installation_backup,
+        tool_skill_path_is_compatible_with_source, ToolSkillDir, STAGING_LOCAL_PATH_PREFIX,
     };
     use crate::services::agent_tools::AgentTool;
     use crate::services::{link_fs, Database};
@@ -3855,7 +3875,11 @@ mod tests {
         std::fs::create_dir_all(&active_dir).unwrap();
         std::fs::create_dir_all(&older_dir).unwrap();
         std::fs::create_dir_all(&staging_dir).unwrap();
-        std::fs::write(active_dir.join("SKILL.md"), "---\nname: example\n---\nactive").unwrap();
+        std::fs::write(
+            active_dir.join("SKILL.md"),
+            "---\nname: example\n---\nactive",
+        )
+        .unwrap();
         std::fs::write(older_dir.join("SKILL.md"), "---\nname: example\n---\nolder").unwrap();
         std::fs::write(staging_dir.join("SKILL.md"), "---\nname: example\n---\nnew").unwrap();
 
@@ -4018,8 +4042,7 @@ mod tests {
         );
         skill.id = "skill-migrate".to_string();
         skill.installed = true;
-        skill.installed_commit_sha =
-            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string());
+        skill.installed_commit_sha = Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string());
         db.save_skill(&skill).unwrap();
 
         let canonical = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

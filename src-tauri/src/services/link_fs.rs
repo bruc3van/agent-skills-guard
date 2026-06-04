@@ -95,8 +95,7 @@ pub fn remove_dir_link(link: &Path) -> Result<()> {
             std::fs::remove_dir(link).context(format!("无法删除目录链接: {:?}", link))?;
         } else if link.exists() {
             // 非 reparse-point 的已存在目录 → 降级拷贝，递归删除
-            std::fs::remove_dir_all(link)
-                .context(format!("无法删除降级拷贝目录: {:?}", link))?;
+            std::fs::remove_dir_all(link).context(format!("无法删除降级拷贝目录: {:?}", link))?;
         }
     }
     #[cfg(not(windows))]

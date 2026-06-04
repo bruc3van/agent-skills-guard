@@ -8,7 +8,6 @@ use anyhow::Result;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use rust_i18n::t;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, State};
 
@@ -71,9 +70,9 @@ pub async fn scan_all_installed_skills(
                     &skill.id,
                     &locale_owned,
                     ScanOptions {
-                    skip_readme: true,
-                    ..Default::default()
-                },
+                        skip_readme: true,
+                        ..Default::default()
+                    },
                     None,
                 ) {
                     Ok(report) => report,
@@ -390,7 +389,10 @@ pub async fn scan_skill_archive(
         [Some(tmp), home, cache, data_local]
             .into_iter()
             .flatten()
-            .any(|base| canonical.starts_with(&base))
+            .any(|base| {
+                let canonical_base = base.canonicalize().unwrap_or_else(|_| base.clone());
+                canonical.starts_with(&canonical_base) || canonical.starts_with(&base)
+            })
     };
     if !allowed {
         return Err(format!(
@@ -414,10 +416,7 @@ pub async fn scan_skill_archive(
         for finding in &archive_findings {
             if finding.severity == crate::models::security::IssueSeverity::Critical {
                 blocked = true;
-                hard_trigger_issues.push(format!(
-                    "{}: {}",
-                    finding.rule_id, finding.description
-                ));
+                hard_trigger_issues.push(format!("{}: {}", finding.rule_id, finding.description));
             }
         }
 
@@ -453,7 +452,13 @@ pub async fn scan_skill_archive(
             if blocked {
                 report.blocked = true;
                 report.hard_trigger_issues.extend(hard_trigger_issues);
+                let blocked_message = t!("security.blocked_message", locale = locale).to_string();
+                if !report.recommendations.contains(&blocked_message) {
+                    report.recommendations.insert(0, blocked_message);
+                }
             }
+            report.score = SecurityScanner::score_from_issues(&report.issues, report.blocked);
+            report.level = SecurityLevel::from_score(report.score);
 
             return Ok(report);
         }
@@ -485,4 +490,54 @@ pub async fn scan_skill_archive(
         })?;
 
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use zip::write::{SimpleFileOptions, ZipWriter};
+
+    #[tokio::test]
+    async fn scan_skill_archive_recalculates_score_after_archive_findings() {
+        let home_tmp = tempfile::Builder::new()
+            .prefix("agent-skills-guard-test-")
+            .tempdir_in(dirs::home_dir().unwrap())
+            .unwrap();
+        let archive_path = home_tmp.path().join("skill.zip");
+        let file = std::fs::File::create(&archive_path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+        zip.start_file("SKILL.md", options).unwrap();
+        zip.write_all(
+            b"---\nname: test-skill\ndescription: A valid description for testing\n---\nBody",
+        )
+        .unwrap();
+        zip.start_file("../../escape.txt", options).unwrap();
+        zip.write_all(b"escaped").unwrap();
+        zip.finish().unwrap();
+
+        let report =
+            scan_skill_archive(archive_path.to_string_lossy().to_string(), "en".to_string())
+                .await
+                .unwrap();
+
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| i.rule_id.as_deref() == Some("ARCHIVE_PATH_TRAVERSAL")),
+            "Archive traversal issue should be present, got: {:?}",
+            report.issues
+        );
+        assert!(report.blocked, "Archive traversal should block");
+        assert!(
+            report.score <= 29,
+            "Blocked archive findings should be reflected in score, got {}",
+            report.score
+        );
+        assert_eq!(report.level, SecurityLevel::Critical);
+    }
 }

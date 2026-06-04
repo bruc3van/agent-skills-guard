@@ -137,7 +137,12 @@ pub fn validate(ctx: &SkillContext) -> Vec<Finding> {
         }
 
         // 4.0 许可证字段（可选但建议提供）
-        if manifest.license.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        if manifest
+            .license
+            .as_ref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+        {
             findings.push(make_finding(
                 "MANIFEST_MISSING_LICENSE",
                 IssueSeverity::Low,
@@ -296,13 +301,18 @@ pub fn validate(ctx: &SkillContext) -> Vec<Finding> {
         let script_str = normalize_path(&script_path.to_string_lossy());
         let is_referenced = ctx.referenced_files.iter().any(|ref_path| {
             let ref_str = normalize_path(&ref_path.to_string_lossy());
-            ref_str == script_str || script_str.ends_with(&ref_str) || ref_str.ends_with(&script_str)
+            ref_str == script_str
+                || script_str.ends_with(&ref_str)
+                || ref_str.ends_with(&script_str)
         });
         if !is_referenced {
             findings.push(make_finding(
                 "STRUCTURE_ORPHAN_SCRIPT",
                 IssueSeverity::Low,
-                format!("Script file '{}' is not referenced in SKILL.md", script_path.to_string_lossy()),
+                format!(
+                    "Script file '{}' is not referenced in SKILL.md",
+                    script_path.to_string_lossy()
+                ),
                 Some(script_path.to_string_lossy().to_string()),
                 None,
             ));
@@ -320,7 +330,10 @@ pub fn validate(ctx: &SkillContext) -> Vec<Finding> {
             findings.push(make_finding(
                 "STRUCTURE_MISSING_REFERENCE",
                 IssueSeverity::Medium,
-                format!("Referenced file '{}' does not exist in skill directory", ref_path.to_string_lossy()),
+                format!(
+                    "Referenced file '{}' does not exist in skill directory",
+                    ref_path.to_string_lossy()
+                ),
                 Some(ref_path.to_string_lossy().to_string()),
                 None,
             ));
@@ -377,12 +390,58 @@ pub fn is_valid_name(name: &str) -> bool {
 pub fn is_known_binary_ext(ext: &str) -> bool {
     matches!(
         ext.to_lowercase().as_str(),
-        "exe" | "dll" | "so" | "dylib" | "bin" | "dat" | "db" | "sqlite" | "sqlite3"
-            | "wasm" | "jar" | "war" | "ear" | "pyc" | "pyo" | "class" | "o" | "msi" | "dmg"
-            | "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp" | "ico" | "icns"
-            | "tif" | "tiff" | "heic" | "heif" | "ttf" | "otf" | "woff" | "woff2" | "eot"
-            | "mp3" | "mp4" | "wav" | "ogg" | "webm" | "flac" | "aac" | "pdf" | "zip"
-            | "gz" | "tar" | "rar" | "7z" | "bz2" | "xz"
+        "exe"
+            | "dll"
+            | "so"
+            | "dylib"
+            | "bin"
+            | "dat"
+            | "db"
+            | "sqlite"
+            | "sqlite3"
+            | "wasm"
+            | "jar"
+            | "war"
+            | "ear"
+            | "pyc"
+            | "pyo"
+            | "class"
+            | "o"
+            | "msi"
+            | "dmg"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "avif"
+            | "bmp"
+            | "ico"
+            | "icns"
+            | "tif"
+            | "tiff"
+            | "heic"
+            | "heif"
+            | "ttf"
+            | "otf"
+            | "woff"
+            | "woff2"
+            | "eot"
+            | "mp3"
+            | "mp4"
+            | "wav"
+            | "ogg"
+            | "webm"
+            | "flac"
+            | "aac"
+            | "pdf"
+            | "zip"
+            | "gz"
+            | "tar"
+            | "rar"
+            | "7z"
+            | "bz2"
+            | "xz"
     )
 }
 
@@ -406,9 +465,7 @@ pub fn make_finding(
         "{}|{}|{}",
         rule_id,
         file_path.as_deref().unwrap_or(""),
-        line_number
-            .map(|l| l.to_string())
-            .unwrap_or_default()
+        line_number.map(|l| l.to_string()).unwrap_or_default()
     );
     let mut hasher = Sha256::new();
     hasher.update(id_input.as_bytes());
@@ -462,11 +519,7 @@ mod tests {
 
     fn make_test_ctx(mode: ScanMode, files: Vec<SkillFile>) -> SkillContext {
         let policy = ScanPolicy::builtin_default().clone();
-        let mut ctx = SkillContext::new(
-            mode,
-            Some(PathBuf::from("/tmp/test-skill")),
-            policy,
-        );
+        let mut ctx = SkillContext::new(mode, Some(PathBuf::from("/tmp/test-skill")), policy);
         ctx.files = files;
         ctx
     }
@@ -487,7 +540,10 @@ mod tests {
         let policy = ScanPolicy::builtin_default().clone();
         let ctx = SkillContext::for_single_file("---\nname: test\n---\n", "/tmp/test.md", policy);
         let findings = validate(&ctx);
-        assert!(findings.is_empty(), "SingleFile mode should return empty findings");
+        assert!(
+            findings.is_empty(),
+            "SingleFile mode should return empty findings"
+        );
     }
 
     #[test]
@@ -523,11 +579,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // 不创建 skill.md
         let policy = ScanPolicy::builtin_default().clone();
-        let ctx = SkillContext::new(
-            ScanMode::Directory,
-            Some(dir.path().to_path_buf()),
-            policy,
-        );
+        let ctx = SkillContext::new(ScanMode::Directory, Some(dir.path().to_path_buf()), policy);
 
         let findings = validate(&ctx);
         assert_eq!(findings.len(), 1);
@@ -549,7 +601,9 @@ mod tests {
         let findings = validate(&ctx);
 
         assert!(
-            findings.iter().any(|f| f.rule_id == "STRUCTURE_INVALID_NAME"),
+            findings
+                .iter()
+                .any(|f| f.rule_id == "STRUCTURE_INVALID_NAME"),
             "Should detect invalid name, got: {:?}",
             findings.iter().map(|f| &f.rule_id).collect::<Vec<_>>()
         );
@@ -571,7 +625,9 @@ mod tests {
         let findings = validate(&ctx);
 
         assert!(
-            findings.iter().any(|f| f.rule_id == "STRUCTURE_DISALLOWED_EXTENSION"),
+            findings
+                .iter()
+                .any(|f| f.rule_id == "STRUCTURE_DISALLOWED_EXTENSION"),
             "Should detect disallowed extension, got: {:?}",
             findings.iter().map(|f| &f.rule_id).collect::<Vec<_>>()
         );
@@ -590,7 +646,9 @@ mod tests {
         let findings = validate(&ctx);
 
         assert!(
-            findings.iter().any(|f| f.rule_id == "STRUCTURE_INVALID_DESCRIPTION"),
+            findings
+                .iter()
+                .any(|f| f.rule_id == "STRUCTURE_INVALID_DESCRIPTION"),
             "Should detect short description, got: {:?}",
             findings.iter().map(|f| &f.rule_id).collect::<Vec<_>>()
         );
@@ -606,14 +664,14 @@ mod tests {
         assert!(is_valid_name(&"a".repeat(64)));
 
         // 不合法
-        assert!(!is_valid_name("a"));            // 太短
+        assert!(!is_valid_name("a")); // 太短
         assert!(!is_valid_name(&"a".repeat(65))); // 太长
         assert!(!is_valid_name("-starts-hyphen")); // 以连字符开头
-        assert!(!is_valid_name("ends-hyphen-"));   // 以连字符结尾
-        assert!(!is_valid_name("has--double"));    // 连续连字符
-        assert!(!is_valid_name("Has_Caps"));       // 大写字母
-        assert!(!is_valid_name("has space"));      // 空格
-        assert!(!is_valid_name("has.dot"));        // 点号
+        assert!(!is_valid_name("ends-hyphen-")); // 以连字符结尾
+        assert!(!is_valid_name("has--double")); // 连续连字符
+        assert!(!is_valid_name("Has_Caps")); // 大写字母
+        assert!(!is_valid_name("has space")); // 空格
+        assert!(!is_valid_name("has.dot")); // 点号
     }
 
     #[test]
@@ -630,23 +688,49 @@ mod tests {
 
         let findings = validate(&ctx);
         assert!(
-            findings.iter().any(|f| f.rule_id == "STRUCTURE_HIDDEN_FILE"),
+            findings
+                .iter()
+                .any(|f| f.rule_id == "STRUCTURE_HIDDEN_FILE"),
             "Should detect hidden file"
         );
     }
 
     #[test]
     fn test_finding_has_stable_id() {
-        let f1 = make_finding("TEST_RULE", IssueSeverity::Medium, "desc".into(), Some("a.md".into()), Some(1));
-        let f2 = make_finding("TEST_RULE", IssueSeverity::Medium, "desc".into(), Some("a.md".into()), Some(1));
-        let f3 = make_finding("TEST_RULE", IssueSeverity::Medium, "desc".into(), Some("b.md".into()), Some(1));
+        let f1 = make_finding(
+            "TEST_RULE",
+            IssueSeverity::Medium,
+            "desc".into(),
+            Some("a.md".into()),
+            Some(1),
+        );
+        let f2 = make_finding(
+            "TEST_RULE",
+            IssueSeverity::Medium,
+            "desc".into(),
+            Some("a.md".into()),
+            Some(1),
+        );
+        let f3 = make_finding(
+            "TEST_RULE",
+            IssueSeverity::Medium,
+            "desc".into(),
+            Some("b.md".into()),
+            Some(1),
+        );
         assert_eq!(f1.id, f2.id, "Same inputs should produce same ID");
         assert_ne!(f1.id, f3.id, "Different file should produce different ID");
     }
 
     #[test]
     fn test_finding_category_is_policy_violation() {
-        let f = make_finding("STRUCTURE_MISSING_SKILL_MD", IssueSeverity::High, "test".into(), None, None);
+        let f = make_finding(
+            "STRUCTURE_MISSING_SKILL_MD",
+            IssueSeverity::High,
+            "test".into(),
+            None,
+            None,
+        );
         assert!(
             matches!(f.category, ThreatCategory::PolicyViolation),
             "Structure findings should use PolicyViolation category"
@@ -670,7 +754,9 @@ mod tests {
         // name 为空字符串时 is_valid_name 返回 false，但因为我们用 !name.is_empty() 做条件
         // 所以不会触发 INVALID_NAME
         assert!(
-            !findings.iter().any(|f| f.rule_id == "STRUCTURE_INVALID_NAME"),
+            !findings
+                .iter()
+                .any(|f| f.rule_id == "STRUCTURE_INVALID_NAME"),
             "Empty name should not trigger INVALID_NAME"
         );
     }
@@ -689,7 +775,9 @@ mod tests {
         let findings = validate(&ctx);
 
         assert!(
-            findings.iter().any(|f| f.rule_id == "STRUCTURE_INVALID_DESCRIPTION"),
+            findings
+                .iter()
+                .any(|f| f.rule_id == "STRUCTURE_INVALID_DESCRIPTION"),
             "Should detect too-long description"
         );
     }

@@ -1359,11 +1359,18 @@ pub async fn check_skills_updates(
             match manager.migrate_installed_commit_sha(skill_id, sha) {
                 Ok(true) => migrated += 1,
                 Ok(false) => {}
-                Err(e) => log::warn!("写回 skill {} 的 installed_commit_sha 失败: {}", skill_id, e),
+                Err(e) => log::warn!(
+                    "写回 skill {} 的 installed_commit_sha 失败: {}",
+                    skill_id,
+                    e
+                ),
             }
         }
         if migrated > 0 {
-            log::info!("已迁移 {} 个技能的 installed_commit_sha 为 path-aware 形态", migrated);
+            log::info!(
+                "已迁移 {} 个技能的 installed_commit_sha 为 path-aware 形态",
+                migrated
+            );
         }
     }
 

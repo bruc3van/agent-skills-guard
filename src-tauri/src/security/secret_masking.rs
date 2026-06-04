@@ -75,12 +75,7 @@ pub fn mask_secrets(snippet: &str) -> String {
         let prefix = &secret_val[..4];
         let masked = "*".repeat(secret_val.len() - 4);
         let secret_start = caps.get(1).unwrap().start() - caps.get(0).unwrap().start();
-        format!(
-            "{}\"{}{}\"",
-            &full[..secret_start],
-            prefix,
-            masked
-        )
+        format!("{}\"{}{}\"", &full[..secret_start], prefix, masked)
     });
 
     // 7. Stripe live key: 保留前 8 字符 + 后 4 位
@@ -134,7 +129,8 @@ mod tests {
 
     #[test]
     fn test_mask_private_key() {
-        let input = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
+        let input =
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
         let masked = mask_secrets(input);
         assert!(!masked.contains("BEGIN RSA PRIVATE KEY"));
         assert!(!masked.contains("MIIEpAIBAAKCAQEA"));
@@ -197,7 +193,15 @@ mod tests {
         let input = concat!("sk-", "abcdefghijklmnopqrst", "T3BlbkFJ", "abcdefghijklmnopqrst");
         let masked = mask_secrets(input);
         // OpenAI key should be masked
-        assert!(masked.contains("[REDACTED]"), "Should contain [REDACTED], got: {}", masked);
-        assert!(masked.starts_with("sk-abcde"), "Should preserve prefix, got: {}", masked);
+        assert!(
+            masked.contains("[REDACTED]"),
+            "Should contain [REDACTED], got: {}",
+            masked
+        );
+        assert!(
+            masked.starts_with("sk-abcde"),
+            "Should preserve prefix, got: {}",
+            masked
+        );
     }
 }

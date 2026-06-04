@@ -43,13 +43,22 @@ pub fn match_yaml_rule(compiled_rule: &CompiledYamlRule, line: &str) -> bool {
         return false;
     }
     // 检查所有 pattern（任一命中即匹配）
-    compiled_rule.compiled_patterns.iter().enumerate().any(|(i, re)| {
-        let src = compiled_rule.rule.patterns.get(i).map(String::as_str).unwrap_or("");
-        if pattern_requires_multiline_scan(src) {
-            return false;
-        }
-        re.is_match(line)
-    })
+    compiled_rule
+        .compiled_patterns
+        .iter()
+        .enumerate()
+        .any(|(i, re)| {
+            let src = compiled_rule
+                .rule
+                .patterns
+                .get(i)
+                .map(String::as_str)
+                .unwrap_or("");
+            if pattern_requires_multiline_scan(src) {
+                return false;
+            }
+            re.is_match(line)
+        })
 }
 
 /// 对 YAML 规则执行整段内容匹配（跨行 pattern 第二遍）
@@ -66,7 +75,12 @@ pub fn match_yaml_rule_multiline(
         return None;
     }
     for (i, re) in compiled_rule.compiled_patterns.iter().enumerate() {
-        let src = compiled_rule.rule.patterns.get(i).map(String::as_str).unwrap_or("");
+        let src = compiled_rule
+            .rule
+            .patterns
+            .get(i)
+            .map(String::as_str)
+            .unwrap_or("");
         if !pattern_requires_multiline_scan(src) {
             continue;
         }
@@ -88,10 +102,7 @@ mod tests {
     fn make_yaml_rule(id: &str, patterns: Vec<&str>) -> CompiledYamlRule {
         CompiledYamlRule {
             id: id.to_string(),
-            compiled_patterns: patterns
-                .iter()
-                .map(|p| Regex::new(p).unwrap())
-                .collect(),
+            compiled_patterns: patterns.iter().map(|p| Regex::new(p).unwrap()).collect(),
             compiled_exclude_patterns: vec![],
             rule: super::super::YamlRule {
                 id: id.to_string(),

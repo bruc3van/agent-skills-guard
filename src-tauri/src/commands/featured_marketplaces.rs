@@ -102,8 +102,8 @@ pub async fn refresh_featured_marketplaces(
     let cache_path = featured_marketplaces_cache_path(&app)?;
     let yaml_content = download_remote_yaml(FEATURED_MARKETPLACES_REMOTE_URL).await?;
 
-    let config = serde_yaml::from_str::<FeaturedMarketplacesConfig>(&yaml_content)
-        .map_err(|e| {
+    let config =
+        serde_yaml::from_str::<FeaturedMarketplacesConfig>(&yaml_content).map_err(|e| {
             remove_cache_file(&cache_path);
             format!("Failed to parse downloaded featured marketplaces: {}", e)
         })?;
