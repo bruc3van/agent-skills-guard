@@ -1,5 +1,42 @@
 use serde::{Deserialize, Serialize};
 
+/// Finding 产品展示维度
+///
+/// 用于控制 finding 的展示、评分和阻断策略，与 ThreatCategory（安全语义）分离。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum FindingKind {
+    /// 安全风险：可执行风险、注入、外联、敏感数据、密钥、Prompt Injection
+    Security,
+    /// 不可审计：扫描覆盖不足、二进制内容、压缩包、PDF/Office/bytecode
+    Auditability,
+    /// 结构合规：包装规范、目录/扩展名/许可证等合规问题
+    Structure,
+}
+
+impl FindingKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FindingKind::Security => "Security",
+            FindingKind::Auditability => "Auditability",
+            FindingKind::Structure => "Structure",
+        }
+    }
+}
+
+impl std::str::FromStr for FindingKind {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Security" => Ok(FindingKind::Security),
+            "Auditability" => Ok(FindingKind::Auditability),
+            "Structure" => Ok(FindingKind::Structure),
+            _ => Err(()),
+        }
+    }
+}
+
 /// 安全检查结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityReport {
@@ -15,6 +52,20 @@ pub struct SecurityReport {
     pub skipped_files: Vec<String>,       // 跳过扫描的文件列表
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<SecurityReportMetadata>,
+    /// 各 kind 的 finding 数量统计
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind_counts: Option<KindCounts>,
+}
+
+/// 各 FindingKind 的数量统计
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct KindCounts {
+    #[serde(default)]
+    pub security: usize,
+    #[serde(default)]
+    pub auditability: usize,
+    #[serde(default)]
+    pub structure: usize,
 }
 
 /// 报告级元数据（策略指纹等）
@@ -96,6 +147,9 @@ pub struct SecurityIssue {
     pub threat_category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub same_path_other_rule_ids: Option<Vec<String>>,
+    /// Finding 产品展示维度（Security/Auditability/Structure）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding_kind: Option<String>,
 }
 
 /// 问题严重程度（5 级统一模型）
@@ -271,6 +325,9 @@ pub struct FindingMetadata {
     /// 原始 hard_trigger 标记
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hard_trigger: Option<bool>,
+    /// Finding 产品展示维度
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding_kind: Option<FindingKind>,
 }
 
 /// Skill 扫描结果（用于前端展示）

@@ -432,6 +432,7 @@ mod tests {
             cwe_id: None,
             threat_category: None,
             same_path_other_rule_ids: None,
+            finding_kind: None,
         }]);
         existing.security_report = Some(crate::models::security::SecurityReport {
             skill_id: existing.id.clone(),
@@ -445,6 +446,7 @@ mod tests {
             partial_scan: false,
             skipped_files: vec![],
             metadata: None,
+            kind_counts: None,
         });
         existing.installed_commit_sha = Some("abc1234".to_string());
         existing.version = Some("1.0.0".to_string());

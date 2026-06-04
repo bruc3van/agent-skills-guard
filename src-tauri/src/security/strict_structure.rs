@@ -503,6 +503,7 @@ pub fn make_finding(
         analyzer: ANALYZER_NAME.to_string(),
         metadata: Some(FindingMetadata {
             rule_source: Some("strict_structure".to_string()),
+            finding_kind: Some(crate::models::security::FindingKind::Structure),
             ..Default::default()
         }),
     }

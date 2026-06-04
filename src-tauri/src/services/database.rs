@@ -49,6 +49,7 @@ fn build_legacy_security_report(
         partial_scan: false,
         skipped_files: Vec::new(),
         metadata: None,
+        kind_counts: None,
     })
 }
 
@@ -104,6 +105,7 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
             cwe_id: None,
             threat_category: None,
             same_path_other_rule_ids: None,
+            finding_kind: None,
         });
     }
 
@@ -120,6 +122,7 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
         cwe_id: None,
         threat_category: None,
         same_path_other_rule_ids: None,
+        finding_kind: None,
     })
 }
 
@@ -1337,6 +1340,7 @@ mod tests {
             partial_scan: true,
             skipped_files: vec!["b.bin".to_string()],
             metadata: None,
+            kind_counts: None,
         };
 
         let json = serde_json::to_string(&report).unwrap();

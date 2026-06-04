@@ -146,6 +146,11 @@ pub async fn scan_all_installed_skills(
                         cwe_id: f.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
                         threat_category: Some(f.category.as_str().to_string()),
                         same_path_other_rule_ids: None,
+                        finding_kind: f
+                            .metadata
+                            .as_ref()
+                            .and_then(|m| m.finding_kind)
+                            .map(|k| k.as_str().to_string()),
                     })
                     .collect();
                 result.report.issues.extend(cross_issues);
@@ -312,6 +317,7 @@ pub async fn get_scan_results(state: State<'_, AppState>) -> Result<Vec<SkillSca
                 partial_scan: false,
                 skipped_files: vec![],
                 metadata: None,
+                kind_counts: None,
             });
 
             SkillScanResult {

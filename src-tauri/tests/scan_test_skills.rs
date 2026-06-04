@@ -57,7 +57,10 @@ fn scan_all_test_skills() {
     let scanner = SecurityScanner::new();
     let skill_dirs = collect_skill_dirs(&root);
 
-    println!("\n=== Scanning {} skill directories ===\n", skill_dirs.len());
+    println!(
+        "\n=== Scanning {} skill directories ===\n",
+        skill_dirs.len()
+    );
 
     let mut reports = Vec::new();
 
@@ -91,7 +94,10 @@ fn scan_all_test_skills() {
                         let severity = &issue.severity;
                         let rule = issue.rule_id.as_deref().unwrap_or("N/A");
                         let file = issue.file_path.as_deref().unwrap_or("unknown");
-                        let line = issue.line_number.map(|l| l.to_string()).unwrap_or_else(|| "-".to_string());
+                        let line = issue
+                            .line_number
+                            .map(|l| l.to_string())
+                            .unwrap_or_else(|| "-".to_string());
                         let desc = &issue.description;
                         println!(
                             "    [{:?}] {} | {}:{} | {}",

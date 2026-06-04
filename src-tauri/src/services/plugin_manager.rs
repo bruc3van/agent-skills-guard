@@ -2768,6 +2768,7 @@ fn merge_reports(reports: &[(Plugin, SecurityReport)], marketplace_name: &str) -
         partial_scan: partial_scan || !skipped_files.is_empty(),
         skipped_files,
         metadata: None,
+        kind_counts: None,
     }
 }
 

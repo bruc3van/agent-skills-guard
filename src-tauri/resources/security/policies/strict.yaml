@@ -11,6 +11,18 @@ severity_overrides: []
 
 hard_trigger_overrides: []
 
+# Strict 模式：结构合规也计入安全分
+score_kinds:
+  - Security
+  - Auditability
+  - Structure
+
+# 启用严格结构校验
+strict_structure_enabled: true
+
+# 启用归档深度扫描
+archive_deep_scan_enabled: true
+
 file_limits:
   max_files: 500
   max_depth: 12

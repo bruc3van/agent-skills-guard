@@ -2,7 +2,7 @@ import { ReactNode, useMemo } from "react";
 import { AlertTriangle, CheckCircle, Loader2, XCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { SecurityReport } from "@/types/security";
-import { countIssuesBySeverity, groupIssuesBySignature } from "@/lib/security-utils";
+import { countIssuesBySeverity, countIssuesByKind, groupIssuesBySignature } from "@/lib/security-utils";
 import { SecurityIssueMeta } from "@/components/SecurityIssueMeta";
 import {
   AlertDialog,
@@ -50,7 +50,14 @@ export function SkillSecurityDialog({
   const skippedPreview = skippedFiles.slice(0, 5);
 
   const issueCounts = useMemo(
-    () => (report ? countIssuesBySeverity(report.issues) : { critical: 0, error: 0, warning: 0 }),
+    () =>
+      report
+        ? countIssuesBySeverity(report.issues)
+        : { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+    [report]
+  );
+  const kindCounts = useMemo(
+    () => (report ? (report.kind_counts ?? countIssuesByKind(report.issues)) : { security: 0, auditability: 0, structure: 0 }),
     [report]
   );
   const groupedIssues = useMemo(
@@ -191,14 +198,32 @@ export function SkillSecurityDialog({
                       {t("skills.marketplace.install.critical")}: {issueCounts.critical}
                     </span>
                   )}
-                  {issueCounts.error > 0 && (
+                  {issueCounts.high > 0 && (
                     <span className="text-warning">
-                      {t("skills.marketplace.install.highRisk")}: {issueCounts.error}
+                      {t("skills.marketplace.install.highRisk")}: {issueCounts.high}
                     </span>
                   )}
-                  {issueCounts.warning > 0 && (
+                  {issueCounts.medium > 0 && (
                     <span className="text-warning">
-                      {t("skills.marketplace.install.mediumRisk")}: {issueCounts.warning}
+                      {t("skills.marketplace.install.mediumRisk")}: {issueCounts.medium}
+                    </span>
+                  )}
+                </div>
+                {/* Kind 计数 */}
+                <div className="flex gap-4 text-xs text-muted-foreground">
+                  {kindCounts.security > 0 && (
+                    <span className="text-destructive">
+                      Security: {kindCounts.security}
+                    </span>
+                  )}
+                  {kindCounts.auditability > 0 && (
+                    <span className="text-warning">
+                      Auditability: {kindCounts.auditability}
+                    </span>
+                  )}
+                  {kindCounts.structure > 0 && (
+                    <span className="text-muted-foreground">
+                      Structure: {kindCounts.structure}
                     </span>
                   )}
                 </div>

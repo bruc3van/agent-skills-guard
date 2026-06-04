@@ -1068,6 +1068,16 @@ fn make_finding(
     description: &str,
     file_path: Option<String>,
 ) -> Finding {
+    // 根据规则类型确定 FindingKind
+    let finding_kind = match rule_id {
+        // 路径穿越、symlink、zip bomb 是安全风险
+        "ARCHIVE_PATH_TRAVERSAL" | "ARCHIVE_SYMLINK" | "ARCHIVE_ZIP_BOMB" => {
+            crate::models::security::FindingKind::Security
+        }
+        // 其他归档问题是不可审计性
+        _ => crate::models::security::FindingKind::Auditability,
+    };
+
     Finding {
         id: format!("archive_extractor:{}", rule_id),
         rule_id: rule_id.to_string(),
@@ -1082,6 +1092,7 @@ fn make_finding(
         analyzer: "archive_extractor".to_string(),
         metadata: Some(FindingMetadata {
             rule_source: Some("archive_extractor".to_string()),
+            finding_kind: Some(finding_kind),
             ..Default::default()
         }),
     }

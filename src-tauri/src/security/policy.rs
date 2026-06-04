@@ -32,6 +32,16 @@ pub struct ScanPolicy {
     #[serde(default)]
     pub hard_trigger_overrides: Vec<HardTriggerOverride>,
 
+    /// 计入安全分的 FindingKind
+    #[serde(default = "default_score_kinds")]
+    pub score_kinds: HashSet<String>,
+    /// 是否启用严格结构校验
+    #[serde(default)]
+    pub strict_structure_enabled: bool,
+    /// 是否启用归档深度扫描
+    #[serde(default)]
+    pub archive_deep_scan_enabled: bool,
+
     /// 文件限制
     #[serde(default)]
     pub file_limits: FileLimitsPolicy,
@@ -409,6 +419,13 @@ fn default_allowed_subdirs() -> HashSet<String> {
     .iter()
     .map(|s| s.to_string())
     .collect()
+}
+
+fn default_score_kinds() -> HashSet<String> {
+    ["Security", "Auditability"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 // ── 默认策略实例（编译时嵌入） ──

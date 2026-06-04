@@ -208,11 +208,11 @@ export function SecurityDashboard() {
                         {issueCounts.critical > 0 && (
                           <span className="text-destructive">C:{issueCounts.critical}</span>
                         )}
-                        {issueCounts.error > 0 && (
-                          <span className="text-orange-500">H:{issueCounts.error}</span>
+                        {issueCounts.high > 0 && (
+                          <span className="text-orange-500">H:{issueCounts.high}</span>
                         )}
-                        {issueCounts.warning > 0 && (
-                          <span className="text-warning">M:{issueCounts.warning}</span>
+                        {issueCounts.medium > 0 && (
+                          <span className="text-warning">M:{issueCounts.medium}</span>
                         )}
                       </div>
                     </td>

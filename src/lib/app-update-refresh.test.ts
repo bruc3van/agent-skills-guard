@@ -6,6 +6,18 @@ import {
   reconcileSkillStateOnAppStartup,
   refetchSkillStateAfterAppUpdate,
 } from "./app-update-refresh";
+import type { Skill } from "@/types";
+
+function mockSkill(overrides: Partial<Skill> = {}): Skill {
+  return {
+    id: "fresh",
+    name: "Fresh Skill",
+    repository_url: "local",
+    file_path: "SKILL.md",
+    installed: true,
+    ...overrides,
+  };
+}
 
 function createMemoryStorage(initial: Record<string, string> = {}): Storage {
   const values = new Map(Object.entries(initial));
@@ -86,12 +98,12 @@ describe("refetchSkillStateAfterAppUpdate", () => {
       },
       getInstalledSkills: async () => {
         calls.push("getInstalled");
-        return [{ id: "fresh", linked_tools: ["claude-code"] }];
+        return [mockSkill({ linked_tools: ["claude-code"] })];
       },
     });
 
     expect(scanCount).toBe(1);
-    expect(queryClient.getQueryData(["skills", "installed"])).toEqual([
+    expect(queryClient.getQueryData(["skills", "installed"])).toMatchObject([
       { id: "fresh", linked_tools: ["claude-code"] },
     ]);
     expect(calls.sort()).toEqual(["agentTools", "getInstalled", "installed", "scanResults", "skills"]);
@@ -125,14 +137,14 @@ describe("reconcileSkillStateOnAppStartup", () => {
       },
       getInstalledSkills: async () => {
         calls.push("getInstalled");
-        return [{ id: "fresh", linked_tools: ["claude-code"] }];
+        return [mockSkill({ linked_tools: ["claude-code"] })];
       },
     });
 
     expect(didRefresh).toBe(true);
     expect(scanCount).toBe(1);
     expect(storage.getItem(APP_VERSION_SKILL_REFRESH_KEY)).toBe("1.2.5");
-    expect(queryClient.getQueryData(["skills", "installed"])).toEqual([
+    expect(queryClient.getQueryData(["skills", "installed"])).toMatchObject([
       { id: "fresh", linked_tools: ["claude-code"] },
     ]);
   });

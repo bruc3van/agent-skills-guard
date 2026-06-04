@@ -1,4 +1,4 @@
-import type { SecurityIssue } from "@/types/security";
+import type { SecurityIssue, KindCounts } from "@/types/security";
 
 export function hasIssueMetadata(issue: SecurityIssue): boolean {
   return Boolean(issue.confidence || issue.remediation || issue.rule_id);
@@ -26,6 +26,31 @@ export function countIssuesBySeverity(issues: SecurityIssue[]) {
     low: issues.filter((i) => i.severity === "Low").length,
     info: issues.filter((i) => i.severity === "Info").length,
   };
+}
+
+/// 按 FindingKind 统计 issues 数量
+export function countIssuesByKind(issues: SecurityIssue[]): KindCounts {
+  return {
+    security: issues.filter((i) => i.finding_kind === "Security").length,
+    auditability: issues.filter((i) => i.finding_kind === "Auditability").length,
+    structure: issues.filter((i) => i.finding_kind === "Structure").length,
+  };
+}
+
+/// 按 FindingKind 分组 issues
+export function groupIssuesByKind(
+  issues: SecurityIssue[]
+): { kind: string; issues: SecurityIssue[] }[] {
+  const security = issues.filter((i) => i.finding_kind === "Security");
+  const auditability = issues.filter((i) => i.finding_kind === "Auditability");
+  const structure = issues.filter((i) => i.finding_kind === "Structure");
+
+  const result: { kind: string; issues: SecurityIssue[] }[] = [];
+  if (security.length > 0) result.push({ kind: "Security", issues: security });
+  if (auditability.length > 0) result.push({ kind: "Auditability", issues: auditability });
+  if (structure.length > 0) result.push({ kind: "Structure", issues: structure });
+
+  return result;
 }
 
 export function sortIssuesBySeverity(issues: SecurityIssue[]): SecurityIssue[] {

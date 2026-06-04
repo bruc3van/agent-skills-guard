@@ -185,6 +185,7 @@ fn make_finding(
         analyzer: ANALYZER_NAME.to_string(),
         metadata: Some(FindingMetadata {
             rule_source: Some("analyzability".to_string()),
+            finding_kind: Some(crate::models::security::FindingKind::Auditability),
             ..Default::default()
         }),
     }
@@ -312,7 +313,7 @@ mod tests {
     /// 创建测试文件
     fn make_test_file(
         rel: &str,
-        ext: &str,
+        _ext: &str,
         file_type: SkillFileType,
         is_binary: bool,
         size: u64,

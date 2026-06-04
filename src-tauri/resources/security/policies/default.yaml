@@ -1,5 +1,8 @@
 # 默认扫描策略
 # 适用于一般桌面应用场景，平衡安全检测与误报控制
+# 定位：Agent Skill 安装前安全风险扫描器
+# 默认聚焦可执行风险、注入攻击、网络外联和敏感数据风险
+# 对不可审计内容显式降低信任；结构合规作为辅助信息，不主导安全结论
 
 policy_name: default
 policy_version: "1.0"
@@ -13,6 +16,17 @@ severity_overrides: []
 
 # 硬触发覆盖
 hard_trigger_overrides: []
+
+# 计入安全分的 FindingKind；默认不让结构合规噪音影响安全分
+score_kinds:
+  - Security
+  - Auditability
+
+# 是否启用严格结构校验（默认关闭，只在 strict 策略中启用）
+strict_structure_enabled: false
+
+# 是否启用归档深度扫描（默认关闭，只提示不可审计，不解压内容）
+archive_deep_scan_enabled: false
 
 # 文件限制
 file_limits:

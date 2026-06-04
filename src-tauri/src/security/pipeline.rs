@@ -563,6 +563,8 @@ fn make_finding(
         analyzer: ANALYZER_NAME.to_string(),
         metadata: Some(FindingMetadata {
             rule_source: Some(ANALYZER_NAME.to_string()),
+            // Pipeline findings 默认为 Security
+            finding_kind: Some(crate::models::security::FindingKind::Security),
             ..Default::default()
         }),
     }

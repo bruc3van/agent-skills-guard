@@ -43,6 +43,7 @@ cases:
 
   - id: manifest_missing_license
     path: p1a-structure/missing-license
+    policy: strict
     expect_any: [MANIFEST_MISSING_LICENSE]
 
   - id: undeclared_network
@@ -59,6 +60,7 @@ cases:
 
   - id: archive_contains_executable
     path: p2-archive/contains-exe
+    policy: strict
     expect_any: [ARCHIVE_CONTAINS_EXECUTABLE, ARCHIVE_FILE_DETECTED]
 
   - id: secret_google_api
@@ -71,6 +73,7 @@ cases:
 
   - id: social_eng_anthropic
     path: p0-signatures/anthropic-impersonation
+    policy: strict
     expect_any: [SOCIAL_ENG_ANTHROPIC_IMPERSONATION]
 
   - id: permissive_skips_curl_mention_in_docs
@@ -137,10 +140,12 @@ cases:
 
   - id: office_vba_macro
     path: p2-archive/vba-docx
+    policy: strict
     expect_any: [OFFICE_VBA_MACRO]
 
   - id: hidden_executable_script
     path: p1a-structure/hidden-script
+    policy: strict
     expect_any: [HIDDEN_EXECUTABLE_SCRIPT, STRUCTURE_HIDDEN_FILE]
 
   - id: network_declared_no_undeclared
@@ -154,14 +159,17 @@ cases:
 
   - id: archive_path_traversal
     path: p2-archive/path-traversal
+    policy: strict
     expect_any: [ARCHIVE_PATH_TRAVERSAL]
 
   - id: archive_zip_bomb
     path: p2-archive/zip-bomb
+    policy: strict
     expect_any: [ARCHIVE_ZIP_BOMB]
 
   - id: office_embedded_ole
     path: p2-archive/ole-docx
+    policy: strict
     expect_any: [OFFICE_EMBEDDED_OLE]
 
   - id: unicode_steganography
@@ -203,10 +211,12 @@ cases:
 
   - id: pycache_detected
     path: p1a-structure/pycache
+    policy: strict
     expect_any: [PYCACHE_FILES_DETECTED]
 
   - id: hidden_data_file
     path: p1a-structure/hidden-data
+    policy: strict
     expect_any: [HIDDEN_DATA_FILE, STRUCTURE_HIDDEN_FILE]
 
   - id: pipeline_download_chmod_exec
@@ -215,6 +225,7 @@ cases:
 
   - id: trigger_description_too_short
     path: p1a-consistency/trigger-short-desc
+    policy: strict
     expect_any: [TRIGGER_DESCRIPTION_TOO_SHORT]
 
   - id: aws_key_detected
@@ -252,4 +263,5 @@ cases:
 
   - id: social_eng_vague_description
     path: p1a-consistency/vague-desc
+    policy: strict
     expect_any: [SOCIAL_ENG_VAGUE_DESCRIPTION]

@@ -9,6 +9,16 @@ export interface SecurityIssue {
   confidence?: string;
   remediation?: string;
   cwe_id?: string;
+  threat_category?: string;
+  same_path_other_rule_ids?: string[];
+  finding_kind?: string; // Security | Auditability | Structure
+}
+
+/// 各 FindingKind 的数量统计
+export interface KindCounts {
+  security: number;
+  auditability: number;
+  structure: number;
 }
 
 export interface SecurityReport {
@@ -22,6 +32,7 @@ export interface SecurityReport {
   scanned_files: string[]; // 已扫描的文件列表
   partial_scan: boolean; // 是否存在未完整扫描
   skipped_files: string[]; // 跳过扫描的文件列表
+  kind_counts?: KindCounts; // 各 kind 的数量统计
 }
 
 export interface SkillScanResult {

@@ -234,14 +234,8 @@ pub enum FindingKind {
 在 `ScanPolicy` 中新增：
 
 ```rust
-#[serde(default)]
-pub disabled_kinds: HashSet<String>;
-
-#[serde(default)]
+#[serde(default = "default_score_kinds")]
 pub score_kinds: HashSet<String>;
-
-#[serde(default)]
-pub visible_kinds: HashSet<String>;
 
 #[serde(default)]
 pub strict_structure_enabled: bool;
@@ -253,15 +247,9 @@ pub archive_deep_scan_enabled: bool;
 建议默认值：
 
 ```yaml
-visible_kinds:
-  - Security
-  - Auditability
-
 score_kinds:
   - Security
   - Auditability
-
-disabled_kinds: []
 
 strict_structure_enabled: false
 archive_deep_scan_enabled: false
@@ -271,8 +259,9 @@ archive_deep_scan_enabled: false
 
 - 不用 `skip_categories` 作为主机制。
 - `disabled_rules` 继续用于精确禁用规则。
-- `strict_structure_enabled=false` 时，结构 analyzer 不运行或只输出最小硬风险（symlink/path traversal）。
-- `archive_deep_scan_enabled=false` 时，只做 archive inventory。
+- 不保留 `disabled_kinds` / `visible_kinds` 这类未落地的展示开关；展示层可根据 `finding_kind` 分组，扫描器只负责产生真实风险语义。
+- `strict_structure_enabled=false` 时，结构 analyzer 不运行，结构类 context finding 默认不输出；symlink 检查保留在主遍历中。
+- `archive_deep_scan_enabled=false` 时，不解压归档，只输出 `ARCHIVE_FILE_DETECTED` 和文件魔数风险。
 
 ### 6.3 规则到 FindingKind 的映射
 
@@ -613,4 +602,3 @@ cargo test --test scan_test_skills -- --nocapture
 扫描器定位：
 
 > Agent Skill 安装前安全风险扫描器。默认聚焦可执行风险、注入攻击、网络外联和敏感数据风险；对不可审计内容显式降低信任；结构合规作为辅助信息，不主导安全结论。
-

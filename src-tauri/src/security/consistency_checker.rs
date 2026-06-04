@@ -199,6 +199,25 @@ fn make_finding(
         _ => ("Consistency violation", ThreatCategory::PolicyViolation),
     };
 
+    // 根据规则类型确定 FindingKind
+    let finding_kind = match rule_id {
+        // allowed-tools 越权是安全风险
+        "ALLOWED_TOOLS_READ_VIOLATION"
+        | "ALLOWED_TOOLS_WRITE_VIOLATION"
+        | "ALLOWED_TOOLS_BASH_VIOLATION"
+        | "ALLOWED_TOOLS_GREP_VIOLATION"
+        | "ALLOWED_TOOLS_GLOB_VIOLATION"
+        | "ALLOWED_TOOLS_NETWORK_USAGE"
+        | "TOOL_ABUSE_UNDECLARED_NETWORK" => crate::models::security::FindingKind::Security,
+        // 描述质量和社会工程是结构问题
+        "SOCIAL_ENG_MISLEADING_DESC"
+        | "TRIGGER_OVERLY_GENERIC"
+        | "TRIGGER_DESCRIPTION_TOO_SHORT"
+        | "TRIGGER_VAGUE_DESCRIPTION"
+        | "TRIGGER_KEYWORD_BAITING" => crate::models::security::FindingKind::Structure,
+        _ => crate::models::security::FindingKind::Structure,
+    };
+
     Finding {
         id,
         rule_id: rule_id.to_string(),
@@ -213,6 +232,7 @@ fn make_finding(
         analyzer: ANALYZER_NAME.to_string(),
         metadata: Some(FindingMetadata {
             rule_source: Some("consistency_checker".to_string()),
+            finding_kind: Some(finding_kind),
             ..Default::default()
         }),
     }
@@ -258,13 +278,12 @@ pub fn check_allowed_tools(ctx: &SkillContext) -> Vec<Finding> {
 
     let script_contents = read_script_contents(ctx);
 
-    // 定义所有能力检查项：(rule_id, severity, capability_name, patterns, threat_category)
+    // 定义所有能力检查项：(rule_id, severity, capability_name, patterns)
     struct CapabilityCheck<'a> {
         rule_id: &'a str,
         severity: IssueSeverity,
         capability: &'a str,
         patterns: &'a [Regex],
-        category: ThreatCategory,
     }
 
     let checks = [
@@ -273,35 +292,30 @@ pub fn check_allowed_tools(ctx: &SkillContext) -> Vec<Finding> {
             severity: IssueSeverity::Medium,
             capability: "Read",
             patterns: &RE_READ,
-            category: ThreatCategory::PolicyViolation,
         },
         CapabilityCheck {
             rule_id: "ALLOWED_TOOLS_WRITE_VIOLATION",
             severity: IssueSeverity::Medium,
             capability: "Write",
             patterns: &RE_WRITE,
-            category: ThreatCategory::PolicyViolation,
         },
         CapabilityCheck {
             rule_id: "ALLOWED_TOOLS_BASH_VIOLATION",
             severity: IssueSeverity::High,
             capability: "Bash",
             patterns: &RE_BASH,
-            category: ThreatCategory::PolicyViolation,
         },
         CapabilityCheck {
             rule_id: "ALLOWED_TOOLS_GREP_VIOLATION",
             severity: IssueSeverity::Low,
             capability: "Grep",
             patterns: &RE_GREP,
-            category: ThreatCategory::PolicyViolation,
         },
         CapabilityCheck {
             rule_id: "ALLOWED_TOOLS_GLOB_VIOLATION",
             severity: IssueSeverity::Low,
             capability: "Glob",
             patterns: &RE_GLOB,
-            category: ThreatCategory::PolicyViolation,
         },
         // Network 始终检查（不查看 allowed_tools）
         CapabilityCheck {
@@ -309,7 +323,6 @@ pub fn check_allowed_tools(ctx: &SkillContext) -> Vec<Finding> {
             severity: IssueSeverity::Medium,
             capability: "Network",
             patterns: &RE_NETWORK,
-            category: ThreatCategory::Network,
         },
     ];
 
@@ -573,7 +586,8 @@ fn truncate_str(s: &str, max_len: usize) -> String {
         s.to_string()
     } else {
         // 找到不超过 max_len 的最大字符边界
-        let boundary = s.char_indices()
+        let boundary = s
+            .char_indices()
             .take_while(|(idx, _)| *idx <= max_len)
             .last()
             .map(|(idx, c)| idx + c.len_utf8())

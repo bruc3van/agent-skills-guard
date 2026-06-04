@@ -350,6 +350,8 @@ fn make_finding(file_path: &str, expected: &str, actual: &str, severity: IssueSe
         metadata: Some(FindingMetadata {
             cwe_id: Some("CWE-434".to_string()),
             confidence: Some("High".to_string()),
+            // 文件伪装是安全风险
+            finding_kind: Some(crate::models::security::FindingKind::Security),
             ..Default::default()
         }),
     }
