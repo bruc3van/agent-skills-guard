@@ -12,24 +12,50 @@ fn test_skills_root() -> PathBuf {
         .join("test-skills")
 }
 
+/// 识别 skill 目录：如果子目录中包含 SKILL.md，则视为一个 skill
+/// 对于 security-test-hskills 这种包含嵌套 skill 的父目录，展开为其子 skill
+fn collect_skill_dirs(root: &PathBuf) -> Vec<(String, PathBuf)> {
+    let mut dirs: Vec<(String, PathBuf)> = Vec::new();
+
+    for entry in fs::read_dir(root).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_str().unwrap().to_string();
+
+        // 如果该目录本身包含 SKILL.md，它就是一个 skill
+        if path.join("SKILL.md").exists() {
+            dirs.push((name, path));
+        } else {
+            // 否则检查子目录是否包含 SKILL.md（嵌套 skill 集合）
+            for child in fs::read_dir(&path).unwrap() {
+                let child = child.unwrap();
+                let child_path = child.path();
+                if child_path.is_dir() && child_path.join("SKILL.md").exists() {
+                    let child_name = format!(
+                        "{}/{}",
+                        name,
+                        child_path.file_name().unwrap().to_str().unwrap()
+                    );
+                    dirs.push((child_name, child_path));
+                }
+            }
+        }
+    }
+
+    dirs.sort_by(|a, b| a.0.cmp(&b.0));
+    dirs
+}
+
 #[test]
 fn scan_all_test_skills() {
     let root = test_skills_root();
     assert!(root.is_dir(), "test-skills dir not found: {:?}", root);
 
     let scanner = SecurityScanner::new();
-
-    // Collect all immediate subdirectories as skill dirs
-    let mut skill_dirs: Vec<(String, PathBuf)> = Vec::new();
-    for entry in fs::read_dir(&root).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if path.is_dir() {
-            let name = path.file_name().unwrap().to_str().unwrap().to_string();
-            skill_dirs.push((name, path));
-        }
-    }
-    skill_dirs.sort_by(|a, b| a.0.cmp(&b.0));
+    let skill_dirs = collect_skill_dirs(&root);
 
     println!("\n=== Scanning {} skill directories ===\n", skill_dirs.len());
 
@@ -41,7 +67,7 @@ fn scan_all_test_skills() {
 
         match scanner.scan_directory_with_options(
             dir_str,
-            &format!("test-{}", name),
+            &format!("test-{}", name.replace('/', "-").replace('\\', "-")),
             "en",
             ScanOptions::default(),
             None,
