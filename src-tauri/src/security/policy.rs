@@ -494,13 +494,23 @@ impl ScanPolicy {
             .map(|o| o.hard_trigger)
     }
 
-    /// 检查路径是否为文档路径
+    /// 检查路径是否为文档路径（使用目录段匹配，避免子串误匹配）
     pub fn is_doc_path(&self, path: &str) -> bool {
-        let lower = path.to_lowercase();
+        let lower = path.replace('\\', "/").to_lowercase();
+        let separators = ['/', '\\'];
         self.rule_scoping
             .doc_path_indicators
             .iter()
-            .any(|indicator| lower.contains(&indicator.to_lowercase()))
+            .any(|indicator| {
+                let indicator_lower = indicator.to_lowercase();
+                lower.starts_with(&format!("{}/", indicator_lower))
+                    || separators.iter().any(|&sep| {
+                        lower.contains(&format!("{}{}{}", sep, indicator_lower, sep))
+                    })
+                    || separators
+                        .iter()
+                        .any(|&sep| lower.ends_with(&format!("{}{}", sep, indicator_lower)))
+            })
     }
 
     /// 检查域名是否为已知安装器

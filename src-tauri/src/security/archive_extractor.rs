@@ -651,7 +651,6 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
     use tar::Archive;
 
     let mut findings = Vec::new();
-    let mut extracted_files = Vec::new();
 
     let file = match fs::File::open(archive_path) {
         Ok(f) => f,
@@ -666,7 +665,7 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
             ));
             return ExtractionResult {
                 temp_dir: None,
-                extracted_files,
+                extracted_files: Vec::new(),
                 findings,
             };
         }
@@ -685,378 +684,219 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
             ));
             return ExtractionResult {
                 temp_dir: None,
-                extracted_files,
+                extracted_files: Vec::new(),
                 findings,
             };
         }
     };
 
-    let mut total_size: u64 = 0;
-    let mut file_count: usize = 0;
-
     if is_gzipped {
         use flate2::read::GzDecoder;
         let decoder = GzDecoder::new(file);
         let mut archive = Archive::new(decoder);
-
-        let entries = match archive.entries() {
-            Ok(e) => e,
-            Err(e) => {
-                findings.push(make_finding(
-                    "ARCHIVE_EXTRACTION_FAILED",
-                    IssueSeverity::Medium,
-                    ThreatCategory::Obfuscation,
-                    "Failed to read TAR archive entries",
-                    &format!("Cannot read entries: {}", e),
-                    Some(archive_path.to_string()),
-                ));
-                return ExtractionResult {
-                    temp_dir: Some(temp_dir),
-                    extracted_files,
-                    findings,
-                };
-            }
-        };
-
-        for entry in entries {
-            let mut entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    findings.push(make_finding(
-                        "ARCHIVE_EXTRACTION_FAILED",
-                        IssueSeverity::Medium,
-                        ThreatCategory::Obfuscation,
-                        "Failed to read TAR entry",
-                        &format!("Cannot read entry: {}", e),
-                        None,
-                    ));
-                    continue;
-                }
-            };
-
-            let entry_path = match entry.path() {
-                Ok(p) => p.to_string_lossy().to_string(),
-                Err(e) => {
-                    findings.push(make_finding(
-                        "ARCHIVE_EXTRACTION_FAILED",
-                        IssueSeverity::Medium,
-                        ThreatCategory::Obfuscation,
-                        "Failed to read TAR entry path",
-                        &format!("Cannot read entry path: {}", e),
-                        None,
-                    ));
-                    continue;
-                }
-            };
-
-            // 路径安全检查（穿越 + 绝对路径）
-            if !is_path_safe(&entry_path, temp_dir.path()) {
-                findings.push(make_finding(
-                    "ARCHIVE_PATH_TRAVERSAL",
-                    IssueSeverity::Critical,
-                    ThreatCategory::Destructive,
-                    "Unsafe path in archive entry",
-                    &format!("Entry '{}' contains unsafe path components", entry_path),
-                    Some(entry_path.clone()),
-                ));
-                continue;
-            }
-
-            // TAR symlink 检测
-            if is_tar_symlink(&entry) {
-                findings.push(make_finding(
-                    "ARCHIVE_SYMLINK",
-                    IssueSeverity::Critical,
-                    ThreatCategory::Destructive,
-                    "Symlink detected in TAR entry",
-                    &format!(
-                        "Entry '{}' is a symbolic link which may point outside the archive",
-                        entry_path
-                    ),
-                    Some(entry_path.clone()),
-                ));
-                continue;
-            }
-
-            file_count += 1;
-            if file_count > policy.archive.max_file_count {
-                findings.push(make_finding(
-                    "ARCHIVE_TOO_MANY_FILES",
-                    IssueSeverity::Medium,
-                    ThreatCategory::Obfuscation,
-                    "Archive contains too many files",
-                    &format!(
-                        "File count exceeds limit ({})",
-                        policy.archive.max_file_count
-                    ),
-                    Some(archive_path.to_string()),
-                ));
-                break;
-            }
-
-            let out_path = temp_dir.path().join(&entry_path);
-
-            if entry.header().entry_type().is_dir() {
-                if let Err(e) = fs::create_dir_all(&out_path) {
-                    findings.push(make_finding(
-                        "ARCHIVE_EXTRACTION_FAILED",
-                        IssueSeverity::Medium,
-                        ThreatCategory::Obfuscation,
-                        "Failed to create directory for TAR entry",
-                        &format!("Cannot create directory '{}': {}", out_path.display(), e),
-                        Some(entry_path.clone()),
-                    ));
-                }
-                continue;
-            }
-
-            // 创建父目录
-            if let Some(parent) = out_path.parent() {
-                if let Err(e) = fs::create_dir_all(parent) {
-                    findings.push(make_finding(
-                        "ARCHIVE_EXTRACTION_FAILED",
-                        IssueSeverity::Medium,
-                        ThreatCategory::Obfuscation,
-                        "Failed to create parent directory",
-                        &format!("Cannot create directory '{}': {}", parent.display(), e),
-                        Some(entry_path.clone()),
-                    ));
-                    continue;
-                }
-            }
-
-            // 检查文件大小
-            let entry_size = entry.header().size().unwrap_or(0);
-            total_size += entry_size;
-            if total_size > policy.archive.max_total_size_bytes {
-                findings.push(make_finding(
-                    "ARCHIVE_TOO_LARGE",
-                    IssueSeverity::Medium,
-                    ThreatCategory::Obfuscation,
-                    "Archive uncompressed size exceeds limit",
-                    &format!(
-                        "Total size exceeds limit ({})",
-                        policy.archive.max_total_size_bytes
-                    ),
-                    Some(archive_path.to_string()),
-                ));
-                break;
-            }
-
-            // 解压文件
-            match fs::File::create(&out_path) {
-                Ok(mut out_file) => {
-                    if let Err(e) = io::copy(&mut entry, &mut out_file) {
-                        findings.push(make_finding(
-                            "ARCHIVE_EXTRACTION_FAILED",
-                            IssueSeverity::Medium,
-                            ThreatCategory::Obfuscation,
-                            "Failed to extract TAR entry",
-                            &format!("Cannot extract '{}': {}", entry_path, e),
-                            Some(entry_path.clone()),
-                        ));
-                        continue;
-                    }
-                }
-                Err(e) => {
-                    findings.push(make_finding(
-                        "ARCHIVE_EXTRACTION_FAILED",
-                        IssueSeverity::Medium,
-                        ThreatCategory::Obfuscation,
-                        "Failed to create output file",
-                        &format!("Cannot create file '{}': {}", out_path.display(), e),
-                        Some(entry_path.clone()),
-                    ));
-                    continue;
-                }
-            }
-
-            extracted_files.push(out_path.to_string_lossy().to_string());
+        let (files, mut entry_findings) = extract_tar_entries(&mut archive, archive_path, policy, &temp_dir);
+        findings.append(&mut entry_findings);
+        ExtractionResult {
+            temp_dir: Some(temp_dir),
+            extracted_files: files,
+            findings,
         }
     } else {
         let mut archive = Archive::new(file);
+        let (files, mut entry_findings) = extract_tar_entries(&mut archive, archive_path, policy, &temp_dir);
+        findings.append(&mut entry_findings);
+        ExtractionResult {
+            temp_dir: Some(temp_dir),
+            extracted_files: files,
+            findings,
+        }
+    }
+}
 
-        let entries = match archive.entries() {
+/// 通用 TAR 条目处理（gzipped 和非 gzipped 共用）
+fn extract_tar_entries<R: io::Read>(
+    archive: &mut tar::Archive<R>,
+    archive_path: &str,
+    policy: &ScanPolicy,
+    temp_dir: &TempDir,
+) -> (Vec<String>, Vec<Finding>) {
+    let mut findings = Vec::new();
+    let mut extracted_files = Vec::new();
+    let mut total_size: u64 = 0;
+    let mut file_count: usize = 0;
+
+    let entries = match archive.entries() {
+        Ok(e) => e,
+        Err(e) => {
+            findings.push(make_finding(
+                "ARCHIVE_EXTRACTION_FAILED",
+                IssueSeverity::Medium,
+                ThreatCategory::Obfuscation,
+                "Failed to read TAR archive entries",
+                &format!("Cannot read entries: {}", e),
+                Some(archive_path.to_string()),
+            ));
+            return (extracted_files, findings);
+        }
+    };
+
+    for entry in entries {
+        let mut entry = match entry {
             Ok(e) => e,
             Err(e) => {
                 findings.push(make_finding(
                     "ARCHIVE_EXTRACTION_FAILED",
                     IssueSeverity::Medium,
                     ThreatCategory::Obfuscation,
-                    "Failed to read TAR archive entries",
-                    &format!("Cannot read entries: {}", e),
-                    Some(archive_path.to_string()),
+                    "Failed to read TAR entry",
+                    &format!("Cannot read entry: {}", e),
+                    None,
                 ));
-                return ExtractionResult {
-                    temp_dir: Some(temp_dir),
-                    extracted_files,
-                    findings,
-                };
+                continue;
             }
         };
 
-        for entry in entries {
-            let mut entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    findings.push(make_finding(
-                        "ARCHIVE_EXTRACTION_FAILED",
-                        IssueSeverity::Medium,
-                        ThreatCategory::Obfuscation,
-                        "Failed to read TAR entry",
-                        &format!("Cannot read entry: {}", e),
-                        None,
-                    ));
-                    continue;
-                }
-            };
-
-            let entry_path = match entry.path() {
-                Ok(p) => p.to_string_lossy().to_string(),
-                Err(e) => {
-                    findings.push(make_finding(
-                        "ARCHIVE_EXTRACTION_FAILED",
-                        IssueSeverity::Medium,
-                        ThreatCategory::Obfuscation,
-                        "Failed to read TAR entry path",
-                        &format!("Cannot read entry path: {}", e),
-                        None,
-                    ));
-                    continue;
-                }
-            };
-
-            // 路径安全检查（穿越 + 绝对路径）
-            if !is_path_safe(&entry_path, temp_dir.path()) {
+        let entry_path = match entry.path() {
+            Ok(p) => p.to_string_lossy().to_string(),
+            Err(e) => {
                 findings.push(make_finding(
-                    "ARCHIVE_PATH_TRAVERSAL",
-                    IssueSeverity::Critical,
-                    ThreatCategory::Destructive,
-                    "Unsafe path in archive entry",
-                    &format!("Entry '{}' contains unsafe path components", entry_path),
-                    Some(entry_path.clone()),
-                ));
-                continue;
-            }
-
-            // TAR symlink 检测
-            if is_tar_symlink(&entry) {
-                findings.push(make_finding(
-                    "ARCHIVE_SYMLINK",
-                    IssueSeverity::Critical,
-                    ThreatCategory::Destructive,
-                    "Symlink detected in TAR entry",
-                    &format!(
-                        "Entry '{}' is a symbolic link which may point outside the archive",
-                        entry_path
-                    ),
-                    Some(entry_path.clone()),
-                ));
-                continue;
-            }
-
-            file_count += 1;
-            if file_count > policy.archive.max_file_count {
-                findings.push(make_finding(
-                    "ARCHIVE_TOO_MANY_FILES",
+                    "ARCHIVE_EXTRACTION_FAILED",
                     IssueSeverity::Medium,
                     ThreatCategory::Obfuscation,
-                    "Archive contains too many files",
-                    &format!(
-                        "File count exceeds limit ({})",
-                        policy.archive.max_file_count
-                    ),
-                    Some(archive_path.to_string()),
+                    "Failed to read TAR entry path",
+                    &format!("Cannot read entry path: {}", e),
+                    None,
                 ));
-                break;
-            }
-
-            let out_path = temp_dir.path().join(&entry_path);
-
-            if entry.header().entry_type().is_dir() {
-                if let Err(e) = fs::create_dir_all(&out_path) {
-                    findings.push(make_finding(
-                        "ARCHIVE_EXTRACTION_FAILED",
-                        IssueSeverity::Medium,
-                        ThreatCategory::Obfuscation,
-                        "Failed to create directory for TAR entry",
-                        &format!("Cannot create directory '{}': {}", out_path.display(), e),
-                        Some(entry_path.clone()),
-                    ));
-                }
                 continue;
             }
+        };
 
-            // 创建父目录
-            if let Some(parent) = out_path.parent() {
-                if let Err(e) = fs::create_dir_all(parent) {
-                    findings.push(make_finding(
-                        "ARCHIVE_EXTRACTION_FAILED",
-                        IssueSeverity::Medium,
-                        ThreatCategory::Obfuscation,
-                        "Failed to create parent directory",
-                        &format!("Cannot create directory '{}': {}", parent.display(), e),
-                        Some(entry_path.clone()),
-                    ));
-                    continue;
-                }
-            }
-
-            // 检查文件大小
-            let entry_size = entry.header().size().unwrap_or(0);
-            total_size += entry_size;
-            if total_size > policy.archive.max_total_size_bytes {
-                findings.push(make_finding(
-                    "ARCHIVE_TOO_LARGE",
-                    IssueSeverity::Medium,
-                    ThreatCategory::Obfuscation,
-                    "Archive uncompressed size exceeds limit",
-                    &format!(
-                        "Total size exceeds limit ({})",
-                        policy.archive.max_total_size_bytes
-                    ),
-                    Some(archive_path.to_string()),
-                ));
-                break;
-            }
-
-            // 解压文件
-            match fs::File::create(&out_path) {
-                Ok(mut out_file) => {
-                    if let Err(e) = io::copy(&mut entry, &mut out_file) {
-                        findings.push(make_finding(
-                            "ARCHIVE_EXTRACTION_FAILED",
-                            IssueSeverity::Medium,
-                            ThreatCategory::Obfuscation,
-                            "Failed to extract TAR entry",
-                            &format!("Cannot extract '{}': {}", entry_path, e),
-                            Some(entry_path.clone()),
-                        ));
-                        continue;
-                    }
-                }
-                Err(e) => {
-                    findings.push(make_finding(
-                        "ARCHIVE_EXTRACTION_FAILED",
-                        IssueSeverity::Medium,
-                        ThreatCategory::Obfuscation,
-                        "Failed to create output file",
-                        &format!("Cannot create file '{}': {}", out_path.display(), e),
-                        Some(entry_path.clone()),
-                    ));
-                    continue;
-                }
-            }
-
-            extracted_files.push(out_path.to_string_lossy().to_string());
+        // 路径安全检查（穿越 + 绝对路径）
+        if !is_path_safe(&entry_path, temp_dir.path()) {
+            findings.push(make_finding(
+                "ARCHIVE_PATH_TRAVERSAL",
+                IssueSeverity::Critical,
+                ThreatCategory::Destructive,
+                "Unsafe path in archive entry",
+                &format!("Entry '{}' contains unsafe path components", entry_path),
+                Some(entry_path.clone()),
+            ));
+            continue;
         }
+
+        // TAR symlink 检测
+        if is_tar_symlink(&entry) {
+            findings.push(make_finding(
+                "ARCHIVE_SYMLINK",
+                IssueSeverity::Critical,
+                ThreatCategory::Destructive,
+                "Symlink detected in TAR entry",
+                &format!(
+                    "Entry '{}' is a symbolic link which may point outside the archive",
+                    entry_path
+                ),
+                Some(entry_path.clone()),
+            ));
+            continue;
+        }
+
+        file_count += 1;
+        if file_count > policy.archive.max_file_count {
+            findings.push(make_finding(
+                "ARCHIVE_TOO_MANY_FILES",
+                IssueSeverity::Medium,
+                ThreatCategory::Obfuscation,
+                "Archive contains too many files",
+                &format!(
+                    "File count exceeds limit ({})",
+                    policy.archive.max_file_count
+                ),
+                Some(archive_path.to_string()),
+            ));
+            break;
+        }
+
+        let out_path = temp_dir.path().join(&entry_path);
+
+        if entry.header().entry_type().is_dir() {
+            if let Err(e) = fs::create_dir_all(&out_path) {
+                findings.push(make_finding(
+                    "ARCHIVE_EXTRACTION_FAILED",
+                    IssueSeverity::Medium,
+                    ThreatCategory::Obfuscation,
+                    "Failed to create directory for TAR entry",
+                    &format!("Cannot create directory '{}': {}", out_path.display(), e),
+                    Some(entry_path.clone()),
+                ));
+            }
+            continue;
+        }
+
+        // 创建父目录
+        if let Some(parent) = out_path.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                findings.push(make_finding(
+                    "ARCHIVE_EXTRACTION_FAILED",
+                    IssueSeverity::Medium,
+                    ThreatCategory::Obfuscation,
+                    "Failed to create parent directory",
+                    &format!("Cannot create directory '{}': {}", parent.display(), e),
+                    Some(entry_path.clone()),
+                ));
+                continue;
+            }
+        }
+
+        // 检查文件大小
+        let entry_size = entry.header().size().unwrap_or(0);
+        total_size += entry_size;
+        if total_size > policy.archive.max_total_size_bytes {
+            findings.push(make_finding(
+                "ARCHIVE_TOO_LARGE",
+                IssueSeverity::Medium,
+                ThreatCategory::Obfuscation,
+                "Archive uncompressed size exceeds limit",
+                &format!(
+                    "Total size exceeds limit ({})",
+                    policy.archive.max_total_size_bytes
+                ),
+                Some(archive_path.to_string()),
+            ));
+            break;
+        }
+
+        // 解压文件
+        match fs::File::create(&out_path) {
+            Ok(mut out_file) => {
+                if let Err(e) = io::copy(&mut entry, &mut out_file) {
+                    findings.push(make_finding(
+                        "ARCHIVE_EXTRACTION_FAILED",
+                        IssueSeverity::Medium,
+                        ThreatCategory::Obfuscation,
+                        "Failed to extract TAR entry",
+                        &format!("Cannot extract '{}': {}", entry_path, e),
+                        Some(entry_path.clone()),
+                    ));
+                    continue;
+                }
+            }
+            Err(e) => {
+                findings.push(make_finding(
+                    "ARCHIVE_EXTRACTION_FAILED",
+                    IssueSeverity::Medium,
+                    ThreatCategory::Obfuscation,
+                    "Failed to create output file",
+                    &format!("Cannot create file '{}': {}", out_path.display(), e),
+                    Some(entry_path.clone()),
+                ));
+                continue;
+            }
+        }
+
+        extracted_files.push(out_path.to_string_lossy().to_string());
     }
 
-    ExtractionResult {
-        temp_dir: Some(temp_dir),
-        extracted_files,
-        findings,
-    }
+    (extracted_files, findings)
 }
 
 /// 创建统一的 Finding

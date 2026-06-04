@@ -380,47 +380,35 @@ fn check_invisible_chars(content: &str, file_path: &str) -> Option<Finding> {
 
 // ── 辅助函数 ──
 
-/// 查找第一个可疑同形字字符的位置（行号和代码片段）
-fn find_suspicious_char_location(content: &str) -> (Option<usize>, Option<String>) {
+/// 查找第一个满足谓词的字符位置（行号和代码片段）
+fn find_first_match_location(
+    content: &str,
+    predicate: impl Fn(char) -> bool,
+) -> (Option<usize>, Option<String>) {
     for (line_idx, line) in content.lines().enumerate() {
-        let has_suspicious = line
-            .chars()
-            .any(|c| HOMOGLYPH_TO_LATIN.iter().any(|(from, _)| c == *from));
-        if has_suspicious {
-            // 截取行内容作为 snippet（最多 200 字符）
+        if line.chars().any(&predicate) {
             let snippet: String = line.chars().take(200).collect();
             return (Some(line_idx + 1), Some(snippet));
         }
     }
     (None, None)
+}
+
+/// 查找第一个可疑同形字字符的位置（行号和代码片段）
+fn find_suspicious_char_location(content: &str) -> (Option<usize>, Option<String>) {
+    find_first_match_location(content, |c| {
+        HOMOGLYPH_TO_LATIN.iter().any(|(from, _)| c == *from)
+    })
 }
 
 /// 查找第一个零宽字符的位置（行号和代码片段）
 fn find_zero_width_location(content: &str) -> (Option<usize>, Option<String>) {
-    for (line_idx, line) in content.lines().enumerate() {
-        let has_zw = line.chars().any(|c| ZERO_WIDTH_CHARS.contains(&c));
-        if has_zw {
-            // 截取行内容作为 snippet（最多 200 字符）
-            let snippet: String = line.chars().take(200).collect();
-            return (Some(line_idx + 1), Some(snippet));
-        }
-    }
-    (None, None)
+    find_first_match_location(content, |c| ZERO_WIDTH_CHARS.contains(&c))
 }
 
 /// 查找第一个不可见字符的位置（行号和代码片段）
 fn find_invisible_char_location(content: &str) -> (Option<usize>, Option<String>) {
-    for (line_idx, line) in content.lines().enumerate() {
-        let has_invisible = line
-            .chars()
-            .any(|c| c.is_control() && !c.is_ascii_whitespace());
-        if has_invisible {
-            // 截取行内容作为 snippet（最多 200 字符）
-            let snippet: String = line.chars().take(200).collect();
-            return (Some(line_idx + 1), Some(snippet));
-        }
-    }
-    (None, None)
+    find_first_match_location(content, |c| c.is_control() && !c.is_ascii_whitespace())
 }
 
 /// 创建带位置信息的 Finding 实例

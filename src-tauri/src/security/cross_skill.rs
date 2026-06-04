@@ -334,7 +334,7 @@ fn make_cross_skill_finding(
     title: &str,
     description: &str,
 ) -> Finding {
-    let id_input = format!("{}|{}", rule_id, description.len());
+    let id_input = format!("{}|{}", rule_id, description);
     let mut hasher = Sha256::new();
     hasher.update(id_input.as_bytes());
     let id = format!("{:x}", hasher.finalize())[..16].to_string();

@@ -2,33 +2,10 @@
 //!
 //! 从 builtin_compat.rs 提取的活跃类型，供 scanner 和 pattern_engine 使用。
 
-use crate::models::security::{IssueSeverity, ThreatCategory};
 use serde::{Deserialize, Serialize};
 
-/// 风险严重程度（5 级统一模型，与 IssueSeverity 一一对应）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Severity {
-    Critical,
-    High,
-    Medium,
-    Low,
-    Info,
-}
-
-impl From<Severity> for IssueSeverity {
-    fn from(s: Severity) -> Self {
-        match s {
-            Severity::Critical => IssueSeverity::Critical,
-            Severity::High => IssueSeverity::High,
-            Severity::Medium => IssueSeverity::Medium,
-            Severity::Low => IssueSeverity::Low,
-            Severity::Info => IssueSeverity::Info,
-        }
-    }
-}
-
 /// 风险类别（统一使用 ThreatCategory，保持向后兼容的别名）
-pub type Category = ThreatCategory;
+pub type Category = crate::models::security::ThreatCategory;
 
 /// 置信度等级
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

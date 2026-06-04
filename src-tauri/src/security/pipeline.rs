@@ -575,14 +575,8 @@ fn make_finding(
 /// 改进：只检查 URL 模式中的域名，而不是整个文件内容
 /// 避免注释中提到域名导致整个文件的恶意检测被跳过
 fn is_known_installer(content: &str, policy: &ScanPolicy) -> bool {
-    // 提取内容中的 URL
-    let urls: Vec<String> = RE_URL_EXTRACT
-        .find_iter(content)
-        .map(|m| m.as_str().to_lowercase())
-        .collect();
-
-    // 只在 URL 中检查已知安装器域名
-    urls.iter().any(|url| {
+    RE_URL_EXTRACT.find_iter(content).any(|m| {
+        let url = m.as_str().to_lowercase();
         policy
             .pipeline
             .known_installer_domains

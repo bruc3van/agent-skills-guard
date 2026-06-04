@@ -9,7 +9,7 @@ pub mod pattern_engine;
 pub mod types;
 
 // 从 types 重新导出
-pub use types::{Category, Confidence, Severity};
+pub use types::{Category, Confidence};
 
 use crate::models::security::{IssueSeverity, ThreatCategory};
 use serde::{Deserialize, Serialize};

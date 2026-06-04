@@ -1,7 +1,7 @@
 use crate::i18n::validate_locale;
 use crate::models::security::*;
 use crate::security::rules::pattern_engine::{match_yaml_rule, match_yaml_rule_multiline};
-use crate::security::rules::{Category, Confidence, Severity};
+use crate::security::rules::{Category, Confidence};
 use crate::security::skill_context::SkillContext;
 use crate::security::strict_structure;
 use anyhow::Result;
@@ -47,7 +47,7 @@ enum Utf16Encoding {
 struct MatchResult {
     rule_id: String,
     rule_name: String,
-    severity: Severity,
+    severity: IssueSeverity,
     category: Category,
     weight: i32,
     description: String,
@@ -303,7 +303,7 @@ impl SecurityScanner {
         };
         let finding_kind = Self::finding_kind_for_rule(&m.rule_id, Some(&m.category), None);
         SecurityIssue {
-            severity: m.severity.into(),
+            severity: m.severity,
             category: Self::map_category(&m.category),
             description: format!("{}: {}", m.rule_name, m.description),
             line_number: Some(m.line_number),
@@ -659,11 +659,11 @@ impl SecurityScanner {
             // 对非 hard_trigger 规则降级严重度
             if !m.hard_trigger {
                 m.severity = match m.severity {
-                    Severity::Critical => Severity::High,
-                    Severity::High => Severity::Medium,
-                    Severity::Medium => Severity::Low,
-                    Severity::Low => Severity::Low,
-                    Severity::Info => Severity::Info,
+                    IssueSeverity::Critical => IssueSeverity::High,
+                    IssueSeverity::High => IssueSeverity::Medium,
+                    IssueSeverity::Medium => IssueSeverity::Low,
+                    IssueSeverity::Low => IssueSeverity::Low,
+                    IssueSeverity::Info => IssueSeverity::Info,
                 };
                 // 降低权重
                 m.weight = (m.weight / 2).max(1);
@@ -679,21 +679,15 @@ impl SecurityScanner {
         code_snippet: String,
         file_path: &str,
     ) {
-        let base_severity = match compiled_rule.rule.severity {
-            IssueSeverity::Critical => Severity::Critical,
-            IssueSeverity::High => Severity::High,
-            IssueSeverity::Medium => Severity::Medium,
-            IssueSeverity::Low => Severity::Low,
-            IssueSeverity::Info => Severity::Info,
-        };
+        let base_severity = compiled_rule.rule.severity;
         let severity =
             if let Some(override_severity) = policy.get_severity_override(&compiled_rule.id) {
                 match override_severity {
-                    "Critical" => Severity::Critical,
-                    "High" => Severity::High,
-                    "Medium" => Severity::Medium,
-                    "Low" => Severity::Low,
-                    "Info" => Severity::Info,
+                    "Critical" => IssueSeverity::Critical,
+                    "High" => IssueSeverity::High,
+                    "Medium" => IssueSeverity::Medium,
+                    "Low" => IssueSeverity::Low,
+                    "Info" => IssueSeverity::Info,
                     _ => base_severity,
                 }
             } else {
@@ -1869,62 +1863,20 @@ impl SecurityScanner {
         }
 
         // 按类别提供建议
-        let has_destructive = matches
-            .iter()
-            .any(|m| matches!(m.category, Category::Destructive));
-        let has_remote_exec = matches
-            .iter()
-            .any(|m| matches!(m.category, Category::RemoteExec));
-        let has_cmd_injection = matches
-            .iter()
-            .any(|m| matches!(m.category, Category::CmdInjection));
-        let has_network = matches
-            .iter()
-            .any(|m| matches!(m.category, Category::Network));
-        let has_secrets = matches
-            .iter()
-            .any(|m| matches!(m.category, Category::Secrets));
-        let has_persistence = matches
-            .iter()
-            .any(|m| matches!(m.category, Category::Persistence));
-        let has_privilege = matches
-            .iter()
-            .any(|m| matches!(m.category, Category::PrivilegeEscalation));
-        let has_sensitive_file_access = matches
-            .iter()
-            .any(|m| matches!(m.category, Category::SensitiveFileAccess));
-
-        if has_destructive {
-            recommendations
-                .push(t!("security.recommendations.destructive", locale = locale).to_string());
-        }
-        if has_remote_exec {
-            recommendations
-                .push(t!("security.recommendations.remote_exec", locale = locale).to_string());
-        }
-        if has_cmd_injection {
-            recommendations
-                .push(t!("security.recommendations.cmd_injection", locale = locale).to_string());
-        }
-        if has_network {
-            recommendations
-                .push(t!("security.recommendations.network", locale = locale).to_string());
-        }
-        if has_secrets {
-            recommendations
-                .push(t!("security.recommendations.secrets", locale = locale).to_string());
-        }
-        if has_persistence {
-            recommendations
-                .push(t!("security.recommendations.persistence", locale = locale).to_string());
-        }
-        if has_privilege {
-            recommendations
-                .push(t!("security.recommendations.privilege", locale = locale).to_string());
-        }
-        if has_sensitive_file_access {
-            recommendations
-                .push(t!("security.recommendations.sensitive_file", locale = locale).to_string());
+        let category_recommendations: &[(Category, &str)] = &[
+            (Category::Destructive, "security.recommendations.destructive"),
+            (Category::RemoteExec, "security.recommendations.remote_exec"),
+            (Category::CmdInjection, "security.recommendations.cmd_injection"),
+            (Category::Network, "security.recommendations.network"),
+            (Category::Secrets, "security.recommendations.secrets"),
+            (Category::Persistence, "security.recommendations.persistence"),
+            (Category::PrivilegeEscalation, "security.recommendations.privilege"),
+            (Category::SensitiveFileAccess, "security.recommendations.sensitive_file"),
+        ];
+        for &(cat, msg_key) in category_recommendations {
+            if matches.iter().any(|m| m.category == cat) {
+                recommendations.push(t!(msg_key, locale = locale).to_string());
+            }
         }
 
         if recommendations.is_empty() {
@@ -2911,7 +2863,7 @@ eval(user_input)
             .find(|m| m.rule_id == "CURL_PIPE_SH")
             .expect("CURL_PIPE_SH should still match with override");
         assert!(
-            matches!(m.severity, Severity::Info),
+            matches!(m.severity, IssueSeverity::Info),
             "severity should be Info after override, got {:?}",
             m.severity
         );
@@ -2935,7 +2887,7 @@ eval(user_input)
             .expect("CURL_PIPE_SH should still match");
         // Invalid override string should fall back to the rule's base severity (Critical)
         assert!(
-            matches!(m.severity, Severity::Critical),
+            matches!(m.severity, IssueSeverity::Critical),
             "invalid override should fall back to base severity Critical, got {:?}",
             m.severity
         );
