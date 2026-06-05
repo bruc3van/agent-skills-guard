@@ -489,6 +489,138 @@ impl SecurityScanner {
             .unwrap_or(false)
     }
 
+    fn is_markdown_file(file_path: &str) -> bool {
+        matches!(
+            Self::normalized_extension(file_path).as_deref(),
+            Some("md") | Some("markdown") | Some("mdx")
+        ) || Self::is_skill_md(file_path)
+    }
+
+    fn line_at(content: &str, line_number: usize) -> &str {
+        content
+            .lines()
+            .nth(line_number.saturating_sub(1))
+            .unwrap_or("")
+    }
+
+    fn lines_window(content: &str, line_number: usize, max_lines: usize) -> String {
+        content
+            .lines()
+            .skip(line_number.saturating_sub(1))
+            .take(max_lines)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn line_indent(line: &str) -> usize {
+        line.chars().take_while(|ch| ch.is_whitespace()).count()
+    }
+
+    fn markdown_fs_line_mentions_sensitive_target(line: &str) -> bool {
+        let lower = line.to_ascii_lowercase();
+        [
+            "/etc/",
+            "/var/",
+            "/usr/",
+            "/bin/",
+            "/sbin/",
+            "/root/",
+            "~/.ssh",
+            "~/.aws",
+            "~/.config",
+            "~/.kube",
+            "~/.docker",
+            ".ssh/",
+            ".aws/",
+            ".kube/",
+            ".docker/",
+            ".npmrc",
+            ".netrc",
+            ".env",
+            "id_rsa",
+            "id_ed25519",
+            "authorized_keys",
+            "private_key",
+            "secret",
+            "token",
+            "password",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    }
+
+    fn python_loop_has_exit_condition(content: &str, line_number: usize) -> bool {
+        let lines: Vec<&str> = content.lines().collect();
+        let Some(loop_line) = lines.get(line_number.saturating_sub(1)) else {
+            return false;
+        };
+        let loop_indent = Self::line_indent(loop_line);
+
+        for line in lines.iter().skip(line_number) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let indent = Self::line_indent(line);
+            if indent <= loop_indent {
+                return false;
+            }
+
+            if trimmed == "break"
+                || trimmed.starts_with("break ")
+                || trimmed == "return"
+                || trimmed.starts_with("return ")
+                || trimmed == "raise"
+                || trimmed.starts_with("raise ")
+                || trimmed.starts_with("sys.exit(")
+                || trimmed.starts_with("exit(")
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn subprocess_call_uses_shell_true(content: &str, line_number: usize) -> bool {
+        Self::lines_window(content, line_number, 12)
+            .to_ascii_lowercase()
+            .contains("shell=true")
+    }
+
+    fn should_suppress_match(
+        rule_id: &str,
+        line_number: usize,
+        content: &str,
+        file_path: &str,
+    ) -> bool {
+        if Self::is_markdown_file(file_path) && rule_id == "TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL" {
+            return true;
+        }
+
+        if Self::is_markdown_file(file_path) && rule_id == "SVG_EMBEDDED_SCRIPT" {
+            return true;
+        }
+
+        // Filesystem access alone is a capability, not exfiltration. Keep findings
+        // when the matched line names sensitive/system targets.
+        if rule_id == "DATA_EXFIL_JS_FS_ACCESS" {
+            let line = Self::line_at(content, line_number);
+            return !Self::markdown_fs_line_mentions_sensitive_target(line);
+        }
+
+        if rule_id == "RESOURCE_ABUSE_INFINITE_LOOP" {
+            return Self::python_loop_has_exit_condition(content, line_number);
+        }
+
+        if rule_id == "SUBPROCESS_CALL" {
+            return !Self::subprocess_call_uses_shell_true(content, line_number);
+        }
+
+        false
+    }
+
     fn is_static_raster_asset_ext(ext: Option<&str>) -> bool {
         matches!(
             ext,
@@ -761,6 +893,11 @@ impl SecurityScanner {
                     continue;
                 }
 
+                if Self::should_suppress_match(&compiled_rule.id, *line_number, content, file_path)
+                {
+                    continue;
+                }
+
                 let dedup_key = format!("{}:{}", compiled_rule.id, line_number);
                 if !seen.insert(dedup_key) {
                     continue;
@@ -779,6 +916,10 @@ impl SecurityScanner {
             // 跨行 pattern 第二遍（整段内容）
             if let Some((line_number, snippet)) = match_yaml_rule_multiline(compiled_rule, content)
             {
+                if Self::should_suppress_match(&compiled_rule.id, line_number, content, file_path) {
+                    continue;
+                }
+
                 let dedup_key = format!("{}:ml:{}", compiled_rule.id, line_number);
                 if seen.insert(dedup_key) {
                     Self::push_yaml_match(
@@ -3114,6 +3255,301 @@ eval(user_input)
             py_pi_issues.is_empty(),
             ".py file should NOT trigger PROMPT_INJECTION rules (not in file_types), got: {:?}",
             report_py.issues
+        );
+    }
+
+    #[test]
+    fn test_markdown_dependency_install_notes_do_not_trigger_system_install_risk() {
+        let scanner = SecurityScanner::new();
+        let content = r#"---
+name: mainstream-tooling-skill
+description: A mainstream skill that documents optional dependencies.
+---
+
+## Dependencies
+
+- `pip install Pillow` - thumbnail rendering
+- `npm install -g pptxgenjs` - create slides from scratch
+- `brew install poppler` - optional PDF image conversion
+
+## Usage
+
+Use the installed tools only when the user asks for document conversion.
+"#;
+
+        let report = scanner.scan_file(content, "SKILL.md", "en").unwrap();
+
+        assert!(
+            !report.issues.iter().any(|i| {
+                i.rule_id.as_deref() == Some("TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL")
+            }),
+            "Dependency notes in SKILL.md should not be treated as package-install abuse, got: {:?}",
+            report.issues
+        );
+        assert!(
+            report.score >= 90,
+            "Benign dependency notes should not materially lower score, got {} with {:?}",
+            report.score,
+            report.issues
+        );
+    }
+
+    #[test]
+    fn test_markdown_inline_install_notes_do_not_trigger_system_install_risk() {
+        let scanner = SecurityScanner::new();
+        let content = r#"---
+name: docx
+description: Create and validate Word documents.
+---
+
+## Creating New Documents
+
+Generate .docx files with JavaScript, then validate. Install: `npm install -g docx`
+"#;
+
+        let report = scanner.scan_file(content, "SKILL.md", "en").unwrap();
+
+        assert!(
+            !report.issues.iter().any(|i| {
+                i.rule_id.as_deref() == Some("TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL")
+            }),
+            "Inline install notes in Markdown should not be treated as package-install abuse, got: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn test_markdown_setup_code_blocks_do_not_trigger_system_install_risk() {
+        let scanner = SecurityScanner::new();
+        let content = r#"---
+name: using-git-worktrees
+description: Set up an isolated workspace.
+---
+
+## Step 3: Project Setup
+
+```bash
+if [ -f package.json ]; then npm install; fi
+if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+```
+"#;
+
+        let report = scanner.scan_file(content, "SKILL.md", "en").unwrap();
+
+        assert!(
+            !report.issues.iter().any(|i| {
+                i.rule_id.as_deref() == Some("TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL")
+            }),
+            "Project setup examples in Markdown should not be treated as package-install abuse, got: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn test_markdown_svg_examples_do_not_trigger_svg_asset_script_rule() {
+        let scanner = SecurityScanner::new();
+        let content = r#"---
+name: algorithmic-art
+description: Demonstrates generated SVG snippets.
+---
+
+```html
+<svg viewBox="0 0 100 100">
+  <circle onclick="toggleSelect(this)" cx="50" cy="50" r="20" />
+</svg>
+```
+"#;
+
+        let report = scanner.scan_file(content, "SKILL.md", "en").unwrap();
+
+        assert!(
+            !report.issues.iter().any(|i| {
+                i.rule_id.as_deref() == Some("SVG_EMBEDDED_SCRIPT")
+            }),
+            "SVG examples in Markdown should not trigger SVG asset script risk, got: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn test_markdown_javascript_examples_do_not_trigger_node_fs_rule() {
+        let scanner = SecurityScanner::new();
+        let content = r#"---
+name: docx
+description: Create and validate Word documents.
+---
+
+## Creating New Documents
+
+```javascript
+const fs = require("fs");
+Packer.toBuffer(doc).then(buffer => fs.writeFileSync("doc.docx", buffer));
+```
+"#;
+
+        let report = scanner.scan_file(content, "SKILL.md", "en").unwrap();
+
+        assert!(
+            !report.issues.iter().any(|i| {
+                i.rule_id.as_deref() == Some("NODE_FS_READWRITE")
+                    || i.description.contains("Node.js filesystem read/write")
+            }),
+            "Markdown code examples should not trigger Node filesystem read/write risk, got: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn test_javascript_local_filesystem_access_does_not_trigger_exfil_rule() {
+        let scanner = SecurityScanner::new();
+        let content = r#"
+const fs = require("fs");
+const data = fs.readFileSync(path.join(__dirname, "manifest.json"), "utf8");
+fs.writeFileSync(path.join(stateDir, "server-info"), data);
+"#;
+
+        let report = scanner.scan_file(content, "skills-core.js", "en").unwrap();
+
+        assert!(
+            !report.issues.iter().any(|i| {
+                i.rule_id.as_deref() == Some("DATA_EXFIL_JS_FS_ACCESS")
+                    || i.description.contains("Node.js filesystem read/write")
+            }),
+            "Local plugin filesystem access should not be treated as exfiltration by itself, got: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn test_markdown_javascript_sensitive_fs_access_still_triggers() {
+        let scanner = SecurityScanner::new();
+        let content = r#"---
+name: suspicious-skill
+description: Demonstrates suspicious filesystem access.
+---
+
+```javascript
+const fs = require("fs");
+const secret = fs.readFileSync("/etc/passwd", "utf8");
+```
+"#;
+
+        let report = scanner.scan_file(content, "SKILL.md", "en").unwrap();
+
+        assert!(
+            report.issues.iter().any(|i| {
+                i.rule_id.as_deref() == Some("DATA_EXFIL_JS_FS_ACCESS")
+                    || i.description.contains("Node.js filesystem read/write")
+            }),
+            "Markdown examples that read sensitive absolute paths should still trigger, got: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn test_javascript_sensitive_fs_access_still_triggers() {
+        let scanner = SecurityScanner::new();
+        let content = r#"
+const fs = require("fs");
+const secret = fs.readFileSync("/etc/passwd", "utf8");
+"#;
+
+        let report = scanner.scan_file(content, "collector.js", "en").unwrap();
+
+        assert!(
+            report.issues.iter().any(|i| {
+                i.rule_id.as_deref() == Some("DATA_EXFIL_JS_FS_ACCESS")
+                    || i.description.contains("Node.js filesystem read/write")
+            }),
+            "JavaScript reads of sensitive paths should still trigger, got: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn test_python_while_true_with_exit_condition_does_not_trigger_infinite_loop() {
+        let scanner = SecurityScanner::new();
+        let content = r#"
+while True:
+    removed = cleanup_once()
+    if not removed:
+        break
+"#;
+
+        let report = scanner
+            .scan_file(content, "scripts/clean.py", "en")
+            .unwrap();
+
+        assert!(
+            !report.issues.iter().any(|i| {
+                i.rule_id.as_deref() == Some("RESOURCE_ABUSE_INFINITE_LOOP")
+            }),
+            "while True loops with explicit exit conditions should not trigger infinite-loop risk, got: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn test_python_while_true_without_exit_condition_still_triggers() {
+        let scanner = SecurityScanner::new();
+        let content = r#"
+while True:
+    do_work()
+"#;
+
+        let report = scanner.scan_file(content, "scripts/loop.py", "en").unwrap();
+
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| { i.rule_id.as_deref() == Some("RESOURCE_ABUSE_INFINITE_LOOP") }),
+            "while True loops without exit conditions should still trigger, got: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn test_subprocess_run_with_fixed_list_args_does_not_trigger_generic_call() {
+        let scanner = SecurityScanner::new();
+        let content = r#"
+subprocess.run(
+    [
+        "soffice",
+        "--headless",
+        "--terminate_after_init",
+    ],
+    check=False,
+)
+"#;
+
+        let report = scanner
+            .scan_file(content, "scripts/accept_changes.py", "en")
+            .unwrap();
+
+        assert!(
+            !report.issues.iter().any(|i| {
+                i.rule_id.as_deref() == Some("SUBPROCESS_CALL")
+            }),
+            "subprocess.run with fixed list args and shell=False should not trigger generic subprocess risk, got: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn test_subprocess_shell_true_still_triggers() {
+        let scanner = SecurityScanner::new();
+        let content = r#"subprocess.run(user_command, shell=True)"#;
+
+        let report = scanner.scan_file(content, "scripts/exec.py", "en").unwrap();
+
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| { i.rule_id.as_deref() == Some("SUBPROCESS_SHELL") }),
+            "subprocess shell=True should still trigger, got: {:?}",
+            report.issues
         );
     }
 
