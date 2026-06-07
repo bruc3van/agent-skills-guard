@@ -75,7 +75,11 @@ rule_scoping:
     - "fixtures"
     - "samples"
     - "demo"
-  skip_in_docs: []
+    - "skills"
+  skip_in_docs:
+    - "CURL_POST"
+    - "PY_EVAL"
+    - "TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL"
 
 # Pipeline 分析
 pipeline:

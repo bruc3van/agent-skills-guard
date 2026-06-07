@@ -12,7 +12,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::security::policy::ScanPolicy;
 
-const SKIP_DIR_NAMES: &[&str] = &["node_modules", "target", "dist", "build", ".venv", "venv"];
+const SKIP_DIR_NAMES: &[&str] = &[
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    ".git",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+];
+const SKIP_FILE_NAMES: &[&str] = &[".DS_Store", "Thumbs.db", "desktop.ini"];
 
 // ── ScanMode ──
 
@@ -363,6 +377,15 @@ impl SkillContext {
 
             if file_count >= policy.file_limits.max_files {
                 break;
+            }
+
+            if let Some(name) = entry.file_name().to_str() {
+                if SKIP_FILE_NAMES
+                    .iter()
+                    .any(|skip_name| name.eq_ignore_ascii_case(skip_name))
+                {
+                    continue;
+                }
             }
 
             let abs_path = entry.path().to_path_buf();
@@ -797,6 +820,34 @@ mod tests {
             .find(|f| f.relative_path.to_string_lossy() == "visible.txt")
             .unwrap();
         assert!(!visible_file.is_hidden);
+    }
+
+    #[test]
+    fn test_for_directory_skips_vcs_and_system_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+
+        std::fs::write(dir_path.join("skill.md"), "Instructions").unwrap();
+        std::fs::write(dir_path.join(".DS_Store"), [0u8, 1u8, 2u8]).unwrap();
+
+        let git_dir = dir_path.join(".git").join("objects").join("pack");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::write(dir_path.join(".git").join("index"), [0u8, 1u8, 2u8]).unwrap();
+        std::fs::write(git_dir.join("pack-test.idx"), [0u8, 1u8, 2u8]).unwrap();
+
+        let cache_dir = dir_path.join("__pycache__");
+        std::fs::create_dir(&cache_dir).unwrap();
+        std::fs::write(cache_dir.join("helper.pyc"), [0u8, 1u8, 2u8]).unwrap();
+
+        let policy = ScanPolicy::builtin_default().clone();
+        let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
+        let paths: Vec<_> = ctx
+            .files
+            .iter()
+            .map(|file| file.relative_path.to_string_lossy().to_string())
+            .collect();
+
+        assert_eq!(paths, vec!["skill.md"]);
     }
 
     #[test]

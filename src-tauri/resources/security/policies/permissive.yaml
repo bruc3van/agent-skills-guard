@@ -49,8 +49,12 @@ rule_scoping:
     - "assets"
     - "templates"
     - "data"
+    - "skills"
   skip_in_docs:
     - "CURL_PIPE_SH_MENTION"
+    - "CURL_POST"
+    - "PY_EVAL"
+    - "TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL"
 
 pipeline:
   known_installer_domains:

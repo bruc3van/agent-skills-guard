@@ -136,7 +136,7 @@ pub struct RuleScopingPolicy {
     #[serde(default = "default_doc_path_indicators")]
     pub doc_path_indicators: HashSet<String>,
     /// 文档中跳过的规则 ID
-    #[serde(default)]
+    #[serde(default = "default_skip_in_docs")]
     pub skip_in_docs: HashSet<String>,
 }
 
@@ -144,7 +144,7 @@ impl Default for RuleScopingPolicy {
     fn default() -> Self {
         Self {
             doc_path_indicators: default_doc_path_indicators(),
-            skip_in_docs: HashSet::new(),
+            skip_in_docs: default_skip_in_docs(),
         }
     }
 }
@@ -328,10 +328,18 @@ fn default_doc_path_indicators() -> HashSet<String> {
         "fixtures",
         "samples",
         "demo",
+        "skills",
     ]
     .iter()
     .map(|s| s.to_string())
     .collect()
+}
+
+fn default_skip_in_docs() -> HashSet<String> {
+    ["CURL_POST", "PY_EVAL", "TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn default_known_installer_domains() -> HashSet<String> {
@@ -504,9 +512,9 @@ impl ScanPolicy {
             .any(|indicator| {
                 let indicator_lower = indicator.to_lowercase();
                 lower.starts_with(&format!("{}/", indicator_lower))
-                    || separators.iter().any(|&sep| {
-                        lower.contains(&format!("{}{}{}", sep, indicator_lower, sep))
-                    })
+                    || separators
+                        .iter()
+                        .any(|&sep| lower.contains(&format!("{}{}{}", sep, indicator_lower, sep)))
                     || separators
                         .iter()
                         .any(|&sep| lower.ends_with(&format!("{}{}", sep, indicator_lower)))

@@ -694,7 +694,8 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
         use flate2::read::GzDecoder;
         let decoder = GzDecoder::new(file);
         let mut archive = Archive::new(decoder);
-        let (files, mut entry_findings) = extract_tar_entries(&mut archive, archive_path, policy, &temp_dir);
+        let (files, mut entry_findings) =
+            extract_tar_entries(&mut archive, archive_path, policy, &temp_dir);
         findings.append(&mut entry_findings);
         ExtractionResult {
             temp_dir: Some(temp_dir),
@@ -703,7 +704,8 @@ fn extract_tar(archive_path: &str, policy: &ScanPolicy, is_gzipped: bool) -> Ext
         }
     } else {
         let mut archive = Archive::new(file);
-        let (files, mut entry_findings) = extract_tar_entries(&mut archive, archive_path, policy, &temp_dir);
+        let (files, mut entry_findings) =
+            extract_tar_entries(&mut archive, archive_path, policy, &temp_dir);
         findings.append(&mut entry_findings);
         ExtractionResult {
             temp_dir: Some(temp_dir),

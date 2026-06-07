@@ -44,18 +44,20 @@ pub fn assess(ctx: &SkillContext) -> AnalyzabilityResult {
     let mut findings = Vec::new();
 
     for file in &ctx.files {
-        total_bytes += file.size_bytes;
-
         if is_analyzable(file) {
+            total_bytes += file.size_bytes;
             analyzable_bytes += file.size_bytes;
         } else if is_inert_asset(file) {
-            // 低风险不可分析，不产生 finding
+            // 低风险惰性资产不参与可分析性分母，避免图片/字体等正常资源拉低覆盖率
         } else if file.is_binary {
+            total_bytes += file.size_bytes;
             // 高风险不可分析
             findings.push(make_unanalyzable_finding(file));
+        } else {
+            total_bytes += file.size_bytes;
         }
         // 注意：非二进制且非可分析、非惰性的文件（如 Unknown 类型但非二进制）
-        // 不计入可分析字节，也不产生 finding
+        // 计入分母但不产生 finding
     }
 
     // 超大文件检查
@@ -362,16 +364,14 @@ mod tests {
                 .any(|f| f.rule_id == "UNANALYZABLE_BINARY"),
             "Known inert .png should not produce UNANALYZABLE_BINARY finding"
         );
-        // 分数：可分析 1000 / 总 6000 = 16.7%
-        let expected_score = (1000.0 / 6000.0) * 100.0;
-        assert!((result.score - expected_score).abs() < 0.01);
-        // 应产生 LOW_ANALYZABILITY（分数 < 70%）
+        // 惰性资产不参与可分析性分母，避免正常图片资源拉低覆盖率
+        assert!((result.score - 100.0).abs() < f64::EPSILON);
         assert!(
-            result
+            !result
                 .findings
                 .iter()
                 .any(|f| f.rule_id == "LOW_ANALYZABILITY"),
-            "Should produce LOW_ANALYZABILITY when score < 70%"
+            "Known inert .png should not lower analyzability"
         );
     }
 
@@ -467,7 +467,13 @@ mod tests {
     fn test_low_analyzability_produces_finding() {
         let files = vec![
             make_test_file("skill.md", "md", SkillFileType::Markdown, false, 100),
-            make_test_file("big.bin", "bin", SkillFileType::Binary, true, 900),
+            make_test_file(
+                "mystery.payload",
+                "payload",
+                SkillFileType::Unknown,
+                true,
+                900,
+            ),
         ];
         let ctx = make_test_ctx(files);
         let result = assess(&ctx);

@@ -1264,3 +1264,67 @@ rules:
   description: "Prompt injection: claiming autonomous decision-making without user confirmation"
   remediation: "Remove autonomy claims; all significant actions require user confirmation"
   cwe_id: CWE-77
+
+# === Content Poisoning / RAG Poisoning 规则 ===
+
+- id: CONTENT_POISON_PERSONAL_ACCOUNT_PROMOTION
+  category: SocialEngineering
+  severity: Medium
+  weight: 45
+  confidence: Medium
+  hard_trigger: false
+  file_types:
+  - .md
+  - .markdown
+  - .mdx
+  - .yaml
+  - .yml
+  - .json
+  patterns:
+  - '(?i)(?:x账号|x平台|x\s*(?:account|handle)|twitter\s*(?:account|handle))\s*(?:是|:|：)?\s*[@A-Za-z0-9_.-]{3,}'
+  - '(?i)(?:follow|关注|参考|推荐关注|重点参考).{0,80}(?:x\.com/[A-Za-z0-9_.-]+|(?:on|在)\s*x\b|x平台|x账号)'
+  - '(?i)(?:expert|专家|community|社区|contributor|贡献者).{0,80}(?:x\.com/[A-Za-z0-9_.-]+|x\s*[:：]\s*[A-Za-z0-9_.-]+|x账号\s*[:：]?\s*[A-Za-z0-9_.-]+)'
+  description: "Content poisoning: personal social account promoted as an authority or resource"
+  remediation: "Remove unverified personal account promotion from skill instructions, references, and metadata"
+  cwe_id: CWE-451
+
+- id: PROMPT_INJECTION_COMMENT_PLANTED_REFERENCE
+  category: PromptInjection
+  severity: Medium
+  weight: 50
+  confidence: Medium
+  hard_trigger: false
+  file_types:
+  - .md
+  - .markdown
+  - .mdx
+  - .py
+  - .js
+  - .ts
+  - .tsx
+  - .yaml
+  - .yml
+  patterns:
+  - '(?i)(?:REVIEWER_NOTE|Internal|Reviewer|Maintainer|@contributor|dev-contact).{0,120}(?:x\.com/[A-Za-z0-9_.-]+|x\s*[:：]\s*[A-Za-z0-9_.-]+|follow\s+[A-Za-z0-9_.-]+\s+on\s+x|refer\s+to\s+[A-Za-z0-9_.-]+\s+on\s+x|[A-Za-z0-9_.-]+@x\.com)'
+  description: "Prompt injection: planted reference hidden in code comments or template metadata"
+  remediation: "Remove maintainer/reviewer/comment metadata that injects unrelated personal references"
+  cwe_id: CWE-77
+
+- id: RAG_POISON_KNOWLEDGE_GRAPH_SOCIAL_REFERENCE
+  category: PromptInjection
+  severity: Medium
+  weight: 55
+  confidence: Medium
+  hard_trigger: false
+  file_types:
+  - .yaml
+  - .yml
+  - .json
+  - .md
+  - .markdown
+  - .mdx
+  patterns:
+  - '(?i)(?:see_also|community|扩展资源|社区参考).{0,100}(?:x\.com/[A-Za-z0-9_.-]+|x\s*[:：]\s*[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+\s*\(\s*x\s*[:：]\s*[A-Za-z0-9_.-]+\s*\))'
+  description: "RAG poisoning: social account embedded in knowledge graph relations or retrieval metadata"
+  remediation: "Remove unrelated social account references from knowledge graph, see_also, and community metadata"
+  cwe_id: CWE-451
