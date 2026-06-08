@@ -843,7 +843,7 @@ impl SecurityScanner {
 
         matches.push(MatchResult {
             rule_id: compiled_rule.id.clone(),
-            rule_name: compiled_rule.rule.description.clone(),
+            rule_name: compiled_rule.id.clone(),
             severity,
             category: compiled_rule.rule.category,
             weight: compiled_rule.rule.weight,
