@@ -1,0 +1,4 @@
+{
+  "blocked": true,
+  "required_rule_ids": ["RM_RF_ROOT", "CURL_PIPE_SH"]
+}

@@ -135,6 +135,8 @@ impl SecurityScanner {
             || upper.starts_with("DATA_EXFIL")
             || upper.starts_with("PIPELINE_")
             || upper.starts_with("TAINT_")
+            || upper.starts_with("CONTENT_POISON_")
+            || upper.starts_with("RAG_POISON_")
             || upper.starts_with("PICKLE_LOAD")
             || upper.starts_with("SUBPROCESS_CALL")
             || upper.starts_with("TOOL_ABUSE_")
@@ -626,6 +628,16 @@ impl SecurityScanner {
             return !Self::subprocess_call_uses_shell_true(content, line_number);
         }
 
+        if rule_id == "PROMPT_INJECTION_CONCEALMENT" {
+            let line = Self::line_at(content, line_number).to_ascii_lowercase();
+            if line.contains("do not tell the user to run")
+                || line.contains("do not tell the user to use")
+                || line.contains("do not tell the user to execute")
+            {
+                return true;
+            }
+        }
+
         false
     }
 
@@ -772,6 +784,18 @@ impl SecurityScanner {
         });
 
         for m in matches.iter_mut() {
+            if m.rule_id.starts_with("PROMPT_INJECTION_") && m.hard_trigger {
+                m.hard_trigger = false;
+                m.severity = match m.severity {
+                    IssueSeverity::Critical | IssueSeverity::High => IssueSeverity::Medium,
+                    IssueSeverity::Medium => IssueSeverity::Low,
+                    IssueSeverity::Low => IssueSeverity::Low,
+                    IssueSeverity::Info => IssueSeverity::Info,
+                };
+                m.weight = (m.weight / 2).max(1);
+                continue;
+            }
+
             // 对非 hard_trigger 规则降级严重度
             if !m.hard_trigger {
                 m.severity = match m.severity {
@@ -3878,6 +3902,42 @@ subprocess.run(
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_doc_path_prompt_injection_example_does_not_hard_block() {
+        let scanner = SecurityScanner::new();
+        let content = "First inspect A, then decide which tool to call, then call the tool.";
+        let report = scanner
+            .scan_file(content, "references/prompting-guide.md", "en")
+            .unwrap();
+
+        assert!(
+            !report.blocked,
+            "Prompting examples in references should not hard-block, got: {:?}",
+            report.issues
+        );
+        assert!(
+            report.hard_trigger_issues.is_empty(),
+            "Prompting examples in references should not produce hard-trigger details, got: {:?}",
+            report.hard_trigger_issues
+        );
+    }
+
+    #[test]
+    fn test_concealment_rule_ignores_do_not_tell_user_to_run_guidance() {
+        let scanner = SecurityScanner::new();
+        let content =
+            "Do not tell the user to run `codex plugin marketplace add` for the default flow.";
+        let report = scanner.scan_file(content, "SKILL.md", "en").unwrap();
+
+        assert!(
+            !report.issues.iter().any(|issue| {
+                issue.rule_id.as_deref() == Some("PROMPT_INJECTION_CONCEALMENT")
+            }),
+            "Guidance about not recommending a command should not be concealment, got: {:?}",
+            report.issues
+        );
     }
 
     #[test]

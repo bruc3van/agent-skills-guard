@@ -17,6 +17,10 @@ use crate::security::SKIP_DIR_NAMES;
 
 const SKIP_FILE_NAMES: &[&str] = &[".DS_Store", "Thumbs.db", "desktop.ini"];
 
+fn should_skip_context_dir(name: &str) -> bool {
+    name != "__pycache__" && SKIP_DIR_NAMES.contains(&name)
+}
+
 // ── ScanMode ──
 
 /// 扫描模式：单文件或整个目录
@@ -363,7 +367,7 @@ impl SkillContext {
 
             if entry.file_type().is_dir() {
                 if let Some(name) = entry.file_name().to_str() {
-                    if SKIP_DIR_NAMES.contains(&name) {
+                    if should_skip_context_dir(name) {
                         iter.skip_current_dir();
                     }
                 }
@@ -836,13 +840,18 @@ mod tests {
 
         let policy = ScanPolicy::builtin_default().clone();
         let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
-        let paths: Vec<_> = ctx
+        let mut paths: Vec<_> = ctx
             .files
             .iter()
             .map(|file| file.relative_path.to_string_lossy().to_string())
             .collect();
+        paths.sort();
 
-        assert_eq!(paths, vec!["skill.md"]);
+        assert_eq!(
+            paths,
+            vec!["__pycache__\\helper.pyc", "skill.md"],
+            "__pycache__ stays visible to structure analyzers while VCS/system metadata is skipped"
+        );
     }
 
     #[test]

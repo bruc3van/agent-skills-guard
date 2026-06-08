@@ -1,0 +1,7 @@
+{
+  "name": "bruce-drawio",
+  "description": "Cross-platform draw.io diagram generator. Use when user wants to create any diagram: flowchart, architecture, UML (sequence/class), ER, mindmap, network topology. Trigger: 'draw diagram', 'flowchart', 'architecture diagram', 'UML', 'sequence diagram', 'mindmap', 'ER diagram', 'network topology', 'visualize'. Workflow: LLM generates drawio XML -> self-review -> CLI export PNG/SVG/PDF. Supports Windows, macOS, Linux.",
+  "version": "3.0.2",
+  "author": "brucevanfdm@gmail.com",
+  "tags": ["diagram", "flowchart", "architecture", "uml", "mindmap", "visualization", "er-diagram", "network-topology", "drawio", "cross-platform"]
+}

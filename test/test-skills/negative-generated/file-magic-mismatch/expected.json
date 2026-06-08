@@ -1,0 +1,4 @@
+{
+  "blocked": false,
+  "required_rule_ids": ["FILE_MAGIC_MISMATCH"]
+}

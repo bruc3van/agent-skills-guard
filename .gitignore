@@ -46,4 +46,6 @@ yarn-error.log*
 
 .claude/
 reference/
-test/
+test/*
+!test/test-skills/
+!test/test-skills/**

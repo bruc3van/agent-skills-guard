@@ -1,0 +1,4 @@
+{
+  "blocked": true,
+  "required_rule_ids": ["PIPELINE_SENSITIVE_EXFIL"]
+}

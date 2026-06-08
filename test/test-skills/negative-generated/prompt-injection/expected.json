@@ -1,0 +1,4 @@
+{
+  "blocked": true,
+  "required_rule_ids": ["PROMPT_INJECTION_IGNORE_INSTRUCTIONS"]
+}

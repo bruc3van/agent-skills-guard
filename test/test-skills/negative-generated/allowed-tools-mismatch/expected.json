@@ -1,0 +1,7 @@
+{
+  "blocked": false,
+  "required_rule_ids": [
+    "ALLOWED_TOOLS_NETWORK_USAGE",
+    "TOOL_ABUSE_UNDECLARED_NETWORK"
+  ]
+}
