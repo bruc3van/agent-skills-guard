@@ -6,7 +6,7 @@
 
 ### Making Claude Code Skills Management as Simple and Secure as an App Store
 
-[![Version](https://img.shields.io/badge/version-1.2.6-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 
@@ -51,15 +51,19 @@ Manage Claude Code skills like managing mobile apps, from discovery, installatio
 
 ### 🛡️ Community-Leading Security Scanning
 
-**Covering 8 major risk categories with 22 hard-trigger protections**, making skill use more secure.
+**All-new multi-layer scanning pipeline engine**, covering 8+ risk categories, multi-step attack chains, Unicode deception, cross-skill coordinated attacks and more cutting-edge detection capabilities.
 
-- 🔍 **8 risk categories**: Destructive operations, remote code execution, command injection, data exfiltration, privilege escalation, persistence, sensitive information leakage, sensitive file access
-- 🚫 **22 hard-trigger rules**: Directly block high-risk operations, no risk taking
-- 🔗 **Symbolic link detection**: Prevent symlink attacks
-- ⚡ **Parallel scanning acceleration**: Parallel scanning technology greatly improves detection speed
-- 📊 **Security scoring system**: 0-100 score intuitive display
-- 📝 **Detailed scan reports**: Tell you where the risk is, why it's risky, how to fix it
-- 🎯 **Confidence grading**: High/Medium/Low three-level confidence, reduce false positives
+- 🔍 **8+ risk categories**: Destructive operations, remote code execution, command injection, data exfiltration, privilege escalation, persistence, sensitive information leakage, sensitive file access, and more
+- 🔗 **Multi-step attack chain detection**: Taint analysis engine tracking download-execute chains, sensitive file exfiltration and other cross-line attack patterns
+- 🎭 **Unicode security detection**: Three-layer detection — homoglyph attacks, zero-width character steganography, invisible control characters
+- 🌐 **Cross-skill coordinated attack detection**: Discover data relay, shared malicious domains and other coordinated attack behaviors across multiple skills
+- 📦 **File type disguise detection**: 14 magic signature types, prevent binary files disguised as text
+- 🗜️ **Safe archive extraction**: ZIP/TAR/Office formats + 8-layer security including ZIP bomb protection
+- ✅ **Consistency validation**: Compare declared capabilities vs actual code behavior, detect misleading descriptions
+- 📊 **Analyzability assessment**: Scan coverage scoring, identify unanalyzable binary files
+- 🔐 **Automatic secret masking**: 9 secret pattern types automatically redacted, prevent key leakage in scan reports
+- ⚙️ **Configurable policies**: default/strict/permissive three built-in presets for different scenarios
+- 🚫 **Hard-trigger protection**: Directly block high-risk operations, no risk taking
 
 ### 🌟 Featured Resource Marketplace
 
@@ -111,7 +115,7 @@ No GUI required, perfect for developers who prefer working in the terminal.
 | Feature                           | Traditional Way                       | Agent Skills Guard                                      |
 | --------------------------------- | ------------------------------------- | ------------------------------------------------------- |
 | **Discover skills/plugins** | ❌ Aimlessly search GitHub            | ✅ Featured repo + plugin marketplace, one-click browse |
-| **Security check**          | ❌ Manual code review, time-consuming | ✅ 8-category auto scan, 3-5x faster, instant results   |
+| **Security check**          | ❌ Manual code review, time-consuming | ✅ Multi-layer pipeline auto scan, covering attack chains/Unicode/cross-skill detection |
 | **Install skills**          | ❌ Command line, error-prone          | ✅ Visual UI, plugin-style install, click to install    |
 | **Manage skills/plugins**   | ❌ Folder digging, unclear usage      | ✅ Intuitive list, clear status                         |
 | **Update skills/plugins**   | ❌ Manual check, repetitive           | ✅ Auto detect, batch update                            |
@@ -188,23 +192,34 @@ Add and manage skill sources, built-in featured marketplace and GitHub repositor
 
 ### Scanning Mechanism
 
-Our security scanning engine analyzes every file of skill code to detect potential risks:
+All-new multi-layer scanning pipeline engine. From file traversal to final report, multiple specialized analyzers work together:
 
-- **Parallel scanning acceleration**: Parallel scanning technology greatly improves scan speed for local installed skills/plugins
-- **Symbolic link detection**: Immediately hard-block on symlink discovery, prevent attacks
-- **Multi-format support**: Support `.js`, `.ts`, `.py`, `.sh`, `.rs` and other code formats
-- **Platform adaptation**: Added UTF-16 decoding and text confidence validation, extended Windows/multi-language support
+1. **Policy Loading** — Load ScanPolicy (default/strict/permissive presets)
+2. **SkillContext Construction** — Unified context object, one-pass file classification, frontmatter parsing, reference extraction
+3. **Strict Structure Validation** — 15 directory/file structure checks (optional)
+4. **Per-File Scanning** — File type disguise detection → Unicode deception detection → Asset contamination detection → YAML rule matching → Archive deep scan
+5. **Context-Level Analysis** — Consistency validation → Multi-step attack chain detection → Analyzability assessment
+6. **Post-Processing** — Secret masking + Finding deduplication + Geometric decay scoring
+
+**Technical Highlights:**
+
+- **YAML External Rules** — Rules separated from code, supporting `core_rules.yaml` + `cisco_parity_signatures.yaml` dual rule packs
+- **Parallel Scanning** — Parallel scanning technology greatly improves scan speed for local installed skills/plugins
+- **Symbolic Link Detection** — Immediately hard-block on symlink discovery, prevent attacks
+- **Multi-Format Support** — Support ~80 file extensions including `.js`, `.ts`, `.py`, `.sh`, `.rs`
+- **Platform Adaptation** — UTF-16 decoding, full Windows/multi-language support
 
 ### Scoring System Principles
 
 #### How is the Security Score Calculated?
 
-The security score uses a **100-point deduction mechanism**, starting from 100 points and deducting points based on detected risks:
+The security score uses a **100-point geometric decay deduction mechanism**, starting from 100 points and deducting based on detected risks:
 
 1. **Initial Score**: 100 points (full score)
-2. **Risk Deduction**: For each risk detected, deduct points based on its weight
-3. **Same-Rule Deduplication**: Deduct points only once per rule in the same file (avoiding duplicate deductions)
-4. **Score Accumulation**: All risk deductions accumulate, minimum to 0 points
+2. **Risk Deduction**: For each risk detected, deduct points based on its weight and confidence level
+3. **Geometric Decay**: Multiple risks use a decay formula, avoiding excessively low scores from simple linear deduction
+4. **Same-Rule Deduplication**: Deduct points only once per rule in the same file
+5. **Hard-Trigger Protection**: When hard-trigger rules fire, score is capped at 29, directly blocking installation
 
 #### Scoring Example
 
@@ -250,13 +265,78 @@ Due to the presence of hard-trigger rules, installation is directly blocked.
 
 Hard-trigger rules are "red lines" set by the system. Once triggered, installation is immediately blocked without giving users a chance to take risks. These rules correspond to **extremely dangerous** operations, including:
 
-- 🚨 **Destructive Operations** (8 rules): `rm -rf /`, disk wiping, formatting, etc.
-- 🚨 **Remote Code Execution** (10 rules): `curl | bash`, reverse shell, PowerShell encoded commands, etc.
-- 🚨 **Privilege Escalation** (1 rule): sudoers file modification
-- 🚨 **Persistence Backdoor** (1 rule): SSH key injection
-- 🚨 **Sensitive File Access** (2 rules): Reading shadow file, Windows credential store
+- 🚨 **Destructive Operations**: `rm -rf /`, disk wiping, formatting, etc.
+- 🚨 **Remote Code Execution**: `curl | bash`, reverse shell, PowerShell encoded commands, etc.
+- 🚨 **Privilege Escalation**: sudoers file modification
+- 🚨 **Persistence Backdoor**: SSH key injection
+- 🚨 **Sensitive File Access**: Reading shadow file, Windows credential store
 
-Totaling **22 hard-trigger rules**, covering the most common attack vectors.
+Covering the most common attack vectors.
+
+### Multi-Step Attack Chain Detection
+
+Traditional single-line regex matching cannot detect combined attacks spanning multiple lines. The Pipeline engine uses a **two-tier detection architecture**:
+
+- **Taint Analysis**: Formal source → transform → sink data flow model, tracking 7 taint types (sensitive data, user data, network data, obfuscation, code execution, file write, network send)
+- **Heuristic Detectors**: 6 specialized cross-line pattern detectors, including download-execute chains, download→chmod→execute triple chains, sensitive file exfiltration, find -exec, environment variable harvesting, base64 decode execution
+
+### Unicode Security Detection
+
+Three-layer Unicode security detection to prevent malicious code hiding through special characters:
+
+- **Homoglyph Attacks** — Detect ~90 Unicode characters (Cyrillic/Greek/Math) disguised as Latin letters
+- **Zero-Width Character Steganography** — Detect 13 zero-width/invisible character types (ZWSP, ZWNJ, ZWJ, BOM, Word Joiner, Soft Hyphen, Variation Selectors, etc.)
+- **Invisible Control Characters** — Detect C0 control characters, DEL, C1 control characters
+
+### Cross-Skill Coordinated Attack Detection
+
+In multi-skill environments, detect coordinated attack behaviors across skills:
+
+- **Data Relay Detection** — Pair "credential collector" skills with "network exfiltrator" skills
+- **Shared Malicious Domains** — Identify uncommon domains referenced by 2+ skills
+- **Complementary Trigger Detection** — Analyze skill description word overlap to identify potential coordinated attack pairs
+- **Shared Obfuscation Patterns** — Detect 2+ skills sharing base64_decode/exec/eval and other obfuscation techniques
+
+### File Type Disguise Detection
+
+Pure Rust file magic signature detection (no external dependencies), reading the first 512 bytes to identify 14 content types:
+
+- **Executables**: PE (Windows .exe), ELF (Linux), Mach-O (macOS)
+- **Document Formats**: PDF, Office OLE2, Office OOXML
+- **Archives**: ZIP, gzip, tar
+- **Scripts**: Shell, Python, JavaScript
+- **Markup**: HTML, SVG
+
+Alerts trigger when file extension doesn't match actual content (e.g., `.py` file is actually a PE executable → Critical).
+
+### Archive Deep Scanning
+
+Safely extract and scan archive contents with **8 layers of security protection**:
+
+- 🔒 Path traversal detection (reject `..` and absolute paths)
+- 💣 ZIP bomb detection (20:1 compression ratio threshold)
+- 📊 File count limit (default 500)
+- 📦 Total size limit (default 100 MiB)
+- 📏 Single entry size limit (25% of total)
+- 🪆 Nesting depth limit (default 3 levels)
+- 🔗 Symlink detection
+- ⚙️ Executable detection
+
+Supported formats: ZIP, TAR, TAR.GZ, Office OOXML (DOCX/XLSX/PPTX). Additional detection for VBA macros and OLE embedded objects in Office documents.
+
+### Consistency Validation
+
+Verify that Skill declarations match actual behavior:
+
+- **Capability Declaration Consistency** — Compare manifest `allowed_tools` with actual code patterns for Read/Write/Bash/Grep/Glob/Network capabilities
+- **Description Consistency** — Detect misleading behavior where description claims "offline tool" but code uses network
+- **Description Quality** — Detect overly generic, too short, vague, or keyword-stuffed descriptions
+
+### Automatic Secret Masking
+
+Scan reports automatically redact **9 secret pattern types**, preventing sensitive information leakage:
+
+AWS Access Key, GitHub Token, PEM Private Key, JWT Token, Database Connection String, Generic Secret Assignment, Stripe Live/Test Key, OpenAI API Key
 
 ### Confidence Grading
 
@@ -266,7 +346,7 @@ To reduce false positives, each risk is marked with a confidence level:
 - **🎯 Medium**: Some possibility of false positives, recommend manual review
 - **🎯 Low**: High possibility of false positives, for reference only
 
-**Score Adjustment**: Low-confidence risks have lower weights in scoring to avoid false positives causing excessively low scores.
+**Score Adjustment**: Low-confidence risks have lower weights in scoring (High ×1.0, Medium ×0.65, Low ×0.35) to avoid false positives causing excessively low scores.
 
 ### Risk Classification
 
