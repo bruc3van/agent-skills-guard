@@ -26,8 +26,8 @@ rules:
   - \.txt["']
   - test_
   - _test\.
-  description: Path traversal - user-controlled file path
-  remediation: Validate paths with realpath and allowlist directories
+  description: 路径遍历 - 用户可控的文件路径
+  remediation: 使用 realpath 验证路径并设置目录白名单
   cwe_id: CWE-22
 
 - id: SQL_INJECTION_STRING_FORMAT
@@ -48,8 +48,8 @@ rules:
   - LIMIT\s+\{
   - ^\s*#
   - example
-  description: SQL query with interpolated variables
-  remediation: Use parameterized queries
+  description: SQL 查询中使用了字符串插值变量
+  remediation: 使用参数化查询
   cwe_id: CWE-89
 
 - id: COMMAND_INJECTION_USER_INPUT
@@ -68,8 +68,8 @@ rules:
   - example
   - test
   - '#.*eval'
-  description: eval with user-controlled shell input
-  remediation: Avoid eval with user input
+  description: eval 使用了用户可控的 Shell 输入
+  remediation: 避免对用户输入使用 eval
   cwe_id: CWE-78
 
 - id: COMMAND_INJECTION_JS_FUNCTION_CONSTRUCTOR
@@ -90,8 +90,8 @@ rules:
   - \bsetInterval\s*\(\s*['"]
   exclude_patterns:
   - (?i)never\s+use\s+Function
-  description: Dynamic code execution via Function or string timers
-  remediation: Use function references instead of string code
+  description: 通过 Function 构造器或字符串定时器执行动态代码
+  remediation: 使用函数引用代替字符串代码执行
   cwe_id: CWE-94
 
 - id: SVG_EMBEDDED_SCRIPT
@@ -106,8 +106,8 @@ rules:
   - '<script[^>]*>[^<]*</script>'
   - '\bon\w+\s*=\s*["''][^"'']*["'']'
   - 'javascript\s*:'
-  description: SVG contains executable script or event handlers
-  remediation: Remove scripts and event handlers from SVG assets
+  description: SVG 中包含可执行脚本或事件处理器
+  remediation: 移除 SVG 资源中的脚本和事件处理器
   cwe_id: CWE-79
 
 - id: PDF_EMBEDDED_JAVASCRIPT
@@ -124,8 +124,8 @@ rules:
   - /OpenAction\s
   - /AA\s*<<
   - /Launch\s
-  description: PDF contains embedded JavaScript or auto-actions
-  remediation: Remove JavaScript from PDF assets
+  description: PDF 中包含嵌入式 JavaScript 或自动执行动作
+  remediation: 移除 PDF 资源中的 JavaScript
   cwe_id: CWE-79
 
 - id: GLOB_HIDDEN_FILE_TARGETING
@@ -143,8 +143,8 @@ rules:
   - glob\s*\([^)]*\.\*
   - find\s+[^|]*\s+-name\s+["']?\.\*
   - for\s+\w+\s+in\s+\.\*\s*;
-  description: Pattern targets hidden dot files
-  remediation: Avoid broad hidden-file globs
+  description: 模式匹配目标包含隐藏文件
+  remediation: 避免广泛匹配隐藏文件
   cwe_id: CWE-200
 
 - id: FIND_EXEC_PATTERN
@@ -160,8 +160,8 @@ rules:
   patterns:
   - 'find\s+[^|;]*-exec\s+(?:bash|sh|zsh|python[23]?|perl|ruby|node|curl|wget|rm|chmod|chown|eval)'
   - find\s+[^|;]*\|\s*xargs\s+(?:bash|sh|zsh|eval|exec)
-  description: find -exec or find | xargs execution chain
-  remediation: Avoid find -exec on untrusted trees
+  description: find -exec 或 find | xargs 执行链
+  remediation: 避免对不受信任的目录树使用 find -exec
   cwe_id: CWE-78
 
 - id: SECRET_STRIPE_KEY
@@ -179,8 +179,8 @@ rules:
   patterns:
   - (?:sk|pk)_(?:live|test)_[A-Za-z0-9]{24,}
   - (?:sk|pk)_(?:live|test)_["']\s*\+\s*["'][A-Za-z0-9]{24,}
-  description: Stripe API key detected
-  remediation: Use environment variables for Stripe keys
+  description: 检测到 Stripe API 密钥
+  remediation: 使用环境变量存储 Stripe 密钥
   cwe_id: CWE-798
 
 - id: SECRET_GOOGLE_API
@@ -197,8 +197,8 @@ rules:
   - .ts
   patterns:
   - AIza[A-Za-z0-9_-]{35}
-  description: Google API key detected
-  remediation: Use environment variables for Google API keys
+  description: 检测到 Google API 密钥
+  remediation: 使用环境变量存储 Google API 密钥
   cwe_id: CWE-798
 
 - id: DATA_EXFIL_SOCKET_CONNECT
@@ -217,8 +217,8 @@ rules:
   - 127\.0\.0\.1
   - 0\.0\.0\.0
   - ::1
-  description: Socket connection to external host
-  remediation: Document and restrict socket usage
+  description: Socket 连接到外部主机
+  remediation: 记录并限制 Socket 连接使用
   cwe_id: CWE-200
 
 - id: DATA_EXFIL_JS_NETWORK
@@ -237,8 +237,8 @@ rules:
   - (?i)example
   - (?i)mock
   - (?i)test
-  description: Outbound network in JavaScript/TypeScript
-  remediation: Document network dependencies
+  description: JavaScript/TypeScript 中的出站网络请求
+  remediation: 记录网络请求依赖，确认目标地址可信
   cwe_id: CWE-200
 
 - id: DATA_EXFIL_JS_FS_ACCESS
@@ -256,8 +256,8 @@ rules:
   exclude_patterns:
   - (?i)example
   - (?i)mock
-  description: Node.js filesystem read/write
-  remediation: Restrict filesystem access to required paths
+  description: Node.js 文件系统读写操作
+  remediation: 限制文件系统访问至必要路径
   cwe_id: CWE-200
 
 - id: DATA_EXFIL_BASE64_AND_NETWORK
@@ -271,8 +271,8 @@ rules:
   patterns:
   - base64\.(?:b64encode|encodebytes)[^\n]{0,160}(?:requests\.|urllib\.request|httpx\.|socket\.)
   - (?:requests\.|urllib\.request|httpx\.|socket\.)[^\n]{0,160}base64\.(?:b64encode|encodebytes)
-  description: Base64 encoding combined with network send
-  remediation: Review encode-then-send data flows
+  description: Base64 编码结合网络发送
+  remediation: 审查编码后发送的数据流
   cwe_id: CWE-200
 
 - id: OBFUSCATION_HEX_BLOB
@@ -283,8 +283,8 @@ rules:
   hard_trigger: false
   patterns:
   - (?:0x[0-9a-fA-F]{2}\s*){32,}
-  description: Large hexadecimal blob (possible obfuscation)
-  remediation: Avoid large inline hex payloads
+  description: 大型十六进制数据块（疑似代码混淆）
+  remediation: 避免使用大型内联十六进制数据
   cwe_id: CWE-656
 
 - id: OBFUSCATION_XOR_ENCODING
@@ -297,8 +297,8 @@ rules:
   - .py
   patterns:
   - chr\s*\(\s*ord\s*\([^)]+\)\s*\^
-  description: XOR-style character encoding loop
-  remediation: Use clear encoding libraries instead of XOR loops
+  description: XOR 风格的字符编码循环
+  remediation: 使用标准编码库代替 XOR 循环
   cwe_id: CWE-656
 
 - id: RESOURCE_ABUSE_INFINITE_LOOP
@@ -312,8 +312,8 @@ rules:
   patterns:
   - 'while\s+True\s*:'
   - 'while\s+1\s*:'
-  description: Potential infinite loop
-  remediation: Add exit conditions or timeouts
+  description: 潜在的无限循环
+  remediation: 添加退出条件或超时机制
   cwe_id: CWE-400
 
 - id: RESOURCE_ABUSE_FORK_BOMB
@@ -327,8 +327,8 @@ rules:
   - .bash
   patterns:
   - ':\(\)\s*\{\s*:\|\:&\s*\}\s*;\s*:'
-  description: Fork bomb pattern detected
-  remediation: Remove fork bomb commands
+  description: 检测到 Fork 炸弹模式
+  remediation: 移除 Fork 炸弹命令
   cwe_id: CWE-400
 
 - id: SOCIAL_ENG_ANTHROPIC_IMPERSONATION
@@ -343,8 +343,8 @@ rules:
   - (?i)official\s+anthropic
   - (?i)anthropic\s+official
   - (?i)created\s+by\s+anthropic\s+team
-  description: Possible Anthropic impersonation in description
-  remediation: Do not impersonate Anthropic or official branding
+  description: 描述中疑似冒充 Anthropic 官方
+  remediation: 不要冒充 Anthropic 或使用官方品牌标识
   cwe_id: CWE-451
 
 - id: TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL
@@ -362,8 +362,8 @@ rules:
   - (?i)\b(?:apt-get|apt|yum|dnf|brew)\s+install\b
   - (?i)\bpip\s+install\b
   - (?i)\bnpm\s+install\s+-g\b
-  description: System or global package installation
-  remediation: Avoid installing system packages from skill scripts
+  description: 系统级或全局包安装操作
+  remediation: 避免在 skill 脚本中安装系统包
   cwe_id: CWE-494
 
 - id: TOOL_ABUSE_UNTRUSTED_PACKAGE_SOURCE
@@ -378,8 +378,8 @@ rules:
   patterns:
   - pip\s+install\s+git\+https?://
   - pip\s+install\s+.*--index-url\s+https?://
-  description: Install packages from untrusted remote source
-  remediation: Pin dependencies to trusted package indexes
+  description: 从不受信任的远程源安装包
+  remediation: 将依赖固定到受信任的包索引源
   cwe_id: CWE-494
 
 - id: HIDDEN_FILE_WITH_CODE
@@ -394,8 +394,8 @@ rules:
   patterns:
   - os\.system\s*\(
   - subprocess\.(?:run|call|Popen)
-  description: Hidden-path script with code execution (see structure analyzer)
-  remediation: Do not hide executable scripts as dotfiles
+  description: 隐藏路径脚本包含代码执行操作
+  remediation: 不要将可执行脚本隐藏为点文件
   cwe_id: CWE-494
 
 - id: RESOURCE_ABUSE_LARGE_ALLOCATION
@@ -417,8 +417,8 @@ rules:
   exclude_patterns:
   - example
   - test
-  description: Large memory allocation that could cause resource exhaustion
-  remediation: Use bounded allocations with reasonable limits
+  description: 大量内存分配可能导致资源耗尽
+  remediation: 使用有合理上限的内存分配
   cwe_id: CWE-400
 
 - id: TOOL_ABUSE_SYSTEM_MODIFICATION
@@ -441,8 +441,8 @@ rules:
   exclude_patterns:
   - example
   - test
-  description: System directory permission modification
-  remediation: Do not modify system directory permissions from skill scripts
+  description: 修改系统目录权限
+  remediation: 不要在 skill 脚本中修改系统目录权限
   cwe_id: CWE-276
 
 - id: OBFUSCATION_BASE64_LARGE
@@ -457,8 +457,8 @@ rules:
   - example
   - test
   - mock
-  description: Large base64-encoded blob may hide malicious content
-  remediation: Avoid inline base64 payloads; use file references instead
+  description: 大型 Base64 编码数据块可能隐藏恶意内容
+  remediation: 避免使用内联 Base64 数据，改用文件引用
   cwe_id: CWE-656
 
 - id: SOCIAL_ENG_VAGUE_DESCRIPTION
@@ -473,6 +473,6 @@ rules:
   - '(?i)\b(?:tool|utility|helper|assistant|service|agent)\b.*\b(?:tool|utility|helper|assistant|service|agent)\b'
   exclude_patterns:
   - example
-  description: Description uses vague generic terms without specifics
-  remediation: Write specific description explaining what the skill does
+  description: 描述使用了模糊的通用术语，缺乏具体说明
+  remediation: 编写具体的描述，说明 skill 的实际功能
   cwe_id: CWE-451
