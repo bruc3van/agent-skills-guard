@@ -425,6 +425,10 @@ pnpm build
 
 ---
 
+## 🙏 鸣谢
+
+- [Cisco AI Defense - Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) — 静态代码扫描规则设计的参考与借鉴
+
 ## ⭐ Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=bruc3van/agent-skills-guard&type=Date)](https://star-history.com/#bruc3van/agent-skills-guard&Date)
