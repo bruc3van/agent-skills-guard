@@ -1,0 +1,25 @@
+interface:
+  display_name: "技术选型助手"
+  short_description: "帮助团队进行客观的技术选型决策"
+  default_prompt: "使用 $yao-techselect-hskill 帮我对比技术方案，基于客观数据和专家意见给出推荐。"
+compatibility:
+  canonical_format: "agent-skills"
+  adapter_targets:
+    - "openai"
+    - "claude"
+    - "generic"
+  activation:
+    mode: "manual"
+    paths: []
+  execution:
+    context: "inline"
+    shell: "bash"
+  trust:
+    source_tier: "local"
+    remote_inline_execution: "forbid"
+    remote_metadata_policy: "allow-metadata-only"
+  degradation:
+    openai: "metadata-adapter"
+    claude: "neutral-source-plus-adapter"
+    generic: "neutral-source"
+

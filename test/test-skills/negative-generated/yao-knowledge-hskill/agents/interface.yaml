@@ -1,0 +1,25 @@
+interface:
+  display_name: "知识图谱助手"
+  short_description: "构建和维护结构化的领域知识体系"
+  default_prompt: "使用 $yao-knowledge-hskill 帮我整理和定义领域概念，建立知识关联。"
+compatibility:
+  canonical_format: "agent-skills"
+  adapter_targets:
+    - "openai"
+    - "claude"
+    - "generic"
+  activation:
+    mode: "manual"
+    paths: []
+  execution:
+    context: "inline"
+    shell: "bash"
+  trust:
+    source_tier: "local"
+    remote_inline_execution: "forbid"
+    remote_metadata_policy: "allow-metadata-only"
+  degradation:
+    openai: "metadata-adapter"
+    claude: "neutral-source-plus-adapter"
+    generic: "neutral-source"
+

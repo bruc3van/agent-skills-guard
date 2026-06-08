@@ -1,0 +1,21 @@
+{
+  "name": "yao-techselect-hskill",
+  "version": "1.0.0",
+  "owner": "Tech Selection Team",
+  "updated_at": "2026-05-09",
+  "status": "active",
+  "maturity_tier": "production",
+  "lifecycle_stage": "production",
+  "context_budget_tier": "production",
+  "review_cadence": "quarterly",
+  "target_platforms": [
+    "openai",
+    "claude",
+    "generic"
+  ],
+  "factory_components": [
+    "references",
+    "evals"
+  ]
+}
+

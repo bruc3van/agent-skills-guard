@@ -1,0 +1,25 @@
+interface:
+  display_name: "代码审查助手"
+  short_description: "专业的代码质量审查和改进建议"
+  default_prompt: "使用 $yao-codereview-hskill 审查我的代码，检查安全漏洞、性能问题和最佳实践。"
+compatibility:
+  canonical_format: "agent-skills"
+  adapter_targets:
+    - "openai"
+    - "claude"
+    - "generic"
+  activation:
+    mode: "manual"
+    paths: []
+  execution:
+    context: "inline"
+    shell: "bash"
+  trust:
+    source_tier: "local"
+    remote_inline_execution: "forbid"
+    remote_metadata_policy: "allow-metadata-only"
+  degradation:
+    openai: "metadata-adapter"
+    claude: "neutral-source-plus-adapter"
+    generic: "neutral-source"
+
