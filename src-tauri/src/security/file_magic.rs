@@ -5,10 +5,10 @@
 //!
 //! 纯 Rust 实现，不依赖外部 libmagic 库。
 
-use sha2::{Digest, Sha256};
 use std::path::Path;
 
-use crate::models::security::{Finding, FindingMetadata, IssueSeverity, ThreatCategory};
+use crate::models::security::{Finding, FindingKind, IssueSeverity, ThreatCategory};
+use crate::security::finding_builder::{self, FindingSpec};
 
 const ANALYZER_NAME: &str = "file_magic";
 
@@ -322,20 +322,11 @@ fn describe_expected_for_ext(ext: &str) -> String {
 
 /// 构造 Finding
 fn make_finding(file_path: &str, expected: &str, actual: &str, severity: IssueSeverity) -> Finding {
-    let raw = format!("FILE_MAGIC_MISMATCH:{}:{}", file_path, actual);
-    let hash = {
-        let mut hasher = Sha256::new();
-        hasher.update(raw.as_bytes());
-        format!("{:x}", hasher.finalize())[..16].to_string()
-    };
-    let id = format!("FILE_MAGIC_MISMATCH:{}:{}", file_path, hash);
-
-    Finding {
-        id,
-        rule_id: "FILE_MAGIC_MISMATCH".to_string(),
+    finding_builder::make_finding(FindingSpec {
+        rule_id: "FILE_MAGIC_MISMATCH",
         category: ThreatCategory::Obfuscation,
         severity,
-        title: "File extension/content type mismatch".to_string(),
+        title: "File extension/content type mismatch",
         description: format!(
             "File '{}' appears to be {} but has extension suggesting {}",
             file_path, actual, expected
@@ -346,15 +337,13 @@ fn make_finding(file_path: &str, expected: &str, actual: &str, severity: IssueSe
         remediation: Some(format!(
             "Rename the file to match its actual content type or remove it if it is malicious."
         )),
-        analyzer: ANALYZER_NAME.to_string(),
-        metadata: Some(FindingMetadata {
-            cwe_id: Some("CWE-434".to_string()),
-            confidence: Some("High".to_string()),
-            // 文件伪装是安全风险
-            finding_kind: Some(crate::models::security::FindingKind::Security),
-            ..Default::default()
-        }),
-    }
+        analyzer: ANALYZER_NAME,
+        finding_kind: FindingKind::Security,
+        rule_source: None,
+        cwe_id: Some("CWE-434".to_string()),
+        confidence: Some("High".to_string()),
+        id_salt: None,
+    })
 }
 
 // ── Tests ──

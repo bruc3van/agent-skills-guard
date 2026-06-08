@@ -503,21 +503,25 @@ impl ScanPolicy {
     }
 
     /// 检查路径是否为文档路径（使用目录段匹配，避免子串误匹配）
+    ///
+    /// 匹配规则：
+    /// 1. 路径段完全等于 indicator（如 `docs/file.md`）
+    /// 2. 路径段以 `indicator-` 开头（如 `docs-internal/file.md`）
     pub fn is_doc_path(&self, path: &str) -> bool {
         let lower = path.replace('\\', "/").to_lowercase();
-        let separators = ['/', '\\'];
         self.rule_scoping
             .doc_path_indicators
             .iter()
             .any(|indicator| {
-                let indicator_lower = indicator.to_lowercase();
-                lower.starts_with(&format!("{}/", indicator_lower))
-                    || separators
-                        .iter()
-                        .any(|&sep| lower.contains(&format!("{}{}{}", sep, indicator_lower, sep)))
-                    || separators
-                        .iter()
-                        .any(|&sep| lower.ends_with(&format!("{}{}", sep, indicator_lower)))
+                let ind = indicator.to_lowercase();
+                // 路径以 indicator/ 开头（如 "docs/file.md"）
+                lower.starts_with(&format!("{}/", ind))
+                // 路径中包含 /indicator/（如 "sub/docs/file.md"）
+                || lower.contains(&format!("/{}/", ind))
+                // 路径以 /indicator 结尾
+                || lower.ends_with(&format!("/{}", ind))
+                // 路径段以 indicator- 开头（如 "docs-internal/file.md"、"test-fixtures/data.sh"）
+                || lower.split('/').any(|seg| seg.starts_with(&format!("{}-", ind)))
             })
     }
 

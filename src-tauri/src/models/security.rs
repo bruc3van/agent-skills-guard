@@ -152,6 +152,26 @@ pub struct SecurityIssue {
     pub finding_kind: Option<String>,
 }
 
+impl Default for SecurityIssue {
+    fn default() -> Self {
+        Self {
+            severity: IssueSeverity::Info,
+            category: IssueCategory::Other,
+            description: String::new(),
+            line_number: None,
+            code_snippet: None,
+            file_path: None,
+            rule_id: None,
+            confidence: None,
+            remediation: None,
+            cwe_id: None,
+            threat_category: None,
+            same_path_other_rule_ids: None,
+            finding_kind: None,
+        }
+    }
+}
+
 /// 问题严重程度（5 级统一模型）
 ///
 /// 向后兼容旧的 4 级枚举（`Info`/`Warning`/`Error`/`Critical`）：

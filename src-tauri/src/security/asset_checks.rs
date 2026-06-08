@@ -2,9 +2,9 @@
 
 use lazy_static::lazy_static;
 use regex::Regex;
-use sha2::{Digest, Sha256};
 
-use crate::models::security::{Finding, FindingMetadata, IssueSeverity, ThreatCategory};
+use crate::models::security::{Finding, FindingKind, IssueSeverity, ThreatCategory};
+use crate::security::finding_builder::{self, FindingSpec};
 
 const ANALYZER_NAME: &str = "asset_checks";
 
@@ -79,18 +79,11 @@ fn make_finding(
     line_number: usize,
     snippet: &str,
 ) -> Finding {
-    let mut hasher = Sha256::new();
-    hasher.update(rule_id.as_bytes());
-    hasher.update(file_path.as_bytes());
-    hasher.update(line_number.to_string().as_bytes());
-    let id = format!("{:x}", hasher.finalize())[..16].to_string();
-
-    Finding {
-        id,
-        rule_id: rule_id.to_string(),
+    finding_builder::make_finding(FindingSpec {
+        rule_id,
         category,
         severity,
-        title: title.to_string(),
+        title,
         description: format!("{} in {}", title, file_path),
         file_path: Some(file_path.to_string()),
         line_number: Some(line_number),
@@ -98,12 +91,13 @@ fn make_finding(
         remediation: Some(
             "Remove prompt injection patterns and untrusted URLs from asset files".to_string(),
         ),
-        analyzer: ANALYZER_NAME.to_string(),
-        metadata: Some(FindingMetadata {
-            rule_source: Some("cisco_asset_checks".to_string()),
-            ..Default::default()
-        }),
-    }
+        analyzer: ANALYZER_NAME,
+        finding_kind: FindingKind::Security,
+        rule_source: Some("cisco_asset_checks"),
+        cwe_id: None,
+        confidence: None,
+        id_salt: None,
+    })
 }
 
 #[cfg(test)]

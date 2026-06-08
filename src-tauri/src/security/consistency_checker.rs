@@ -9,9 +9,9 @@
 
 use lazy_static::lazy_static;
 use regex::Regex;
-use sha2::{Digest, Sha256};
 
-use crate::models::security::{Finding, FindingMetadata, IssueSeverity, ThreatCategory};
+use crate::models::security::{Finding, FindingKind, IssueSeverity, ThreatCategory};
+use crate::security::finding_builder::{self, FindingSpec};
 use crate::security::skill_context::{SkillContext, SkillFileType};
 
 // ── 常量 ──
@@ -137,7 +137,7 @@ fn uses_network_excluding_localhost(content: &str) -> bool {
 
 /// 创建一个 Finding 实例（consistency_checker 专用）
 ///
-/// 使用 sha2 生成稳定的 finding ID：SHA256(rule_id + file + line)[:16]
+/// 委托给共享 finding_builder，保留 rule_id → title/category/kind 的映射逻辑
 fn make_finding(
     rule_id: &str,
     severity: IssueSeverity,
@@ -145,17 +145,6 @@ fn make_finding(
     file_path: Option<String>,
     line_number: Option<usize>,
 ) -> Finding {
-    let id_input = format!(
-        "{}|{}|{}",
-        rule_id,
-        file_path.as_deref().unwrap_or(""),
-        line_number.map(|l| l.to_string()).unwrap_or_default()
-    );
-    let mut hasher = Sha256::new();
-    hasher.update(id_input.as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
-    let id = hash[..16].to_string();
-
     let (title, category) = match rule_id {
         "ALLOWED_TOOLS_READ_VIOLATION" => (
             "Undeclared Read capability",
@@ -201,41 +190,38 @@ fn make_finding(
 
     // 根据规则类型确定 FindingKind
     let finding_kind = match rule_id {
-        // allowed-tools 越权是安全风险
         "ALLOWED_TOOLS_READ_VIOLATION"
         | "ALLOWED_TOOLS_WRITE_VIOLATION"
         | "ALLOWED_TOOLS_BASH_VIOLATION"
         | "ALLOWED_TOOLS_GREP_VIOLATION"
         | "ALLOWED_TOOLS_GLOB_VIOLATION"
         | "ALLOWED_TOOLS_NETWORK_USAGE"
-        | "TOOL_ABUSE_UNDECLARED_NETWORK" => crate::models::security::FindingKind::Security,
-        // 描述质量和社会工程是结构问题
+        | "TOOL_ABUSE_UNDECLARED_NETWORK" => FindingKind::Security,
         "SOCIAL_ENG_MISLEADING_DESC"
         | "TRIGGER_OVERLY_GENERIC"
         | "TRIGGER_DESCRIPTION_TOO_SHORT"
         | "TRIGGER_VAGUE_DESCRIPTION"
-        | "TRIGGER_KEYWORD_BAITING" => crate::models::security::FindingKind::Structure,
-        _ => crate::models::security::FindingKind::Structure,
+        | "TRIGGER_KEYWORD_BAITING" => FindingKind::Structure,
+        _ => FindingKind::Structure,
     };
 
-    Finding {
-        id,
-        rule_id: rule_id.to_string(),
+    finding_builder::make_finding(FindingSpec {
+        rule_id,
         category,
         severity,
-        title: title.to_string(),
+        title,
         description,
         file_path,
         line_number,
         snippet: None,
         remediation: Some("Review and correct the skill consistency per policy".to_string()),
-        analyzer: ANALYZER_NAME.to_string(),
-        metadata: Some(FindingMetadata {
-            rule_source: Some("consistency_checker".to_string()),
-            finding_kind: Some(finding_kind),
-            ..Default::default()
-        }),
-    }
+        analyzer: ANALYZER_NAME,
+        finding_kind,
+        rule_source: None,
+        cwe_id: None,
+        confidence: None,
+        id_salt: None,
+    })
 }
 
 /// 读取脚本文件内容，返回 (文件路径, 内容) 列表

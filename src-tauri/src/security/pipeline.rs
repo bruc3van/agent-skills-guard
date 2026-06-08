@@ -13,9 +13,9 @@
 
 use lazy_static::lazy_static;
 use regex::Regex;
-use sha2::{Digest, Sha256};
 
-use crate::models::security::{Finding, FindingMetadata, IssueSeverity, ThreatCategory};
+use crate::models::security::{Finding, FindingKind, IssueSeverity, ThreatCategory};
+use crate::security::finding_builder::{self, FindingSpec};
 use crate::security::policy::ScanPolicy;
 use crate::security::skill_context::{SkillContext, SkillFileType};
 
@@ -34,11 +34,6 @@ lazy_static! {
     // 管道执行：| bash / | sh / | python / | IEX 等
     static ref RE_PIPE_EXEC: Regex = Regex::new(
         r"(?i)\|\s*(?:bash|sh|zsh|ksh|dash|python[23]?|ruby|perl|node|pwsh|powershell|IEX)\b"
-    ).unwrap();
-
-    // 管道到解释器（无 | 前缀，仅部分场景）
-    static ref RE_PIPE_EXEC_BARE: Regex = Regex::new(
-        r"(?i)\|\s*(?:bash|sh|zsh)\s"
     ).unwrap();
 
     // 执行命令：bash xxx.sh / sh xxx / ./xxx / python xxx
@@ -515,22 +510,7 @@ fn check_taint_flow(content: &str, file_path: &str) -> Vec<Finding> {
 
 // ── 辅助函数 ──
 
-/// 生成稳定的 Finding ID
-///
-/// 改进：使用 snippet 内容的前 100 字符参与 hash，而不是 snippet.len()
-/// 避免不同 snippet 但长度相同导致 ID 碰撞
-fn make_finding_id(rule_id: &str, file_path: &str, line: usize, snippet: &str) -> String {
-    // 截取 snippet 的前 100 字符参与 hash，避免 ID 过长
-    let snippet_prefix: String = snippet.chars().take(100).collect();
-    let id_input = format!("{}|{}|{}|{}", rule_id, file_path, line, snippet_prefix);
-    let mut hasher = Sha256::new();
-    hasher.update(id_input.as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
-    // 使用更长的 hash（20 字符 vs 16 字符）减少碰撞概率
-    hash[..20].to_string()
-}
-
-/// 创建 Finding 实例
+/// 创建 Finding 实例（委托给共享 finding_builder）
 fn make_finding(
     rule_id: &str,
     category: ThreatCategory,
@@ -542,32 +522,23 @@ fn make_finding(
     snippet: Option<String>,
     remediation: &str,
 ) -> Finding {
-    let id = make_finding_id(
+    finding_builder::make_finding(FindingSpec {
         rule_id,
-        file_path.as_deref().unwrap_or(""),
-        line_number.unwrap_or(0),
-        snippet.as_deref().unwrap_or(""),
-    );
-
-    Finding {
-        id,
-        rule_id: rule_id.to_string(),
         category,
         severity,
-        title: title.to_string(),
+        title,
         description,
         file_path,
         line_number,
         snippet,
         remediation: Some(remediation.to_string()),
-        analyzer: ANALYZER_NAME.to_string(),
-        metadata: Some(FindingMetadata {
-            rule_source: Some(ANALYZER_NAME.to_string()),
-            // Pipeline findings 默认为 Security
-            finding_kind: Some(crate::models::security::FindingKind::Security),
-            ..Default::default()
-        }),
-    }
+        analyzer: ANALYZER_NAME,
+        finding_kind: FindingKind::Security,
+        rule_source: None,
+        cwe_id: None,
+        confidence: None,
+        id_salt: None,
+    })
 }
 
 /// 检查 URL 中是否包含已知安装器域名
@@ -585,36 +556,6 @@ fn is_known_installer(content: &str, policy: &ScanPolicy) -> bool {
     })
 }
 
-/// 检查文件路径是否在文档目录中
-///
-/// 使用路径段匹配（而非子串匹配），避免 `/tmp/test.sh` 被误判为文档路径。
-/// 匹配规则：路径中某个目录段完全等于指示符，或以指示符开头后跟 `-`（如 `docs-internal`）。
-/// 不匹配文件名中的指示符（如 `test.sh`）。
-///
-/// 改进：同时支持 Windows 路径分隔符 `\`
-fn is_in_doc_context(file_path: &str, policy: &ScanPolicy) -> bool {
-    let lower = file_path.to_lowercase();
-    // 将路径标准化，同时支持 / 和 \ 分隔符
-    // 这样 /a/docs/b.md 和 C:\a\docs\b.md 都能匹配
-    policy
-        .rule_scoping
-        .doc_path_indicators
-        .iter()
-        .any(|indicator| {
-            let ind_lower = indicator.to_lowercase();
-            // 检查 indicator/ 或 indicator\ 是否出现在路径中（作为目录段）
-            let dir_pattern_unix = format!("{}/", ind_lower);
-            let dir_pattern_win = format!("{}\\", ind_lower);
-            if lower.contains(&dir_pattern_unix) || lower.contains(&dir_pattern_win) {
-                return true;
-            }
-            // 检查路径段是否以 indicator- 开头（如 docs-internal）
-            // 同时支持 / 和 \ 分隔符
-            lower
-                .split(&['/', '\\'][..])
-                .any(|segment| segment.starts_with(&format!("{}-", ind_lower)))
-        })
-}
 
 /// 提取内容中最可疑的代码片段（截取匹配行附近上下文）
 fn extract_snippet(content: &str, pattern: &Regex, max_len: usize) -> Option<String> {
@@ -1151,7 +1092,7 @@ pub fn analyze(ctx: &SkillContext) -> Vec<Finding> {
 
     for (file_path, content) in &scan_targets {
         // 跳过文档目录中的文件
-        if is_in_doc_context(file_path, policy) {
+        if policy.is_doc_path(file_path) {
             continue;
         }
 
@@ -1522,8 +1463,8 @@ grep pattern file"#;
         );
         assert!(f.remediation.is_some());
         assert!(
-            f.id.len() == 20,
-            "Finding ID length should be 20, got {}",
+            f.id.len() == 16,
+            "Finding ID length should be 16, got {}",
             f.id.len()
         );
     }

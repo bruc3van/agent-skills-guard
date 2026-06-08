@@ -16,7 +16,8 @@ use std::path::Path;
 use tempfile::TempDir;
 use zip::ZipArchive;
 
-use crate::models::security::{Finding, FindingMetadata, IssueSeverity, ThreatCategory};
+use crate::models::security::{Finding, FindingKind, IssueSeverity, ThreatCategory};
+use crate::security::finding_builder::{self, FindingSpec};
 use crate::security::policy::ScanPolicy;
 
 // ── 安全路径校验 ──
@@ -914,30 +915,29 @@ fn make_finding(
     let finding_kind = match rule_id {
         // 路径穿越、symlink、zip bomb 是安全风险
         "ARCHIVE_PATH_TRAVERSAL" | "ARCHIVE_SYMLINK" | "ARCHIVE_ZIP_BOMB" => {
-            crate::models::security::FindingKind::Security
+            FindingKind::Security
         }
         // 其他归档问题是不可审计性
-        _ => crate::models::security::FindingKind::Auditability,
+        _ => FindingKind::Auditability,
     };
 
-    Finding {
-        id: format!("archive_extractor:{}", rule_id),
-        rule_id: rule_id.to_string(),
+    finding_builder::make_finding(FindingSpec {
+        rule_id,
         category,
         severity,
-        title: title.to_string(),
+        title,
         description: description.to_string(),
         file_path,
         line_number: None,
         snippet: None,
         remediation: Some(remediation_for_rule(rule_id).to_string()),
-        analyzer: "archive_extractor".to_string(),
-        metadata: Some(FindingMetadata {
-            rule_source: Some("archive_extractor".to_string()),
-            finding_kind: Some(finding_kind),
-            ..Default::default()
-        }),
-    }
+        analyzer: "archive_extractor",
+        finding_kind,
+        rule_source: None,
+        cwe_id: None,
+        confidence: None,
+        id_salt: None,
+    })
 }
 
 /// 为每条规则提供修复建议

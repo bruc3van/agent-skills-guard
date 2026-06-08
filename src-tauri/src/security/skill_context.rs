@@ -12,20 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::security::policy::ScanPolicy;
 
-const SKIP_DIR_NAMES: &[&str] = &[
-    "node_modules",
-    "target",
-    "dist",
-    "build",
-    ".venv",
-    "venv",
-    ".git",
-    "__pycache__",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".tox",
-];
+/// 常见大目录（与 crate::security::SKIP_DIR_NAMES 共用）
+use crate::security::SKIP_DIR_NAMES;
+
 const SKIP_FILE_NAMES: &[&str] = &[".DS_Store", "Thumbs.db", "desktop.ini"];
 
 // ── ScanMode ──
@@ -311,7 +300,13 @@ impl SkillContext {
         let mut files = Vec::new();
         let mut script_files = Vec::new();
         let mut file_contents = HashMap::new();
+        // 同时以 file_path（可能是相对路径）和 path 显示名作为 key，
+        // 确保 read_text_file 无论是用 relative_path 还是 absolute_path 查找都能命中
         file_contents.insert(file_path.to_string(), content.to_string());
+        let path_display = path.to_string_lossy().to_string();
+        if path_display != file_path {
+            file_contents.insert(path_display, content.to_string());
+        }
 
         if file_type == SkillFileType::Script {
             script_files.push(path.to_path_buf());

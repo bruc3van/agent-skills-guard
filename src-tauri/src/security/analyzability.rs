@@ -8,9 +8,8 @@
 //! - 未知二进制文件（is_binary=true 且非已知惰性类型）产生 UNANALYZABLE_BINARY finding
 //! - 超大截断文件按实际扫描字节 / 总字节部分计入
 
-use sha2::{Digest, Sha256};
-
-use crate::models::security::{Finding, FindingMetadata, IssueSeverity, ThreatCategory};
+use crate::models::security::{Finding, FindingKind, IssueSeverity, ThreatCategory};
+use crate::security::finding_builder::{self, FindingSpec};
 use crate::security::skill_context::{SkillContext, SkillFileType};
 
 // ── 常量 ──
@@ -159,7 +158,7 @@ fn is_inert_asset(file: &crate::security::skill_context::SkillFile) -> bool {
 
 /// 创建 Finding 实例
 ///
-/// 使用 sha2 生成稳定的 finding ID：SHA256(rule_id + file)[:16]
+/// 委托 finding_builder 生成稳定的 finding ID 并构造 Finding
 fn make_finding(
     rule_id: &str,
     severity: IssueSeverity,
@@ -167,30 +166,23 @@ fn make_finding(
     description: String,
     file_path: Option<String>,
 ) -> Finding {
-    let id_input = format!("{}|{}", rule_id, file_path.as_deref().unwrap_or(""),);
-    let mut hasher = Sha256::new();
-    hasher.update(id_input.as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
-    let id = hash[..16].to_string();
-
-    Finding {
-        id,
-        rule_id: rule_id.to_string(),
+    finding_builder::make_finding(FindingSpec {
+        rule_id,
         category: ThreatCategory::PolicyViolation,
         severity,
-        title: title.to_string(),
+        title,
         description,
         file_path,
         line_number: None,
         snippet: None,
         remediation: Some("Review file analyzability and adjust content as needed".to_string()),
-        analyzer: ANALYZER_NAME.to_string(),
-        metadata: Some(FindingMetadata {
-            rule_source: Some("analyzability".to_string()),
-            finding_kind: Some(crate::models::security::FindingKind::Auditability),
-            ..Default::default()
-        }),
-    }
+        analyzer: ANALYZER_NAME,
+        finding_kind: FindingKind::Auditability,
+        rule_source: None,
+        cwe_id: None,
+        confidence: None,
+        id_salt: None,
+    })
 }
 
 /// 创建 UNANALYZABLE_BINARY finding
@@ -249,12 +241,11 @@ fn make_excessive_file_count_finding(ctx: &SkillContext) -> Finding {
         .collect::<Vec<_>>()
         .join(", ");
 
-    Finding {
-        id: format!("analyzability:EXCESSIVE_FILE_COUNT:{}", count),
-        rule_id: "EXCESSIVE_FILE_COUNT".to_string(),
+    finding_builder::make_finding(FindingSpec {
+        rule_id: "EXCESSIVE_FILE_COUNT",
         category: ThreatCategory::PolicyViolation,
         severity: IssueSeverity::Info,
-        title: "Excessive file count".to_string(),
+        title: "Excessive file count",
         description: format!(
             "Skill contains {} files, exceeding the policy limit of {}. \
              Some files may not be fully scanned. Breakdown: {}",
@@ -264,12 +255,14 @@ fn make_excessive_file_count_finding(ctx: &SkillContext) -> Finding {
         line_number: None,
         snippet: None,
         remediation: Some("Review file analyzability and adjust content as needed".to_string()),
-        analyzer: ANALYZER_NAME.to_string(),
-        metadata: Some(FindingMetadata {
-            rule_source: Some("analyzability".to_string()),
-            ..Default::default()
-        }),
-    }
+        analyzer: ANALYZER_NAME,
+        finding_kind: FindingKind::Auditability,
+        rule_source: None,
+        cwe_id: None,
+        confidence: None,
+        // 用文件计数作为 ID 盐值，使同一规则下不同文件数量产生不同 ID
+        id_salt: Some(&count.to_string()),
+    })
 }
 
 /// 创建 OVERSIZED_FILE finding

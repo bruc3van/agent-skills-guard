@@ -24,17 +24,8 @@ const MAX_BYTES_PER_FILE: u64 = 2 * 1024 * 1024;
 /// 归档提取文件最大读取字节数 (4 MiB)
 const MAX_EXTRACTED_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
-/// 常见大目录（依赖/构建产物），默认不深入扫描
-const SKIP_DIR_NAMES: &[&str] = &[
-    ".git",
-    "node_modules",
-    "target",
-    "dist",
-    "build",
-    "__pycache__",
-    ".venv",
-    "venv",
-];
+/// 常见大目录（依赖/构建产物），默认不深入扫描（与 crate::security::SKIP_DIR_NAMES 共用）
+use crate::security::SKIP_DIR_NAMES;
 
 #[derive(Debug, Clone, Copy)]
 enum Utf16Encoding {
@@ -61,6 +52,23 @@ struct MatchResult {
 }
 
 pub struct SecurityScanner;
+
+// ── SecurityIssue 快捷构造函数 ──
+
+/// 构造一个 Auditability 级别的 scan-meta issue（文件读取失败、截断等）
+fn make_scan_meta_issue(
+    severity: IssueSeverity,
+    description: String,
+    file_path: Option<String>,
+) -> SecurityIssue {
+    SecurityIssue {
+        severity,
+        description,
+        file_path,
+        finding_kind: Some(FindingKind::Auditability.as_str().to_string()),
+        ..Default::default()
+    }
+}
 
 lazy_static! {
     static ref STRING_CONCAT_SEPARATOR: Regex =
@@ -746,37 +754,13 @@ impl SecurityScanner {
         scan_lines
     }
 
-    /// 检查文件路径是否为文档路径（路径中包含文档目录段，如 `docs/`, `examples/`）
-    fn is_doc_path(file_path: &str, policy: &crate::security::policy::ScanPolicy) -> bool {
-        let lower = file_path.to_lowercase();
-        // 使用路径分隔符匹配，确保 indicator 是目录段而非子串
-        let separators = ['/', '\\'];
-        policy
-            .rule_scoping
-            .doc_path_indicators
-            .iter()
-            .any(|indicator| {
-                let indicator_lower = indicator.to_lowercase();
-                // 路径以 indicator 开头（如 "docs/file.md"）
-                lower.starts_with(&format!("{}{}", indicator_lower, '/'))
-                // 路径中包含 /indicator/（如 "sub/docs/file.md"）
-                || separators.iter().any(|&sep| {
-                    lower.contains(&format!("{}{}{}", sep, indicator_lower, sep))
-                })
-                // 路径以 /indicator 结尾（不太可能，但兼容）
-                || separators.iter().any(|&sep| {
-                    lower.ends_with(&format!("{}{}", sep, indicator_lower))
-                })
-            })
-    }
-
     /// 对文档路径中的 findings 进行降级
     fn downgrade_doc_findings(
         matches: &mut Vec<MatchResult>,
         file_path: &str,
         policy: &crate::security::policy::ScanPolicy,
     ) {
-        if !Self::is_doc_path(file_path, policy) {
+        if !policy.is_doc_path(file_path) {
             return;
         }
 
@@ -941,18 +925,20 @@ impl SecurityScanner {
             .map(|r| (r.id.clone(), r.rule.suppress_if_matched.clone()))
             .collect();
 
-        // 标记应该被抑制的匹配
+        // 标记应该被抑制的匹配（优化：使用 HashMap 替代 O(n²) 遍历）
+        // 先构建 (rule_id, line_number) → bool 的快速查找表
+        let mut rule_line_set: HashSet<(String, usize)> = HashSet::new();
+        for m in &matches {
+            rule_line_set.insert((m.rule_id.clone(), m.line_number));
+        }
         let mut suppressed_indices = Vec::new();
         for (idx, m) in matches.iter().enumerate() {
             for (suppress_target_id, suppressor_ids) in &suppress_rules {
                 if m.rule_id == *suppress_target_id {
-                    // 检查同一行中是否有抑制规则被匹配
+                    // 检查同一行中是否有抑制规则被匹配（O(1) 查找）
                     let is_suppressed = suppressor_ids.iter().any(|suppressor_id| {
-                        matches.iter().any(|other| {
-                            other.rule_id == *suppressor_id
-                                && other.line_number == m.line_number
-                                && other.rule_id != m.rule_id // 避免自己抑制自己
-                        })
+                        *suppressor_id != m.rule_id // 避免自己抑制自己
+                            && rule_line_set.contains(&((*suppressor_id).clone(), m.line_number))
                     });
                     if is_suppressed {
                         suppressed_indices.push(idx);
@@ -1381,16 +1367,13 @@ impl SecurityScanner {
                     category: IssueCategory::FileSystem,
                     description: "SYMLINK: symbolic link detected inside skill directory"
                         .to_string(),
-                    line_number: None,
-                    code_snippet: None,
                     file_path: Some(rel_str),
                     rule_id: Some("SYMLINK".to_string()),
                     confidence: Some(Confidence::High.as_str().to_string()),
-                    remediation: None,
                     cwe_id: Some("CWE-59".to_string()),
                     threat_category: Some("SensitiveFileAccess".to_string()),
-                    same_path_other_rule_ids: None,
                     finding_kind: Some(FindingKind::Security.as_str().to_string()),
+                    ..Default::default()
                 });
                 continue;
             }
@@ -1401,23 +1384,13 @@ impl SecurityScanner {
                     path,
                     max_files
                 );
-                all_issues.push(SecurityIssue {
-                    severity: IssueSeverity::Low,
-                    category: IssueCategory::Other,
-                    description: format!(
+                all_issues.push(make_scan_meta_issue(
+                    IssueSeverity::Low,
+                    format!(
                         "Scan stopped early: exceeded max file limit ({max_files}). Some files were not scanned."
                     ),
-                    line_number: None,
-                    code_snippet: None,
-                    file_path: None,
-                    rule_id: None,
-                    confidence: None,
-                    remediation: None,
-                    cwe_id: None,
-                    threat_category: None,
-                    same_path_other_rule_ids: None,
-                    finding_kind: Some(FindingKind::Auditability.as_str().to_string()),
-                });
+                    None,
+                ));
                 partial_scan = true;
                 break;
             }
@@ -1468,21 +1441,11 @@ impl SecurityScanner {
                 Ok(f) => f,
                 Err(e) => {
                     log::warn!("Failed to open file {:?}: {}", file_path, e);
-                    all_issues.push(SecurityIssue {
-                        severity: IssueSeverity::Low,
-                        category: IssueCategory::Other,
-                        description: format!("Failed to read file for scanning: {e}"),
-                        line_number: None,
-                        code_snippet: None,
-                        file_path: Some(rel_str.clone()),
-                        rule_id: None,
-                        confidence: None,
-                        remediation: None,
-                        cwe_id: None,
-                        threat_category: None,
-                        same_path_other_rule_ids: None,
-                        finding_kind: Some(FindingKind::Auditability.as_str().to_string()),
-                    });
+                    all_issues.push(make_scan_meta_issue(
+                        IssueSeverity::Low,
+                        format!("Failed to read file for scanning: {e}"),
+                        Some(rel_str.clone()),
+                    ));
                     skipped_files.push(rel_str.clone());
                     partial_scan = true;
                     continue;
@@ -1494,21 +1457,11 @@ impl SecurityScanner {
                 Ok(_) => {}
                 Err(e) => {
                     log::warn!("Failed to read file {:?}: {}", file_path, e);
-                    all_issues.push(SecurityIssue {
-                        severity: IssueSeverity::Low,
-                        category: IssueCategory::Other,
-                        description: format!("Failed to read file for scanning: {e}"),
-                        line_number: None,
-                        code_snippet: None,
-                        file_path: Some(rel_str.clone()),
-                        rule_id: None,
-                        confidence: None,
-                        remediation: None,
-                        cwe_id: None,
-                        threat_category: None,
-                        same_path_other_rule_ids: None,
-                        finding_kind: Some(FindingKind::Auditability.as_str().to_string()),
-                    });
+                    all_issues.push(make_scan_meta_issue(
+                        IssueSeverity::Low,
+                        format!("Failed to read file for scanning: {e}"),
+                        Some(rel_str.clone()),
+                    ));
                     skipped_files.push(rel_str.clone());
                     partial_scan = true;
                     continue;
@@ -1518,24 +1471,14 @@ impl SecurityScanner {
             let truncated = (buf.len() as u64) > MAX_BYTES_PER_FILE;
             if truncated {
                 buf.truncate(MAX_BYTES_PER_FILE as usize);
-                all_issues.push(SecurityIssue {
-                    severity: IssueSeverity::Info,
-                    category: IssueCategory::Other,
-                    description: format!(
+                all_issues.push(make_scan_meta_issue(
+                    IssueSeverity::Info,
+                    format!(
                         "File truncated for scanning (>{} bytes). Only the first {} bytes were scanned.",
                         MAX_BYTES_PER_FILE, MAX_BYTES_PER_FILE
                     ),
-                    line_number: None,
-                    code_snippet: None,
-                    file_path: Some(rel_str.clone()),
-                    rule_id: None,
-                    confidence: None,
-                    remediation: None,
-                    cwe_id: None,
-                    threat_category: None,
-                    same_path_other_rule_ids: None,
-                    finding_kind: Some(FindingKind::Auditability.as_str().to_string()),
-                });
+                    Some(rel_str.clone()),
+                ));
                 partial_scan = true;
             }
 
@@ -1554,21 +1497,16 @@ impl SecurityScanner {
                 // 输出 Auditability 级别的归档存在提示
                 all_issues.push(SecurityIssue {
                     severity: IssueSeverity::Low,
-                    category: IssueCategory::Other,
                     description: format!("Archive file detected: {}", rel_str),
-                    line_number: None,
-                    code_snippet: None,
                     file_path: Some(rel_str.clone()),
                     rule_id: Some("ARCHIVE_FILE_DETECTED".to_string()),
-                    confidence: None,
                     remediation: Some(
                         "Review archive contents; malicious payloads may be hidden inside archives"
                             .to_string(),
                     ),
-                    cwe_id: None,
                     threat_category: Some("Obfuscation".to_string()),
-                    same_path_other_rule_ids: None,
                     finding_kind: Some(FindingKind::Auditability.as_str().to_string()),
+                    ..Default::default()
                 });
 
                 // 默认策略不解压归档；不可审计内容只降低信任。
@@ -3893,42 +3831,29 @@ subprocess.run(
     fn test_is_doc_path_with_various_indicators() {
         let policy = crate::security::policy::ScanPolicy::builtin_default();
 
-        assert!(SecurityScanner::is_doc_path("docs/install.sh", policy));
-        assert!(SecurityScanner::is_doc_path(
-            "sub/references/api.md",
-            policy
-        ));
-        assert!(SecurityScanner::is_doc_path("examples/basic.py", policy));
-        assert!(SecurityScanner::is_doc_path(
-            "tutorials/getting-started.md",
-            policy
-        ));
-        assert!(SecurityScanner::is_doc_path("guides/setup.md", policy));
-        assert!(SecurityScanner::is_doc_path(
-            "test/fixtures/data.json",
-            policy
-        ));
-        assert!(SecurityScanner::is_doc_path("tests/test_main.py", policy));
-        assert!(SecurityScanner::is_doc_path("fixtures/sample.yaml", policy));
-        assert!(SecurityScanner::is_doc_path("samples/demo.py", policy));
-        assert!(SecurityScanner::is_doc_path("demo/preview.md", policy));
-        assert!(SecurityScanner::is_doc_path(
-            "skills/claude-api/curl/managed-agents.md",
-            policy
-        ));
-        assert!(SecurityScanner::is_doc_path(
-            "skills/web-artifacts-builder/scripts/init-artifact.sh",
-            policy
+        assert!(policy.is_doc_path("docs/install.sh"));
+        assert!(policy.is_doc_path("sub/references/api.md"));
+        assert!(policy.is_doc_path("examples/basic.py"));
+        assert!(policy.is_doc_path("tutorials/getting-started.md"));
+        assert!(policy.is_doc_path("guides/setup.md"));
+        assert!(policy.is_doc_path("test/fixtures/data.json"));
+        assert!(policy.is_doc_path("tests/test_main.py"));
+        assert!(policy.is_doc_path("fixtures/sample.yaml"));
+        assert!(policy.is_doc_path("samples/demo.py"));
+        assert!(policy.is_doc_path("demo/preview.md"));
+        assert!(policy.is_doc_path("skills/claude-api/curl/managed-agents.md"));
+        assert!(policy.is_doc_path(
+            "skills/web-artifacts-builder/scripts/init-artifact.sh"
         ));
 
         // 不应误匹配子串
-        assert!(!SecurityScanner::is_doc_path("document.txt", policy));
-        assert!(!SecurityScanner::is_doc_path("testing.py", policy));
-        assert!(!SecurityScanner::is_doc_path("my-docs/file.md", policy));
+        assert!(!policy.is_doc_path("document.txt"));
+        assert!(!policy.is_doc_path("testing.py"));
+        assert!(!policy.is_doc_path("my-docs/file.md"));
 
         // 根目录的 SKILL.md 不应被视为文档路径
-        assert!(!SecurityScanner::is_doc_path("SKILL.md", policy));
-        assert!(!SecurityScanner::is_doc_path("scripts/helper.py", policy));
+        assert!(!policy.is_doc_path("SKILL.md"));
+        assert!(!policy.is_doc_path("scripts/helper.py"));
     }
 
     #[test]

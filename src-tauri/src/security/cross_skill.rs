@@ -6,10 +6,10 @@
 //! - 互补触发器（collector + sender 描述对）
 //! - 共享可疑模式（多个 Skill 包含相同混淆/执行模式）
 
-use crate::models::security::{Finding, FindingMetadata, IssueSeverity, ThreatCategory};
+use crate::models::security::{Finding, FindingKind, IssueSeverity, ThreatCategory};
+use crate::security::finding_builder::{self, FindingSpec};
 use lazy_static::lazy_static;
 use regex::Regex;
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 /// 单个 Skill 的扫描上下文（供跨 Skill 分析使用）
@@ -334,17 +334,11 @@ fn make_cross_skill_finding(
     title: &str,
     description: &str,
 ) -> Finding {
-    let id_input = format!("{}|{}", rule_id, description);
-    let mut hasher = Sha256::new();
-    hasher.update(id_input.as_bytes());
-    let id = format!("{:x}", hasher.finalize())[..16].to_string();
-
-    Finding {
-        id,
-        rule_id: rule_id.to_string(),
+    finding_builder::make_finding(FindingSpec {
+        rule_id,
         category,
         severity,
-        title: title.to_string(),
+        title,
         description: description.to_string(),
         file_path: None,
         line_number: None,
@@ -353,12 +347,13 @@ fn make_cross_skill_finding(
             "Review the coordinated behavior across skills for potential security risks."
                 .to_string(),
         ),
-        analyzer: ANALYZER_NAME.to_string(),
-        metadata: Some(FindingMetadata {
-            confidence: Some("Medium".to_string()),
-            ..Default::default()
-        }),
-    }
+        analyzer: ANALYZER_NAME,
+        finding_kind: FindingKind::Security,
+        rule_source: None,
+        cwe_id: None,
+        confidence: Some("Medium".to_string()),
+        id_salt: Some(description),
+    })
 }
 
 /// 从已安装 Skill 目录构建跨 Skill 分析上下文（递归读取可扫描文本文件）

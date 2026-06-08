@@ -5,9 +5,8 @@
 //!
 //! `SingleFile` 模式跳过所有结构检查，直接返回空 `Vec`。
 
-use sha2::{Digest, Sha256};
-
-use crate::models::security::{Finding, FindingMetadata, IssueSeverity, ThreatCategory};
+use crate::models::security::{Finding, FindingKind, IssueSeverity, ThreatCategory};
+use crate::security::finding_builder::{self, FindingSpec};
 use crate::security::skill_context::{ScanMode, SkillContext, SkillFileType};
 
 // ── 常量 ──
@@ -452,7 +451,7 @@ fn normalize_path(path: &str) -> String {
 
 /// 创建一个 Finding 实例
 ///
-/// 使用 sha2 生成稳定的 finding ID：SHA256(rule_id + file + line)[:16]
+/// 委托 finding_builder 生成稳定的 finding ID 并构造 Finding
 pub fn make_finding(
     rule_id: &str,
     severity: IssueSeverity,
@@ -460,18 +459,6 @@ pub fn make_finding(
     file_path: Option<String>,
     line_number: Option<usize>,
 ) -> Finding {
-    // 生成稳定 ID
-    let id_input = format!(
-        "{}|{}|{}",
-        rule_id,
-        file_path.as_deref().unwrap_or(""),
-        line_number.map(|l| l.to_string()).unwrap_or_default()
-    );
-    let mut hasher = Sha256::new();
-    hasher.update(id_input.as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
-    let id = hash[..16].to_string();
-
     let title = match rule_id {
         "STRUCTURE_MISSING_SKILL_MD" => "Missing SKILL.md",
         "FRONTMATTER_PARSE_ERROR" => "Front-matter parse error",
@@ -489,24 +476,23 @@ pub fn make_finding(
         _ => "Structure violation",
     };
 
-    Finding {
-        id,
-        rule_id: rule_id.to_string(),
+    finding_builder::make_finding(FindingSpec {
+        rule_id,
         category: ThreatCategory::PolicyViolation,
         severity,
-        title: title.to_string(),
+        title,
         description,
         file_path,
         line_number,
         snippet: None,
         remediation: Some("Review and correct the skill structure per policy".to_string()),
-        analyzer: ANALYZER_NAME.to_string(),
-        metadata: Some(FindingMetadata {
-            rule_source: Some("strict_structure".to_string()),
-            finding_kind: Some(crate::models::security::FindingKind::Structure),
-            ..Default::default()
-        }),
-    }
+        analyzer: ANALYZER_NAME,
+        finding_kind: FindingKind::Structure,
+        rule_source: None,
+        cwe_id: None,
+        confidence: None,
+        id_salt: None,
+    })
 }
 
 // ── 单元测试 ──
