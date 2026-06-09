@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import packageJson from "./package.json";
@@ -29,6 +29,9 @@ export default defineConfig({
     },
   },
   envPrefix: ["VITE_", "TAURI_"],
+  test: {
+    exclude: [...configDefaults.exclude, "src-tauri/**"],
+  },
   build: {
     target: "esnext",
     minify: "esbuild",
