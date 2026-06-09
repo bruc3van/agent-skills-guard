@@ -206,7 +206,7 @@ All-new multi-layer scanning pipeline engine. From file traversal to final repor
 - **YAML External Rules** — Rules separated from code, supporting `core_rules.yaml` + `cisco_parity_signatures.yaml` dual rule packs
 - **Parallel Scanning** — Parallel scanning technology greatly improves scan speed for local installed skills/plugins
 - **Symbolic Link Detection** — Immediately hard-block on symlink discovery, prevent attacks
-- **Multi-Format Support** — Support ~80 file extensions including `.js`, `.ts`, `.py`, `.sh`, `.rs`
+- **Multi-Format Support** — Scans all text files, automatically skipping binary/image/font/compiled assets; individual rules can target specific extensions via `file_types` (e.g. `.py`, `.js`, `.ps1`), while generic rules (secret leakage, destructive commands, etc.) apply to all text files
 - **Platform Adaptation** — UTF-16 decoding, full Windows/multi-language support
 
 ### Scoring System Principles
