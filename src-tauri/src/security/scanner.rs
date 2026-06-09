@@ -1085,7 +1085,7 @@ impl SecurityScanner {
             Self::apply_finding_blocking(finding, blocked, hard_trigger_issues);
             all_issues.push(Self::issue_from_finding(finding));
         }
-        if analyzability_result.score < 70.0 {
+        if analyzability_result.has_risky_unanalyzable_content {
             partial = true;
         }
 
@@ -3136,6 +3136,44 @@ eval(user_input)
                 .iter()
                 .any(|r| r.starts_with("[policy:")),
             "Should contain policy fingerprint"
+        );
+    }
+
+    #[test]
+    fn test_license_text_does_not_make_directory_scan_partial() {
+        let scanner = SecurityScanner::new();
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("SKILL.md"),
+            "---\nname: test\n---\n# Body\nsafe content\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("LICENSE.txt"),
+            "Permission is hereby granted.\n".repeat(400),
+        )
+        .unwrap();
+
+        let report = scanner
+            .scan_directory(dir.path().to_str().unwrap(), "test-license-text", "en")
+            .unwrap();
+
+        assert!(
+            !report.partial_scan,
+            "LICENSE.txt should not make scan partial: {:?}",
+            report
+                .issues
+                .iter()
+                .map(|i| i.rule_id.as_deref())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !report.issues.iter().any(|i| {
+                i.rule_id
+                    .as_deref()
+                    .map_or(false, |id| id == "LOW_ANALYZABILITY")
+            }),
+            "LICENSE.txt should not trigger LOW_ANALYZABILITY"
         );
     }
 

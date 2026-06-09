@@ -34,6 +34,8 @@ pub struct AnalyzabilityResult {
     pub analyzable_bytes: u64,
     /// 不可分析字节数
     pub unanalyzable_bytes: u64,
+    /// 是否存在可能影响扫描完整性的风险性不可分析内容
+    pub has_risky_unanalyzable_content: bool,
 }
 
 /// 评估目录的可分析性
@@ -41,6 +43,7 @@ pub fn assess(ctx: &SkillContext) -> AnalyzabilityResult {
     let mut total_bytes = 0u64;
     let mut analyzable_bytes = 0u64;
     let mut findings = Vec::new();
+    let mut has_risky_unanalyzable_content = false;
 
     for file in &ctx.files {
         if is_analyzable(file) {
@@ -48,15 +51,18 @@ pub fn assess(ctx: &SkillContext) -> AnalyzabilityResult {
             analyzable_bytes += file.size_bytes;
         } else if is_inert_asset(file) {
             // 低风险惰性资产不参与可分析性分母，避免图片/字体等正常资源拉低覆盖率
+        } else if is_ancillary_text(file) {
+            // 许可证、NOTICE、README 等附属文本不是规则承载内容，不应拉低风险覆盖率
         } else if file.is_binary {
             total_bytes += file.size_bytes;
             // 高风险不可分析
+            has_risky_unanalyzable_content = true;
             findings.push(make_unanalyzable_finding(file));
         } else {
             total_bytes += file.size_bytes;
         }
-        // 注意：非二进制且非可分析、非惰性的文件（如 Unknown 类型但非二进制）
-        // 计入分母但不产生 finding
+        // 注意：非二进制且非可分析、非惰性、非附属文本的文件
+        // 计入分母但不产生单文件 finding；只有存在风险性不可分析内容时才产生 LOW_ANALYZABILITY
     }
 
     // 超大文件检查
@@ -81,7 +87,7 @@ pub fn assess(ctx: &SkillContext) -> AnalyzabilityResult {
     };
 
     // 低可分析性检查
-    if score < LOW_ANALYZABILITY_THRESHOLD {
+    if score < LOW_ANALYZABILITY_THRESHOLD && has_risky_unanalyzable_content {
         findings.push(make_low_analyzability_finding(score));
     }
 
@@ -91,6 +97,7 @@ pub fn assess(ctx: &SkillContext) -> AnalyzabilityResult {
         total_bytes,
         analyzable_bytes,
         unanalyzable_bytes: total_bytes - analyzable_bytes,
+        has_risky_unanalyzable_content,
     }
 }
 
@@ -105,6 +112,36 @@ fn is_analyzable(file: &crate::security::skill_context::SkillFile) -> bool {
         SkillFileType::Asset => is_text_asset(file),
         _ => false,
     }
+}
+
+/// 判断是否为可读取但通常不承载执行/指令规则的附属文本。
+///
+/// 这类文件不等同于“已被安全规则完整分析”，但也不应被解释为隐藏或混淆内容。
+fn is_ancillary_text(file: &crate::security::skill_context::SkillFile) -> bool {
+    if file.is_binary {
+        return false;
+    }
+
+    let file_name = file
+        .absolute_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_lowercase();
+
+    let stem = file_name.split('.').next().unwrap_or(file_name.as_str());
+
+    matches!(
+        stem,
+        "license" | "licence" | "copying" | "notice" | "readme" | "changelog" | "changes"
+    ) || matches!(
+        file.absolute_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .as_deref(),
+        Some("txt" | "text" | "rst")
+    )
 }
 
 /// 判断 Asset 文件是否为文本格式（如 .svg, .html, .css）
@@ -365,6 +402,47 @@ mod tests {
                 .iter()
                 .any(|f| f.rule_id == "LOW_ANALYZABILITY"),
             "Known inert .png should not lower analyzability"
+        );
+    }
+
+    #[test]
+    fn test_license_text_does_not_lower_analyzability() {
+        let files = vec![
+            make_test_file("SKILL.md", "md", SkillFileType::Markdown, false, 4440),
+            make_test_file("LICENSE.txt", "txt", SkillFileType::Unknown, false, 10174),
+        ];
+        let ctx = make_test_ctx(files);
+        let result = assess(&ctx);
+
+        assert!((result.score - 100.0).abs() < f64::EPSILON);
+        assert_eq!(result.total_bytes, 4440);
+        assert_eq!(result.analyzable_bytes, 4440);
+        assert_eq!(result.unanalyzable_bytes, 0);
+        assert!(
+            !result
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "LOW_ANALYZABILITY"),
+            "LICENSE.txt should not be treated as suspicious unanalyzable content"
+        );
+    }
+
+    #[test]
+    fn test_notice_without_extension_does_not_lower_analyzability() {
+        let files = vec![
+            make_test_file("SKILL.md", "md", SkillFileType::Markdown, false, 1000),
+            make_test_file("NOTICE", "", SkillFileType::Unknown, false, 9000),
+        ];
+        let ctx = make_test_ctx(files);
+        let result = assess(&ctx);
+
+        assert!((result.score - 100.0).abs() < f64::EPSILON);
+        assert!(
+            !result
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "LOW_ANALYZABILITY"),
+            "NOTICE should be treated as ancillary text, not hidden content"
         );
     }
 
