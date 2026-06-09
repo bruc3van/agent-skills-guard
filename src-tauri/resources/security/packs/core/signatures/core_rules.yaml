@@ -677,7 +677,7 @@ rules:
   hard_trigger: false
   patterns:
   - (AKIA|ASIA)[A-Z0-9]{16}
-  description: AWS Access Key
+  description: AWS 访问密钥
   remediation: 使用AWS密钥管理服务或环境变量，不要硬编码AWS密钥
   cwe_id: CWE-798
   metadata:
@@ -692,7 +692,7 @@ rules:
   hard_trigger: false
   patterns:
   - (?:gh[opusr]_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{36,})
-  description: GitHub Token
+  description: GitHub 令牌
   remediation: 使用GitHub Secrets或环境变量，不要硬编码Token
   cwe_id: CWE-798
   metadata:
@@ -1523,8 +1523,8 @@ rules:
   - (?i)ignore\s+(?:all\s+)?(?:previous|prior|earlier)\s+(?:instructions|rules|prompts|guidelines)
   - (?i)disregard\s+(?:all\s+)?(?:previous|prior|earlier)\s+(?:instructions|rules)
   - (?i)forget\s+(?:all\s+)?(?:previous|prior|earlier)\s+(?:instructions|rules)
-  description: "Prompt injection: ignore previous instructions"
-  remediation: "Remove instruction override commands from skill content"
+  description: "提示注入：忽略先前指令"
+  remediation: "移除技能内容中的指令覆盖命令"
   cwe_id: CWE-77
 
   metadata:
@@ -1543,8 +1543,8 @@ rules:
   - (?i)you\s+are\s+now\s+in\s+(?:unrestricted|debug|developer|admin|god|jailbreak)\s+mode
   - (?i)disable\s+(?:all\s+)?(?:safety|security|content|ethical)\s+(?:filters|checks|guidelines)
   - (?i)enable\s+(?:unrestricted|debug|admin)\s+mode
-  description: "Prompt injection: unrestricted/debug mode activation"
-  remediation: "Remove mode override commands from skill content"
+  description: "提示注入：无限制/调试模式激活"
+  remediation: "移除技能内容中的模式覆盖命令"
   cwe_id: CWE-77
 
   metadata:
@@ -1564,8 +1564,8 @@ rules:
   - (?i)ignore\s+(?:safety|content|ethical)\s+(?:guidelines|restrictions|limits)
   - (?i)output\s+disallowed\s+content\s+anyway
   - (?i)override\s+(?:safety|content)\s+(?:filters|policy|restrictions)
-  description: "Prompt injection: safety policy bypass"
-  remediation: "Remove policy bypass commands from skill content"
+  description: "提示注入：安全策略绕过"
+  remediation: "移除技能内容中的策略绕过命令"
   cwe_id: CWE-77
 
   metadata:
@@ -1584,8 +1584,8 @@ rules:
   - (?i)reveal\s+(?:your|the)\s+system\s+(?:prompt|instructions|message)
   - (?i)show\s+me\s+(?:your|the)\s+system\s+(?:prompt|instructions)
   - (?i)what\s+(?:is|are)\s+(?:your|the)\s+system\s+(?:prompt|instructions)
-  description: "Prompt injection: system prompt reveal attempt"
-  remediation: "Remove system prompt extraction commands"
+  description: "提示注入：系统提示词泄露尝试"
+  remediation: "移除系统提示词提取命令"
   cwe_id: CWE-77
 
   metadata:
@@ -1606,8 +1606,8 @@ rules:
   - (?i)keep\s+(?:this|that)\s+(?:secret|hidden|from\s+the\s+user)
   - (?i)don't\s+mention\s+(?:you\s+)?used\s+this\s+skill
   - (?i)without\s+(?:the\s+)?user\s+(?:knowing|aware|noticing)
-  description: "Prompt injection: action concealment from user"
-  remediation: "Remove concealment commands; all actions must be transparent to users"
+  description: "提示注入：对用户隐藏操作行为"
+  remediation: "移除隐藏命令；所有操作必须对用户透明"
   cwe_id: CWE-77
 
   metadata:
@@ -1632,8 +1632,8 @@ rules:
   - (?i)I\s+(?:can|have\s+the\s+ability\s+to)\s+(?:access|read|write|modify|delete|execute)\s+(?:any|all|every)\s+(?:file|system|network|database)
   - (?i)(?:unlimited|unrestricted|full)\s+(?:access|permissions|privileges)\s+(?:to|over)\s+(?:all|any|every)
   - (?i)I\s+(?:am\s+)?(?:capable|able)\s+(?:of\s+)?(?:doing|performing|executing)\s+(?:any|all|every)\s+(?:task|action|operation)
-  description: "Prompt injection: capability inflation - claiming abilities beyond declared scope"
-  remediation: "Remove exaggerated capability claims; only declare actual permitted abilities"
+  description: "提示注入：能力夸大——声称超出声明范围的能力"
+  remediation: "移除夸大的能力声明；仅声明实际允许的能力"
   cwe_id: CWE-77
 
   metadata:
@@ -1659,8 +1659,8 @@ rules:
   - (?i)chain\s+(?:together|multiple)\s+(?:tools|commands|apis|functions)
   - (?i)(?:combine|stack|pipe)\s+(?:multiple\s+)?(?:tools|commands|apis)\s+(?:together|in\s+sequence)
   - (?i)(?:after|before)\s+(?:using|calling|invoking)\s+.{0,30}(?:immediately|then|also)\s+(?:use|call|invoke)
-  description: "Prompt injection: tool chaining for privilege escalation"
-  remediation: "Remove tool chaining instructions; each tool invocation should be explicit and authorized"
+  description: "提示注入：工具链组合实现权限提升"
+  remediation: "移除工具链组合指令；每次工具调用应显式且经过授权"
   cwe_id: CWE-77
 
   metadata:
@@ -1686,8 +1686,8 @@ rules:
   - (?i)(?:no|without\s+any)\s+(?:need|requirement)\s+(?:for\s+)?(?:user|human|manual)\s+(?:confirmation|approval|oversight|review)
   - (?i)(?:skip|bypass|ignore)\s+(?:user|human|manual)\s+(?:confirmation|approval|oversight|verification)\s+(?:step|phase|check)
   - (?i)(?:auto|self|automatic)\s*(?:approve|confirm|execute|proceed)\s+(?:without|bypassing)\s+(?:user|human)\s+(?:input|confirmation|approval)
-  description: "Prompt injection: claiming autonomous decision-making without user confirmation"
-  remediation: "Remove autonomy claims; all significant actions require user confirmation"
+  description: "提示注入：声称无需用户确认即可自主决策"
+  remediation: "移除自主决策声明；所有重要操作均需用户确认"
   cwe_id: CWE-77
 
 # === Content Poisoning / RAG Poisoning 规则 ===
@@ -1713,8 +1713,8 @@ rules:
   - '(?i)(?:x账号|x平台|x\s*(?:account|handle)|twitter\s*(?:account|handle))\s*(?:是|:|：)?\s*[@A-Za-z0-9_.-]{3,}'
   - '(?i)(?:follow|关注|参考|推荐关注|重点参考).{0,80}(?:x\.com/[A-Za-z0-9_.-]+|(?:on|在)\s*x\b|x平台|x账号)'
   - '(?i)(?:expert|专家|community|社区|contributor|贡献者).{0,80}(?:x\.com/[A-Za-z0-9_.-]+|x\s*[:：]\s*[A-Za-z0-9_.-]+|x账号\s*[:：]?\s*[A-Za-z0-9_.-]+)'
-  description: "Content poisoning: personal social account promoted as an authority or resource"
-  remediation: "Remove unverified personal account promotion from skill instructions, references, and metadata"
+  description: "内容投毒：将个人社交账号作为权威来源或资源进行推广"
+  remediation: "移除技能指令、引用和元数据中未经验证的个人账号推广内容"
   cwe_id: CWE-451
 
   metadata:
@@ -1739,8 +1739,8 @@ rules:
   - .yml
   patterns:
   - '(?i)(?:REVIEWER_NOTE|Internal|Reviewer|Maintainer|@contributor|dev-contact).{0,120}(?:x\.com/[A-Za-z0-9_.-]+|x\s*[:：]\s*[A-Za-z0-9_.-]+|follow\s+[A-Za-z0-9_.-]+\s+on\s+x|refer\s+to\s+[A-Za-z0-9_.-]+\s+on\s+x|[A-Za-z0-9_.-]+@x\.com)'
-  description: "Prompt injection: planted reference hidden in code comments or template metadata"
-  remediation: "Remove maintainer/reviewer/comment metadata that injects unrelated personal references"
+  description: "提示注入：在代码注释或模板元数据中植入引用"
+  remediation: "移除注入无关个人引用的维护者/审查者/评论元数据"
   cwe_id: CWE-77
 
   metadata:
@@ -1762,8 +1762,8 @@ rules:
   - .mdx
   patterns:
   - '(?i)(?:see_also|community|扩展资源|社区参考).{0,100}(?:x\.com/[A-Za-z0-9_.-]+|x\s*[:：]\s*[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+\s*\(\s*x\s*[:：]\s*[A-Za-z0-9_.-]+\s*\))'
-  description: "RAG poisoning: social account embedded in knowledge graph relations or retrieval metadata"
-  remediation: "Remove unrelated social account references from knowledge graph, see_also, and community metadata"
+  description: "RAG 投毒：在知识图谱关系或检索元数据中嵌入社交账号"
+  remediation: "移除知识图谱、see_also 和社区元数据中无关的社交账号引用"
   cwe_id: CWE-451
   metadata:
     origin: core
