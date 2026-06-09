@@ -14,8 +14,19 @@ disabled_rules: []
 # 严重度覆盖（示例，可按需调整）
 severity_overrides: []
 
-# 硬触发覆盖
-hard_trigger_overrides: []
+# 硬触发覆盖（将规则强制设为 hard_trigger 或取消 hard_trigger）
+# 以下规则在 default 策略下不阻断安装，但 strict 策略仍会阻断
+# 注意：default 和 permissive 的 hard_trigger_overrides 需保持 rule_id 同步，新增条目时须同时更新
+hard_trigger_overrides:
+  - rule_id: COMMAND_INJECTION_JS_FUNCTION_CONSTRUCTOR
+    hard_trigger: false
+    reason: "Function 构造器在模板引擎等合法场景中有使用，降为 High 仍计入评分"
+  - rule_id: SVG_EMBEDDED_SCRIPT
+    hard_trigger: false
+    reason: "SVG 脚本在资源展示场景中可能合法，降为 High 仍计入评分"
+  - rule_id: PDF_EMBEDDED_JAVASCRIPT
+    hard_trigger: false
+    reason: "PDF 嵌入 JS 在文档展示场景中可能合法，降为 High 仍计入评分"
 
 # 计入安全分的 FindingKind；默认不让结构合规噪音影响安全分
 score_kinds:
@@ -76,6 +87,8 @@ rule_scoping:
     - "samples"
     - "demo"
     - "skills"
+  # skip_in_docs: 这些规则在文档路径中直接跳过（docs/、examples/、test/ 等目录）
+  # 适用场景：仅示例/教程中出现的低风险模式
   skip_in_docs:
     - "CURL_POST"
     - "PY_EVAL"

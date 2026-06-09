@@ -1,3 +1,29 @@
+# === core_rules.yaml — 产品默认安全基线 ===
+#
+# 定位：Agent Skills Guard 的主规则包，覆盖通用安全检测能力。
+#
+# 适合放入：
+#   - 通用破坏性命令（删除根目录、清空用户目录、格式化磁盘等）
+#   - 通用远程执行（curl | sh、反弹 shell、PowerShell IEX/EncodedCommand、LOLBin 执行）
+#   - 通用代码执行 API（Python、Node.js、Java、Go、C#、PHP、Ruby 的动态执行/子进程调用）
+#   - 通用凭据/敏感文件（私钥、API key、GitHub/AWS/JWT、.env、浏览器凭据、Windows SAM）
+#   - Skill 内容安全（prompt injection、content poisoning、RAG poisoning、能力夸大、工具链滥用）
+#
+# 维护原则：
+#   - 新增高召回规则前必须提供负例 fixture
+#   - 低置信度规则优先使用 exclude_patterns 或 policy 控制
+#   - 只有明确危险、安装时不能放行的规则才能设为 hard_trigger: true
+#   - 新增规则须注明：放置理由、是否 hard trigger、是否需要 file_types/exclude_patterns、正负例 fixture
+#
+# 共享 exclude patterns 参考（当前按规则独立配置，调整时需同步更新所有相关规则）：
+#   注释行排除: ^\s*#  (Python/Ruby/Shell 等使用，10 条规则共用)
+#   双斜杠注释: ^\s*//  (JS/TS/C/Java 等使用，8 条规则共用)
+#   块注释星号: ^\s*\*  (JS/TS 多行注释续行，2 条规则共用)
+#   占位符排除: (?i)\b(placeholder|replace\s+with)\b  (PASSWORD 使用)
+#   示例变量名: (?i)\b(your|my|the)_(secret|token|key)\b  (GENERIC_SECRET 使用)
+#   示例标记:   (?i)\bexample\b  (SUDO 使用)
+#
+
 name: core
 version: '1.0'
 description: Core security rules migrated from Rust hardcoded rules
@@ -13,6 +39,10 @@ rules:
   description: rm -rf / 删除根目录
   remediation: 检查命令参数，避免操作根目录或使用通配符
   cwe_id: CWE-78
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: DD_WIPE
   category: Destructive
   severity: Critical
@@ -24,6 +54,10 @@ rules:
   description: dd 写入磁盘设备
   remediation: 检查命令参数，避免写入系统磁盘设备
   cwe_id: CWE-78
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: MKFS_FORMAT
   category: Destructive
   severity: Critical
@@ -35,6 +69,10 @@ rules:
   description: mkfs 格式化命令
   remediation: 检查命令参数，避免格式化系统磁盘
   cwe_id: CWE-78
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: DISKUTIL_ERASE
   category: Destructive
   severity: Critical
@@ -46,6 +84,10 @@ rules:
   description: diskutil eraseDisk/eraseVolume 擦除磁盘
   remediation: 检查diskutil擦除操作，避免误擦系统磁盘
   cwe_id: CWE-78
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: NEWFS_FORMAT
   category: Destructive
   severity: Critical
@@ -57,6 +99,10 @@ rules:
   description: newfs 格式化命令
   remediation: 检查newfs操作，避免格式化系统磁盘
   cwe_id: CWE-78
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: CURL_PIPE_SH_MENTION
   category: RemoteExec
   severity: Low
@@ -94,6 +140,10 @@ rules:
   - .cmd
   suppress_if_matched:
   - CURL_PIPE_SH
+  metadata:
+    origin: core
+    fp_risk: high
+    phase: P0
 - id: WGET_PIPE_SH
   category: RemoteExec
   severity: Critical
@@ -105,6 +155,10 @@ rules:
   description: wget | sh 远程执行
   remediation: 避免直接执行远程脚本，应先下载后检查
   cwe_id: CWE-78
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: BASE64_EXEC
   category: RemoteExec
   severity: Critical
@@ -116,6 +170,10 @@ rules:
   description: base64 解码后执行
   remediation: 避免执行Base64编码的命令，可能隐藏恶意代码
   cwe_id: CWE-506
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: REVERSE_SHELL
   category: RemoteExec
   severity: Critical
@@ -127,6 +185,10 @@ rules:
   description: 反弹Shell后门
   remediation: 检查网络连接和进程调用，避免反弹Shell后门
   cwe_id: CWE-506
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: POWERSHELL_ENCODED_COMMAND
   category: RemoteExec
   severity: Critical
@@ -142,6 +204,10 @@ rules:
   - .ps1
   - .psm1
   - .psd1
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: POWERSHELL_IEX_DOWNLOAD
   category: RemoteExec
   severity: Critical
@@ -157,6 +223,10 @@ rules:
   - .ps1
   - .psm1
   - .psd1
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: POWERSHELL_PIPE_IEX
   category: RemoteExec
   severity: Critical
@@ -173,6 +243,10 @@ rules:
   - .ps1
   - .psm1
   - .psd1
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: MSHTA_EXEC
   category: RemoteExec
   severity: Critical
@@ -184,6 +258,10 @@ rules:
   description: mshta 远程或脚本执行
   remediation: 避免使用mshta执行远程脚本
   cwe_id: CWE-78
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: REGSVR32_SCJ
   category: RemoteExec
   severity: Critical
@@ -195,6 +273,10 @@ rules:
   description: regsvr32 通过脚本组件执行远程内容
   remediation: 避免使用regsvr32加载远程脚本组件
   cwe_id: CWE-78
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: RUNDLL32_SCRIPT
   category: RemoteExec
   severity: Critical
@@ -206,6 +288,10 @@ rules:
   description: rundll32 执行脚本或远程内容
   remediation: 避免使用rundll32执行脚本或远程内容
   cwe_id: CWE-78
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: BITSADMIN_TRANSFER
   category: RemoteExec
   severity: Medium
@@ -217,6 +303,10 @@ rules:
   description: bitsadmin 下载/执行链路
   remediation: 检查bitsadmin用途，避免用于下载恶意内容
   cwe_id: CWE-494
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: CERTUTIL_DOWNLOAD
   category: RemoteExec
   severity: Medium
@@ -228,6 +318,10 @@ rules:
   description: certutil 可用于下载/解码payload
   remediation: 避免使用certutil下载或解码可疑内容
   cwe_id: CWE-494
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: WMIC_PROCESS_CREATE
   category: RemoteExec
   severity: Medium
@@ -239,6 +333,10 @@ rules:
   description: wmic process call create 进程执行
   remediation: 审查wmic进程创建行为，避免执行可疑命令
   cwe_id: CWE-78
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: PY_EXEC
   category: CmdInjection
   severity: Low
@@ -254,6 +352,10 @@ rules:
   - .py
   - .pyw
   - .pyi
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: OS_SYSTEM
   category: CmdInjection
   severity: Low
@@ -269,6 +371,10 @@ rules:
   - .py
   - .pyw
   - .pyi
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: SUBPROCESS_SHELL
   category: CmdInjection
   severity: Low
@@ -284,6 +390,12 @@ rules:
   - .py
   - .pyw
   - .pyi
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
+  exclude_patterns:
+  - ^\s*#
 - id: SUBPROCESS_CALL
   category: CmdInjection
   severity: Low
@@ -299,6 +411,12 @@ rules:
   - .py
   - .pyw
   - .pyi
+  metadata:
+    origin: core
+    fp_risk: high
+    phase: P0
+  exclude_patterns:
+  - ^\s*#
 - id: CMD_WRAPPER
   category: CmdInjection
   severity: Medium
@@ -314,6 +432,10 @@ rules:
   - .bat
   - .cmd
   - .ps1
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: POWERSHELL_BYPASS_POLICY
   category: CmdInjection
   severity: Medium
@@ -329,6 +451,10 @@ rules:
   - .ps1
   - .psm1
   - .psd1
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: CURL_POST
   category: Network
   severity: Low
@@ -340,6 +466,13 @@ rules:
   description: curl POST 请求
   remediation: 确认网络请求目标，避免泄露敏感数据
   cwe_id: CWE-319
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
+  exclude_patterns:
+  - ^\s*#
+  - ^\s*//
 - id: NETCAT
   category: Network
   severity: Low
@@ -351,6 +484,13 @@ rules:
   description: netcat 网络连接
   remediation: 检查netcat使用场景，避免未授权的网络连接
   cwe_id: CWE-319
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
+  exclude_patterns:
+  - ^\s*#
+  - ^\s*//
 - id: PY_URLLIB
   category: Network
   severity: Low
@@ -365,6 +505,10 @@ rules:
   - .py
   - .pyw
   - .pyi
+  metadata:
+    origin: core
+    fp_risk: high
+    phase: P0
 - id: HTTP_REQUEST
   category: Network
   severity: Low
@@ -379,6 +523,12 @@ rules:
   - .py
   - .pyw
   - .pyi
+  metadata:
+    origin: core
+    fp_risk: high
+    phase: P0
+  exclude_patterns:
+  - ^\s*#
 - id: CHMOD_777
   category: PrivilegeEscalation
   severity: High
@@ -390,6 +540,10 @@ rules:
   description: chmod 设置过于开放的权限（world-writable）
   remediation: 避免设置world-writable权限，使用最小权限原则
   cwe_id: CWE-732
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: SUDOERS
   category: PrivilegeEscalation
   severity: Critical
@@ -401,6 +555,10 @@ rules:
   description: sudoers 文件修改
   remediation: 检查sudoers修改，避免不当的权限配置
   cwe_id: CWE-250
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: CRONTAB
   category: Persistence
   severity: High
@@ -412,6 +570,10 @@ rules:
   description: crontab 持久化（排除只读操作）
   remediation: 检查定时任务内容，避免恶意持久化机制
   cwe_id: CWE-506
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: SSH_KEYS
   category: Persistence
   severity: Critical
@@ -423,6 +585,10 @@ rules:
   description: SSH 密钥写入
   remediation: 检查SSH密钥写入操作，避免未授权访问
   cwe_id: CWE-506
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: REG_RUN_KEY_ADD
   category: Persistence
   severity: High
@@ -438,6 +604,10 @@ rules:
   - .cmd
   - .ps1
   - .reg
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: POWERSHELL_RUN_KEY
   category: Persistence
   severity: High
@@ -452,6 +622,10 @@ rules:
   - .ps1
   - .psm1
   - .psd1
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: STARTUP_FOLDER_PERSISTENCE
   category: Persistence
   severity: High
@@ -459,10 +633,13 @@ rules:
   confidence: Medium
   hard_trigger: false
   patterns:
-  - (?i)\b(copy|xcopy|robocopy|move|mkdir|md|echo|type|new-item|set-content|add-content|out-file|copy-item|move-item)\b[^\r\n]*(\\Microsoft\\Windows\\Start Menu\\Programs\\Startup|\\ProgramData\\Microsoft\\Windows\\Start
-    Menu\\Programs\\Startup|shell:startup|shell:common startup)|>\s*[^\r\n]*(\\Microsoft\\Windows\\Start Menu\\Programs\\Startup|\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Startup)
+  - (?i)\b(copy|xcopy|robocopy|move|mkdir|md|echo|type|new-item|set-content|add-content|out-file|copy-item|move-item)\b[^\r\n]*(\\Microsoft\\Windows\\Start Menu\\Programs\\Startup|\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Startup|shell:startup|shell:common startup)|>\s*[^\r\n]*(\\Microsoft\\Windows\\Start Menu\\Programs\\Startup|\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Startup)
   description: 写入启动项文件夹
   remediation: 审查 Startup 文件夹写入，避免持久化
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: SCHTASKS_CREATE
   category: Persistence
   severity: High
@@ -473,6 +650,10 @@ rules:
   - (?i)\bschtasks(\.exe)?\b[^\r\n]*(/create\b[^\r\n]*(/sc\s+(onlogon|onstart)|/rl\s+highest|/tr\s+[^\r\n]*\b(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32)\b|/tr\s+[^\r\n]*(\\AppData\\|\\ProgramData\\))|(/sc\s+(onlogon|onstart)|/rl\s+highest|/tr\s+[^\r\n]*\b(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32)\b|/tr\s+[^\r\n]*(\\AppData\\|\\ProgramData\\))[^\r\n]*/create\b)
   description: schtasks 创建计划任务
   remediation: 审查 schtasks 创建计划任务行为
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: PRIVATE_KEY
   category: Secrets
   severity: High
@@ -484,6 +665,10 @@ rules:
   description: 硬编码私钥
   remediation: 使用环境变量或密钥管理服务，不要硬编码私钥
   cwe_id: CWE-798
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: AWS_KEY
   category: Secrets
   severity: Critical
@@ -495,6 +680,10 @@ rules:
   description: AWS Access Key
   remediation: 使用AWS密钥管理服务或环境变量，不要硬编码AWS密钥
   cwe_id: CWE-798
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: GITHUB_TOKEN
   category: Secrets
   severity: Critical
@@ -506,6 +695,10 @@ rules:
   description: GitHub Token
   remediation: 使用GitHub Secrets或环境变量，不要硬编码Token
   cwe_id: CWE-798
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: READ_SSH_PRIVATE_KEY
   category: SensitiveFileAccess
   severity: High
@@ -517,6 +710,10 @@ rules:
   description: 读取SSH私钥文件
   remediation: 避免直接读取私钥文件，使用ssh-agent管理密钥
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: READ_AWS_CREDENTIALS
   category: SensitiveFileAccess
   severity: High
@@ -528,6 +725,10 @@ rules:
   description: 读取AWS凭证文件
   remediation: 使用AWS IAM角色或环境变量，避免读取凭证文件
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: READ_ENV_FILE
   category: SensitiveFileAccess
   severity: Medium
@@ -539,6 +740,10 @@ rules:
   description: 读取环境变量配置文件
   remediation: 确保.env文件不包含敏感信息，或使用密钥管理服务
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: READ_PASSWD
   category: SensitiveFileAccess
   severity: Medium
@@ -550,6 +755,10 @@ rules:
   description: 读取系统用户信息
   remediation: 确认是否需要读取用户信息，避免信息泄露
   cwe_id: CWE-200
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: READ_SHADOW
   category: SensitiveFileAccess
   severity: Critical
@@ -561,6 +770,10 @@ rules:
   description: 读取系统密码哈希文件
   remediation: 绝不应读取shadow文件，这是严重的安全风险
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: READ_GIT_CREDENTIALS
   category: SensitiveFileAccess
   severity: High
@@ -572,6 +785,10 @@ rules:
   description: 读取Git凭证存储文件
   remediation: 使用SSH密钥或凭证管理器，避免明文存储Git凭证
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: READ_WINDOWS_SAM
   category: SensitiveFileAccess
   severity: Critical
@@ -583,6 +800,10 @@ rules:
   description: 访问Windows SAM/SECURITY/SYSTEM 配置
   remediation: 禁止访问Windows凭据库与系统配置hive
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: READ_WINDOWS_CREDENTIALS
   category: SensitiveFileAccess
   severity: High
@@ -594,6 +815,10 @@ rules:
   description: 读取Windows Credentials 存储
   remediation: 避免读取Windows凭据存储目录
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: READ_POWERSHELL_HISTORY
   category: SensitiveFileAccess
   severity: Medium
@@ -605,6 +830,10 @@ rules:
   description: 读取PowerShell命令历史
   remediation: 避免读取用户命令历史文件
   cwe_id: CWE-200
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: READ_CHROME_LOGIN_DATA
   category: SensitiveFileAccess
   severity: High
@@ -616,6 +845,10 @@ rules:
   description: 读取Chrome Login Data
   remediation: 禁止读取浏览器密码数据库
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: READ_EDGE_LOGIN_DATA
   category: SensitiveFileAccess
   severity: High
@@ -627,6 +860,10 @@ rules:
   description: 读取Edge Login Data
   remediation: 禁止读取浏览器密码数据库
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: READ_FIREFOX_LOGINS
   category: SensitiveFileAccess
   severity: High
@@ -638,6 +875,10 @@ rules:
   description: 读取Firefox logins.json
   remediation: 禁止读取浏览器凭据文件
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: READ_DOCKER_CONFIG
   category: SensitiveFileAccess
   severity: Medium
@@ -649,6 +890,10 @@ rules:
   description: 读取Docker配置可能暴露凭据
   remediation: 避免读取Docker凭据配置文件
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: READ_NPMRC
   category: SensitiveFileAccess
   severity: Medium
@@ -660,6 +905,10 @@ rules:
   description: 读取.npmrc可能暴露Token
   remediation: 避免读取包含Token的npm配置文件
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: READ_PYPIRC
   category: SensitiveFileAccess
   severity: Medium
@@ -671,6 +920,10 @@ rules:
   description: 读取.pypirc可能暴露凭据
   remediation: 避免读取包含凭据的PyPI配置文件
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: READ_NETRC
   category: SensitiveFileAccess
   severity: Medium
@@ -682,6 +935,10 @@ rules:
   description: 读取.netrc可能暴露凭据
   remediation: 避免读取包含凭据的netrc文件
   cwe_id: CWE-522
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: NODE_CHILD_EXEC
   category: CmdInjection
   severity: Low
@@ -700,6 +957,13 @@ rules:
   - .tsx
   - .mjs
   - .cjs
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
+  exclude_patterns:
+  - ^\s*//
+  - ^\s*\*
 - id: NODE_VM_RUN
   category: CmdInjection
   severity: Low
@@ -718,6 +982,10 @@ rules:
   - .tsx
   - .mjs
   - .cjs
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: NODE_CHILD_SPAWN
   category: CmdInjection
   severity: Low
@@ -736,6 +1004,13 @@ rules:
   - .tsx
   - .mjs
   - .cjs
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
+  exclude_patterns:
+  - ^\s*//
+  - ^\s*\*
 - id: POWERSHELL_START_PROCESS
   category: CmdInjection
   severity: Low
@@ -751,6 +1026,10 @@ rules:
   - .ps1
   - .psm1
   - .psd1
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: GO_EXEC_COMMAND
   category: CmdInjection
   severity: Low
@@ -764,6 +1043,10 @@ rules:
   cwe_id: CWE-78
   file_types:
   - .go
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: JAVA_RUNTIME_EXEC
   category: CmdInjection
   severity: Low
@@ -780,6 +1063,10 @@ rules:
   - .kt
   - .kts
   - .groovy
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: JAVA_PROCESS_BUILDER
   category: CmdInjection
   severity: Low
@@ -796,6 +1083,10 @@ rules:
   - .kt
   - .kts
   - .groovy
+  metadata:
+    origin: core
+    fp_risk: high
+    phase: P0
 - id: CSHARP_PROCESS_START
   category: CmdInjection
   severity: Low
@@ -810,6 +1101,10 @@ rules:
   file_types:
   - .cs
   - .csx
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: PHP_EXEC
   category: CmdInjection
   severity: Low
@@ -829,6 +1124,10 @@ rules:
   - .php5
   - .php7
   - .php8
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: RUBY_SYSTEM_EXEC
   category: CmdInjection
   severity: Low
@@ -845,6 +1144,10 @@ rules:
   - .rake
   - .gemspec
   - .ru
+  metadata:
+    origin: core
+    fp_risk: high
+    phase: P0
 - id: JWT_TOKEN
   category: Secrets
   severity: High
@@ -856,6 +1159,10 @@ rules:
   description: 硬编码的 JWT Token
   remediation: 不要硬编码JWT Token，使用安全的存储方式
   cwe_id: CWE-798
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: SLACK_WEBHOOK
   category: Secrets
   severity: Medium
@@ -867,6 +1174,10 @@ rules:
   description: 硬编码的 Slack Webhook URL
   remediation: 使用环境变量存储 Webhook URL
   cwe_id: CWE-798
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: WEBSOCKET_CONNECT
   category: Network
   severity: Low
@@ -886,6 +1197,10 @@ rules:
   - .cjs
   - .py
   - .rb
+  metadata:
+    origin: core
+    fp_risk: high
+    phase: P0
 - id: FTP_PROTOCOL
   category: Network
   severity: Low
@@ -897,6 +1212,10 @@ rules:
   description: 使用不安全的 FTP 协议
   remediation: 使用 SFTP 或 FTPS 替代明文 FTP
   cwe_id: CWE-319
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: PICKLE_LOAD
   category: CmdInjection
   severity: Medium
@@ -908,6 +1227,10 @@ rules:
   description: pickle反序列化可执行任意代码
   remediation: 避免反序列化不可信数据，使用json替代
   cwe_id: CWE-502
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: YAML_UNSAFE_LOAD
   category: CmdInjection
   severity: Medium
@@ -919,6 +1242,10 @@ rules:
   description: YAML不安全加载可执行任意代码
   remediation: 使用yaml.safe_load()替代
   cwe_id: CWE-502
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: OSASCRIPT_EXEC
   category: RemoteExec
   severity: Medium
@@ -933,6 +1260,10 @@ rules:
 
 # === 以下为手动补充的规则（因 Rust 代码中的注释导致自动迁移失败） ===
 
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: CURL_PIPE_SH
   category: RemoteExec
   severity: Critical
@@ -976,6 +1307,10 @@ rules:
   remediation: 避免直接执行远程脚本，应先下载后检查
   cwe_id: CWE-78
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: API_KEY
   category: Secrets
   severity: High
@@ -988,6 +1323,10 @@ rules:
   remediation: 使用环境变量或密钥管理服务，不要硬编码API密钥
   cwe_id: CWE-798
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: PASSWORD
   category: Secrets
   severity: High
@@ -1000,6 +1339,15 @@ rules:
   remediation: 使用环境变量或配置文件，不要硬编码密码
   cwe_id: CWE-798
 
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
+  exclude_patterns:
+  - ^\s*#
+  - ^\s*//
+  - (?i)\bplaceholder\b
+  - (?i)\breplace\s+with\b
 - id: DB_CONNECTION_STRING
   category: Secrets
   severity: High
@@ -1012,6 +1360,10 @@ rules:
   remediation: 使用环境变量或配置文件管理数据库连接串，不要硬编码
   cwe_id: CWE-798
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: GENERIC_SECRET
   category: Secrets
   severity: Medium
@@ -1024,6 +1376,14 @@ rules:
   remediation: 检查是否为敏感密钥，使用密钥管理服务
   cwe_id: CWE-798
 
+  metadata:
+    origin: core
+    fp_risk: high
+    phase: P0
+  exclude_patterns:
+  - ^\s*#
+  - ^\s*//
+  - (?i)\b(your|my|the)_(secret|token|key)\b
 - id: PY_EVAL
   category: CmdInjection
   severity: Low
@@ -1040,6 +1400,12 @@ rules:
   remediation: 避免使用eval()动态执行代码，使用安全的替代方法
   cwe_id: CWE-94
 
+  metadata:
+    origin: core
+    fp_risk: high
+    phase: P0
+  exclude_patterns:
+  - ^\s*#
 - id: RM_RF_HOME
   category: Destructive
   severity: Critical
@@ -1052,6 +1418,10 @@ rules:
   remediation: 检查命令参数，避免操作用户主目录
   cwe_id: CWE-78
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: RM_RF_HOME_GLOB
   category: Destructive
   severity: Critical
@@ -1064,6 +1434,10 @@ rules:
   remediation: 检查命令参数，避免清空用户主目录内容
   cwe_id: CWE-78
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: RM_HOME_GLOB
   category: Destructive
   severity: High
@@ -1076,6 +1450,10 @@ rules:
   remediation: 确认命令参数，避免误删用户主目录内容
   cwe_id: CWE-78
 
+  metadata:
+    origin: core
+    fp_risk: high
+    phase: P0
 - id: RM_RF_USERS_HOME
   category: Destructive
   severity: Critical
@@ -1088,6 +1466,10 @@ rules:
   remediation: 检查命令参数，避免操作macOS用户主目录
   cwe_id: CWE-78
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: SUDO
   category: PrivilegeEscalation
   severity: Low
@@ -1100,6 +1482,14 @@ rules:
   remediation: 审查sudo使用场景，确保符合最小权限原则
   cwe_id: CWE-250
 
+  metadata:
+    origin: core
+    fp_risk: high
+    phase: P0
+  exclude_patterns:
+  - ^\s*#
+  - ^\s*//
+  - (?i)\bexample\b
 - id: ENV_VAR_IN_SHELL
   category: CmdInjection
   severity: Low
@@ -1114,6 +1504,13 @@ rules:
 
 # === Prompt Injection 规则 (P1b) ===
 
+  metadata:
+    origin: core
+    fp_risk: high
+    phase: P0
+  exclude_patterns:
+  - ^\s*#
+  - ^\s*//
 - id: PROMPT_INJECTION_IGNORE_INSTRUCTIONS
   category: PromptInjection
   severity: High
@@ -1130,6 +1527,10 @@ rules:
   remediation: "Remove instruction override commands from skill content"
   cwe_id: CWE-77
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: PROMPT_INJECTION_UNRESTRICTED_MODE
   category: PromptInjection
   severity: High
@@ -1146,6 +1547,10 @@ rules:
   remediation: "Remove mode override commands from skill content"
   cwe_id: CWE-77
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: PROMPT_INJECTION_BYPASS_POLICY
   category: PromptInjection
   severity: High
@@ -1163,6 +1568,10 @@ rules:
   remediation: "Remove policy bypass commands from skill content"
   cwe_id: CWE-77
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: PROMPT_INJECTION_REVEAL_SYSTEM
   category: PromptInjection
   severity: Medium
@@ -1179,6 +1588,10 @@ rules:
   remediation: "Remove system prompt extraction commands"
   cwe_id: CWE-77
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: PROMPT_INJECTION_CONCEALMENT
   category: PromptInjection
   severity: High
@@ -1197,6 +1610,10 @@ rules:
   remediation: "Remove concealment commands; all actions must be transparent to users"
   cwe_id: CWE-77
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: PROMPT_INJECTION_CAPABILITY_INFLATION
   category: PromptInjection
   severity: Medium
@@ -1219,6 +1636,10 @@ rules:
   remediation: "Remove exaggerated capability claims; only declare actual permitted abilities"
   cwe_id: CWE-77
 
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: PROMPT_INJECTION_TOOL_CHAINING
   category: PromptInjection
   severity: High
@@ -1242,6 +1663,10 @@ rules:
   remediation: "Remove tool chaining instructions; each tool invocation should be explicit and authorized"
   cwe_id: CWE-77
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: PROMPT_INJECTION_AUTONOMY_ABUSE
   category: PromptInjection
   severity: High
@@ -1267,6 +1692,10 @@ rules:
 
 # === Content Poisoning / RAG Poisoning 规则 ===
 
+  metadata:
+    origin: core
+    fp_risk: low
+    phase: P0
 - id: CONTENT_POISON_PERSONAL_ACCOUNT_PROMOTION
   category: SocialEngineering
   severity: Medium
@@ -1288,6 +1717,10 @@ rules:
   remediation: "Remove unverified personal account promotion from skill instructions, references, and metadata"
   cwe_id: CWE-451
 
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: PROMPT_INJECTION_COMMENT_PLANTED_REFERENCE
   category: PromptInjection
   severity: Medium
@@ -1310,6 +1743,10 @@ rules:
   remediation: "Remove maintainer/reviewer/comment metadata that injects unrelated personal references"
   cwe_id: CWE-77
 
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0
 - id: RAG_POISON_KNOWLEDGE_GRAPH_SOCIAL_REFERENCE
   category: PromptInjection
   severity: Medium
@@ -1328,3 +1765,7 @@ rules:
   description: "RAG poisoning: social account embedded in knowledge graph relations or retrieval metadata"
   remediation: "Remove unrelated social account references from knowledge graph, see_also, and community metadata"
   cwe_id: CWE-451
+  metadata:
+    origin: core
+    fp_risk: medium
+    phase: P0

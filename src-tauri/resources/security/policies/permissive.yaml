@@ -12,7 +12,17 @@ severity_overrides:
     severity: Low
     reason: "Common in test fixtures with binary data"
 
-hard_trigger_overrides: []
+# 注意：default 和 permissive 的 hard_trigger_overrides 需保持 rule_id 同步，新增条目时须同时更新
+hard_trigger_overrides:
+  - rule_id: COMMAND_INJECTION_JS_FUNCTION_CONSTRUCTOR
+    hard_trigger: false
+    reason: "Function 构造器在模板引擎等合法场景中有使用"
+  - rule_id: SVG_EMBEDDED_SCRIPT
+    hard_trigger: false
+    reason: "SVG 脚本在资源展示场景中可能合法"
+  - rule_id: PDF_EMBEDDED_JAVASCRIPT
+    hard_trigger: false
+    reason: "PDF 嵌入 JS 在文档展示场景中可能合法"
 
 file_limits:
   max_files: 3000
@@ -50,6 +60,7 @@ rule_scoping:
     - "templates"
     - "data"
     - "skills"
+  # skip_in_docs: 这些规则在文档路径中直接跳过，permissive 策略更宽松
   skip_in_docs:
     - "CURL_PIPE_SH_MENTION"
     - "CURL_POST"

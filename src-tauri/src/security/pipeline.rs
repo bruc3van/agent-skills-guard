@@ -1091,8 +1091,14 @@ pub fn analyze(ctx: &SkillContext) -> Vec<Finding> {
         std::collections::HashSet::new();
 
     for (file_path, content) in &scan_targets {
-        // 跳过文档目录中的文件
-        if policy.is_doc_path(file_path) {
+        // 跳过文档目录中的文件（SKILL.md 除外，它始终以完整规则扫描）
+        if policy.is_doc_path(file_path)
+            && !std::path::Path::new(file_path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|name| name.eq_ignore_ascii_case("skill.md"))
+                .unwrap_or(false)
+        {
             continue;
         }
 

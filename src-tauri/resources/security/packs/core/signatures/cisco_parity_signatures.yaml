@@ -1,4 +1,20 @@
-# Cisco skill_scanner core signatures parity pack
+# === cisco_parity_signatures.yaml — Cisco skill_scanner 对齐补充包 ===
+#
+# 定位：与 Cisco AI Defense skill_scanner 关键确定性检测能力对齐的补充规则包。
+#       不是所有新规则的默认落点，仅用于保持 parity 参考。
+#
+# 适合放入：
+#   - 为保持与 Cisco reference 能力对齐而引入的规则
+#   - 本项目 core 尚未覆盖、但 Cisco 中已有明确检测价值的规则
+#   - 需要保留 source_ref 方便后续追踪的规则
+#   - 对 parity fixture 有直接支撑的规则
+#
+# 维护原则：
+#   - 不作为所有新规则的默认落点
+#   - 每条规则应带 metadata.origin: cisco_parity 与 metadata.source_ref
+#   - 经过产品化调优后可迁移到 core，迁移时更新 fixture 与变更说明
+#   - 保持少而准，优先补能力缺口，而不是扩大成第二个 core
+#
 # SPDX-License-Identifier: Apache-2.0 (patterns adapted from reference/skill_scanner)
 
 name: cisco_parity
@@ -30,6 +46,11 @@ rules:
   remediation: 使用 realpath 验证路径并设置目录白名单
   cwe_id: CWE-22
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/python/path_traversal
+    fp_risk: low
+    phase: P0
 - id: SQL_INJECTION_STRING_FORMAT
   category: CmdInjection
   severity: Critical
@@ -52,6 +73,11 @@ rules:
   remediation: 使用参数化查询
   cwe_id: CWE-89
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/python/sql_injection
+    fp_risk: low
+    phase: P0
 - id: COMMAND_INJECTION_USER_INPUT
   category: CmdInjection
   severity: High
@@ -72,6 +98,11 @@ rules:
   remediation: 避免对用户输入使用 eval
   cwe_id: CWE-78
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/bash/eval_user_input
+    fp_risk: low
+    phase: P0
 - id: COMMAND_INJECTION_JS_FUNCTION_CONSTRUCTOR
   category: CmdInjection
   severity: Critical
@@ -94,6 +125,11 @@ rules:
   remediation: 使用函数引用代替字符串代码执行
   cwe_id: CWE-94
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/javascript/function_constructor
+    fp_risk: low
+    phase: P0
 - id: SVG_EMBEDDED_SCRIPT
   category: CmdInjection
   severity: Critical
@@ -110,6 +146,11 @@ rules:
   remediation: 移除 SVG 资源中的脚本和事件处理器
   cwe_id: CWE-79
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/assets/svg_script
+    fp_risk: low
+    phase: P0
 - id: PDF_EMBEDDED_JAVASCRIPT
   category: CmdInjection
   severity: Critical
@@ -128,6 +169,11 @@ rules:
   remediation: 移除 PDF 资源中的 JavaScript
   cwe_id: CWE-79
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/assets/pdf_javascript
+    fp_risk: low
+    phase: P0
 - id: GLOB_HIDDEN_FILE_TARGETING
   category: SensitiveFileAccess
   severity: Medium
@@ -147,6 +193,11 @@ rules:
   remediation: 避免广泛匹配隐藏文件
   cwe_id: CWE-200
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/bash/hidden_file_glob
+    fp_risk: medium
+    phase: P0
 - id: FIND_EXEC_PATTERN
   category: CmdInjection
   severity: High
@@ -164,6 +215,11 @@ rules:
   remediation: 避免对不受信任的目录树使用 find -exec
   cwe_id: CWE-78
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/bash/find_exec
+    fp_risk: low
+    phase: P0
 - id: SECRET_STRIPE_KEY
   category: Secrets
   severity: Critical
@@ -183,6 +239,11 @@ rules:
   remediation: 使用环境变量存储 Stripe 密钥
   cwe_id: CWE-798
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/secrets/stripe_key
+    fp_risk: low
+    phase: P0
 - id: SECRET_GOOGLE_API
   category: Secrets
   severity: Critical
@@ -201,6 +262,11 @@ rules:
   remediation: 使用环境变量存储 Google API 密钥
   cwe_id: CWE-798
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/secrets/google_api
+    fp_risk: low
+    phase: P0
 - id: DATA_EXFIL_SOCKET_CONNECT
   category: Network
   severity: Critical
@@ -221,6 +287,11 @@ rules:
   remediation: 记录并限制 Socket 连接使用
   cwe_id: CWE-200
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/python/socket_connect
+    fp_risk: low
+    phase: P0
 - id: DATA_EXFIL_JS_NETWORK
   category: Network
   severity: Medium
@@ -237,10 +308,16 @@ rules:
   - (?i)example
   - (?i)mock
   - (?i)test
+  - (?i)developers\.openai\.com
   description: JavaScript/TypeScript 中的出站网络请求
   remediation: 记录网络请求依赖，确认目标地址可信
   cwe_id: CWE-200
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/javascript/network_exfil
+    fp_risk: medium
+    phase: P0
 - id: DATA_EXFIL_JS_FS_ACCESS
   category: SensitiveFileAccess
   severity: High
@@ -260,6 +337,11 @@ rules:
   remediation: 限制文件系统访问至必要路径
   cwe_id: CWE-200
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/javascript/fs_access
+    fp_risk: low
+    phase: P0
 - id: DATA_EXFIL_BASE64_AND_NETWORK
   category: Network
   severity: High
@@ -275,6 +357,11 @@ rules:
   remediation: 审查编码后发送的数据流
   cwe_id: CWE-200
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/python/base64_network
+    fp_risk: low
+    phase: P0
 - id: OBFUSCATION_HEX_BLOB
   category: Obfuscation
   severity: Medium
@@ -287,6 +374,11 @@ rules:
   remediation: 避免使用大型内联十六进制数据
   cwe_id: CWE-656
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/obfuscation/hex_blob
+    fp_risk: medium
+    phase: P0
 - id: OBFUSCATION_XOR_ENCODING
   category: Obfuscation
   severity: Medium
@@ -301,6 +393,11 @@ rules:
   remediation: 使用标准编码库代替 XOR 循环
   cwe_id: CWE-656
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/obfuscation/xor_encoding
+    fp_risk: medium
+    phase: P0
 - id: RESOURCE_ABUSE_INFINITE_LOOP
   category: Obfuscation
   severity: Medium
@@ -316,6 +413,11 @@ rules:
   remediation: 添加退出条件或超时机制
   cwe_id: CWE-400
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/python/infinite_loop
+    fp_risk: medium
+    phase: P0
 - id: RESOURCE_ABUSE_FORK_BOMB
   category: Destructive
   severity: High
@@ -331,6 +433,11 @@ rules:
   remediation: 移除 Fork 炸弹命令
   cwe_id: CWE-400
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/bash/fork_bomb
+    fp_risk: low
+    phase: P0
 - id: SOCIAL_ENG_ANTHROPIC_IMPERSONATION
   category: SocialEngineering
   severity: Medium
@@ -347,6 +454,11 @@ rules:
   remediation: 不要冒充 Anthropic 或使用官方品牌标识
   cwe_id: CWE-451
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/social/anthropic_impersonation
+    fp_risk: medium
+    phase: P0
 - id: TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL
   category: PolicyViolation
   severity: High
@@ -362,10 +474,19 @@ rules:
   - (?i)\b(?:apt-get|apt|yum|dnf|brew)\s+install\b
   - (?i)\bpip\s+install\b
   - (?i)\bnpm\s+install\s+-g\b
+  exclude_patterns:
+  - (?i)\buv\s+pip\s+install\b
+  - (?i)`[^`]*pip\s+install[^`]*`
+  - (?i)install it with
   description: 系统级或全局包安装操作
   remediation: 避免在 skill 脚本中安装系统包
   cwe_id: CWE-494
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/bash/package_install
+    fp_risk: low
+    phase: P0
 - id: TOOL_ABUSE_UNTRUSTED_PACKAGE_SOURCE
   category: PolicyViolation
   severity: High
@@ -382,6 +503,11 @@ rules:
   remediation: 将依赖固定到受信任的包索引源
   cwe_id: CWE-494
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/python/untrusted_source
+    fp_risk: low
+    phase: P0
 - id: HIDDEN_FILE_WITH_CODE
   category: PolicyViolation
   severity: High
@@ -398,6 +524,11 @@ rules:
   remediation: 不要将可执行脚本隐藏为点文件
   cwe_id: CWE-494
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/bash/hidden_file_exec
+    fp_risk: low
+    phase: P0
 - id: RESOURCE_ABUSE_LARGE_ALLOCATION
   category: PolicyViolation
   severity: High
@@ -421,6 +552,11 @@ rules:
   remediation: 使用有合理上限的内存分配
   cwe_id: CWE-400
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/python/large_allocation
+    fp_risk: medium
+    phase: P0
 - id: TOOL_ABUSE_SYSTEM_MODIFICATION
   category: PolicyViolation
   severity: Critical
@@ -445,6 +581,11 @@ rules:
   remediation: 不要在 skill 脚本中修改系统目录权限
   cwe_id: CWE-276
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/bash/system_modification
+    fp_risk: low
+    phase: P0
 - id: OBFUSCATION_BASE64_LARGE
   category: Obfuscation
   severity: Medium
@@ -461,6 +602,11 @@ rules:
   remediation: 避免使用内联 Base64 数据，改用文件引用
   cwe_id: CWE-656
 
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/obfuscation/base64_blob
+    fp_risk: medium
+    phase: P0
 - id: SOCIAL_ENG_VAGUE_DESCRIPTION
   category: SocialEngineering
   severity: Low
@@ -476,3 +622,8 @@ rules:
   description: 描述使用了模糊的通用术语，缺乏具体说明
   remediation: 编写具体的描述，说明 skill 的实际功能
   cwe_id: CWE-451
+  metadata:
+    origin: cisco_parity
+    source_ref: reference/skill_scanner/data/packs/core/social/vague_description
+    fp_risk: high
+    phase: P0

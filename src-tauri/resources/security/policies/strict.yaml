@@ -38,9 +38,11 @@ file_classification:
     - ".ico"
 
 rule_scoping:
+  # strict 策略仅将真正的文档目录视为文档路径
   doc_path_indicators:
     - "doc"
     - "docs"
+  # strict 策略不在文档路径中跳过任何规则
   skip_in_docs: []
 
 pipeline:

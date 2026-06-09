@@ -265,3 +265,94 @@ cases:
     path: p1a-consistency/vague-desc
     policy: strict
     expect_any: [SOCIAL_ENG_VAGUE_DESCRIPTION]
+
+  # --- P0-negative: false positive regression cases ---
+  - id: neg_sql_parameterized
+    path: p0-negative/sql-parameterized
+    expect_none: [SQL_INJECTION_STRING_FORMAT]
+    expect_blocked: false
+
+  - id: neg_path_safe_realpath
+    path: p0-negative/path-safe-realpath
+    expect_none: [PATH_TRAVERSAL_OPEN]
+    expect_blocked: false
+
+  - id: neg_socket_localhost
+    path: p0-negative/socket-localhost
+    expect_none: [DATA_EXFIL_SOCKET_CONNECT]
+    expect_blocked: false
+
+  - id: neg_js_fetch_mock
+    path: p0-negative/js-fetch-mock
+    expect_none: [DATA_EXFIL_JS_NETWORK]
+    expect_blocked: false
+
+  - id: neg_js_fs_example
+    path: p0-negative/js-fs-example
+    expect_none: [DATA_EXFIL_JS_FS_ACCESS]
+    expect_blocked: false
+
+  - id: neg_svg_icon_safe
+    path: p0-negative/svg-icon-safe
+    expect_none: [SVG_EMBEDDED_SCRIPT]
+    expect_blocked: false
+
+  - id: neg_pdf_safe
+    path: p0-negative/pdf-safe
+    expect_none: [PDF_EMBEDDED_JAVASCRIPT]
+    expect_blocked: false
+
+  # docs/guide.md 包含 curl|sh 的文字提及，测试 doc 路径中 CURL_PIPE_SH_MENTION（非 hard_trigger）被降级
+  # SKILL.md 仅散文描述不含字面 curl|sh，不触发 CURL_PIPE_SH
+  - id: neg_doc_curl_antipattern
+    path: p0-negative/doc-curl-antipattern
+    expect_none: [CURL_PIPE_SH]
+    expect_any: [CURL_PIPE_SH_MENTION]
+    expect_blocked: false
+
+  - id: neg_subprocess_test_example
+    path: p0-negative/subprocess-test-example
+    expect_none: [SUBPROCESS_CALL]
+    expect_blocked: false
+
+  - id: neg_env_var_safe_shell
+    path: p0-negative/env-var-safe-shell
+    expect_none: [ENV_VAR_IN_SHELL]
+    expect_blocked: false
+
+  # --- P3: hard trigger policy override verification ---
+  - id: js_function_default_not_blocked
+    path: p0-signatures/js-function
+    policy: default
+    expect_any: [COMMAND_INJECTION_JS_FUNCTION_CONSTRUCTOR]
+    expect_blocked: false
+
+  - id: svg_script_default_not_blocked
+    path: p0-signatures/svg-script
+    policy: default
+    expect_any: [SVG_EMBEDDED_SCRIPT]
+    expect_blocked: false
+
+  - id: pdf_js_default_not_blocked
+    path: p0-signatures/pdf-js
+    policy: default
+    expect_any: [PDF_EMBEDDED_JAVASCRIPT]
+    expect_blocked: false
+
+  - id: js_function_strict_blocked
+    path: p0-signatures/js-function
+    policy: strict
+    expect_any: [COMMAND_INJECTION_JS_FUNCTION_CONSTRUCTOR]
+    expect_blocked: true
+
+  - id: svg_script_strict_blocked
+    path: p0-signatures/svg-script
+    policy: strict
+    expect_any: [SVG_EMBEDDED_SCRIPT]
+    expect_blocked: true
+
+  - id: pdf_js_strict_blocked
+    path: p0-signatures/pdf-js
+    policy: strict
+    expect_any: [PDF_EMBEDDED_JAVASCRIPT]
+    expect_blocked: true

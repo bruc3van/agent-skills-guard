@@ -245,4 +245,150 @@ rules:
             }
         }
     }
+
+    #[test]
+    fn test_all_rules_have_metadata_origin() {
+        let rules = get_builtin_compiled_rules();
+        for rule in rules {
+            let meta = rule.rule.metadata.as_ref().unwrap_or_else(|| {
+                panic!("Rule {} is missing metadata field", rule.id)
+            });
+            let meta_map = meta.as_mapping().unwrap_or_else(|| {
+                panic!("Rule {} metadata should be a mapping", rule.id)
+            });
+            let origin = meta_map
+                .get(&serde_yaml::Value::String("origin".into()))
+                .unwrap_or_else(|| panic!("Rule {} missing metadata.origin", rule.id));
+            let origin_str = origin.as_str().unwrap();
+            assert!(
+                origin_str == "core" || origin_str == "cisco_parity",
+                "Rule {} has invalid metadata.origin: {}",
+                rule.id,
+                origin_str
+            );
+        }
+    }
+
+    #[test]
+    fn test_cisco_parity_rules_have_source_ref() {
+        let rules = get_builtin_compiled_rules();
+        for rule in rules {
+            let meta = rule.rule.metadata.as_ref().unwrap_or_else(|| {
+                panic!("Rule {} missing metadata", rule.id)
+            });
+            let meta_map = meta.as_mapping().unwrap();
+            let origin = meta_map
+                .get(&serde_yaml::Value::String("origin".into()))
+                .unwrap_or_else(|| panic!("Rule {} missing metadata.origin", rule.id));
+            if origin.as_str() != Some("cisco_parity") {
+                continue; // core 规则不需要 source_ref
+            }
+            // Cisco parity 规则必须有 source_ref
+            assert!(
+                meta_map.contains_key(&serde_yaml::Value::String("source_ref".into())),
+                "Cisco parity rule {} missing metadata.source_ref",
+                rule.id
+            );
+        }
+    }
+
+    #[test]
+    fn test_metadata_fp_risk_valid() {
+        let rules = get_builtin_compiled_rules();
+        let valid_fp_risks = ["low", "medium", "high"];
+        for rule in rules {
+            let meta = rule.rule.metadata.as_ref().unwrap_or_else(|| {
+                panic!("Rule {} missing metadata", rule.id)
+            });
+            let meta_map = meta.as_mapping().unwrap();
+            let fp_risk = meta_map
+                .get(&serde_yaml::Value::String("fp_risk".into()))
+                .unwrap_or_else(|| panic!("Rule {} missing metadata.fp_risk", rule.id));
+            let fp_str = fp_risk.as_str().unwrap();
+            assert!(
+                valid_fp_risks.contains(&fp_str),
+                "Rule {} has invalid metadata.fp_risk: {}",
+                rule.id,
+                fp_str
+            );
+        }
+    }
+
+    #[test]
+    fn test_hard_trigger_rules_have_high_severity_and_confidence() {
+        let rules = get_builtin_compiled_rules();
+        for rule in rules {
+            if !rule.rule.hard_trigger {
+                continue;
+            }
+            // hard_trigger 规则 severity 必须是 Critical 或 High
+            assert!(
+                matches!(
+                    rule.rule.severity,
+                    crate::models::security::IssueSeverity::Critical
+                        | crate::models::security::IssueSeverity::High
+                ),
+                "Hard trigger rule {} should have Critical or High severity, got {:?}",
+                rule.id,
+                rule.rule.severity
+            );
+            // hard_trigger 规则 confidence 不能是 Low
+            assert!(
+                !rule.rule.confidence.eq_ignore_ascii_case("low"),
+                "Hard trigger rule {} should not have Low confidence",
+                rule.id
+            );
+        }
+    }
+
+    #[test]
+    fn test_file_types_extensions_start_with_dot() {
+        let rules = get_builtin_compiled_rules();
+        for rule in rules {
+            for ext in &rule.rule.file_types {
+                assert!(
+                    ext.starts_with('.'),
+                    "Rule {} file_types entry '{}' should start with '.'",
+                    rule.id,
+                    ext
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_suppress_if_matched_no_self_reference() {
+        let rules = get_builtin_compiled_rules();
+        for rule in rules {
+            for suppressed_id in &rule.rule.suppress_if_matched {
+                assert_ne!(
+                    suppressed_id, &rule.id,
+                    "Rule {} suppress_if_matched references itself",
+                    rule.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_default_and_permissive_hard_trigger_overrides_in_sync() {
+        let default = crate::security::policy::ScanPolicy::builtin_default();
+        let permissive = crate::security::policy::ScanPolicy::builtin_permissive();
+
+        let default_ids: std::collections::HashSet<_> = default
+            .hard_trigger_overrides
+            .iter()
+            .map(|o| o.rule_id.as_str())
+            .collect();
+        let permissive_ids: std::collections::HashSet<_> = permissive
+            .hard_trigger_overrides
+            .iter()
+            .map(|o| o.rule_id.as_str())
+            .collect();
+
+        assert_eq!(
+            default_ids, permissive_ids,
+            "default and permissive policies should have the same set of hard_trigger_override rule_ids"
+        );
+    }
 }
