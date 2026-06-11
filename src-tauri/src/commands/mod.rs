@@ -612,13 +612,16 @@ pub async fn prepare_skill_installation(
     skill_id: String,
     locale: String,
     allow_partial_scan: Option<bool>,
+    scan_policy: Option<String>,
 ) -> Result<crate::models::security::SecurityReport, String> {
+    let policy = crate::commands::resolve_scan_policy(scan_policy.as_deref());
     let manager = state.skill_manager.lock().await;
     manager
         .prepare_skill_installation(
             &skill_id,
             &locale,
             allow_partial_scan_or_default(allow_partial_scan),
+            policy,
         )
         .await
         .map_err(|e| e.to_string())
@@ -1394,10 +1397,12 @@ pub async fn prepare_skill_update(
     state: State<'_, AppState>,
     skill_id: String,
     locale: String,
+    scan_policy: Option<String>,
 ) -> Result<(crate::models::security::SecurityReport, Vec<String>), String> {
+    let policy = crate::commands::resolve_scan_policy(scan_policy.as_deref());
     let manager = state.skill_manager.lock().await;
     manager
-        .prepare_skill_update(&skill_id, &locale)
+        .prepare_skill_update(&skill_id, &locale, policy)
         .await
         .map_err(|e| e.to_string())
 }

@@ -17,8 +17,10 @@ pub async fn scan_all_installed_skills(
     state: State<'_, AppState>,
     locale: String,
     scan_parallelism: Option<usize>,
+    scan_policy: Option<String>,
 ) -> Result<Vec<SkillScanResult>, String> {
     let locale = validate_locale(&locale);
+    let policy = crate::commands::resolve_scan_policy(scan_policy.as_deref());
     let skills = {
         let manager = state.skill_manager.lock().await;
         manager.get_installed_skills().map_err(|e| e.to_string())?
@@ -37,6 +39,7 @@ pub async fn scan_all_installed_skills(
         .build()
         .map_err(|e| e.to_string())?;
 
+    let policy = policy;
     let mut results = pool.install(|| {
         installed_skills
             .par_iter()
@@ -71,7 +74,7 @@ pub async fn scan_all_installed_skills(
                     &locale_owned,
                     ScanOptions {
                         skip_readme: true,
-                        ..Default::default()
+                        policy: Some(policy.clone()),
                     },
                     None,
                 ) {
@@ -178,8 +181,10 @@ pub async fn scan_installed_skill(
     skill_id: String,
     locale: String,
     scan_id: Option<String>,
+    scan_policy: Option<String>,
 ) -> Result<SkillScanResult, String> {
     let locale = validate_locale(&locale);
+    let policy = crate::commands::resolve_scan_policy(scan_policy.as_deref());
     let mut skill = state
         .db
         .get_skills()
@@ -229,7 +234,7 @@ pub async fn scan_installed_skill(
                 &locale,
                 ScanOptions {
                     skip_readme: true,
-                    ..Default::default()
+                    policy: Some(policy.clone()),
                 },
                 Some(&mut progress_cb),
             )
@@ -242,7 +247,7 @@ pub async fn scan_installed_skill(
                 &locale,
                 ScanOptions {
                     skip_readme: true,
-                    ..Default::default()
+                    policy: Some(policy.clone()),
                 },
                 None,
             )
@@ -353,6 +358,7 @@ pub async fn get_scan_results(state: State<'_, AppState>) -> Result<Vec<SkillSca
 pub async fn scan_skill_archive(
     archive_path: String,
     locale: String,
+    scan_policy: Option<String>,
 ) -> Result<SecurityReport, String> {
     let locale = validate_locale(&locale);
     let scanner = SecurityScanner::new();
@@ -410,7 +416,7 @@ pub async fn scan_skill_archive(
     // 归档文件：提取到临时目录后扫描整个目录
     if crate::security::archive_extractor::detect_archive_type(&archive_path).is_some() {
         let canonical_str = canonical.to_string_lossy().to_string();
-        let policy = crate::security::policy::ScanPolicy::builtin_default().clone();
+        let policy = crate::commands::resolve_scan_policy(scan_policy.as_deref());
         let extraction =
             crate::security::archive_extractor::extract_archive(&canonical_str, &policy);
 
@@ -526,7 +532,7 @@ mod tests {
         zip.finish().unwrap();
 
         let report =
-            scan_skill_archive(archive_path.to_string_lossy().to_string(), "en".to_string())
+            scan_skill_archive(archive_path.to_string_lossy().to_string(), "en".to_string(), None)
                 .await
                 .unwrap();
 

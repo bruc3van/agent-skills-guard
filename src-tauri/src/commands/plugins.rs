@@ -82,10 +82,12 @@ pub async fn prepare_plugin_installation(
     state: State<'_, AppState>,
     plugin_id: String,
     locale: String,
+    scan_policy: Option<String>,
 ) -> Result<SecurityReport, String> {
+    let policy = crate::commands::resolve_scan_policy(scan_policy.as_deref());
     let manager = state.plugin_manager.lock().await;
     manager
-        .prepare_plugin_installation(&plugin_id, &locale)
+        .prepare_plugin_installation(&plugin_id, &locale, policy)
         .await
         .map_err(|e| e.to_string())
 }
@@ -236,8 +238,10 @@ pub async fn scan_all_installed_plugins(
     locale: String,
     claude_command: Option<String>,
     scan_parallelism: Option<usize>,
+    scan_policy: Option<String>,
 ) -> Result<Vec<String>, String> {
     let locale = validate_locale(&locale);
+    let policy = crate::commands::resolve_scan_policy(scan_policy.as_deref());
 
     // 先同步 Claude CLI 的安装状态，确保 installPath 最新
     {
@@ -260,6 +264,7 @@ pub async fn scan_all_installed_plugins(
         .build()
         .map_err(|e| e.to_string())?;
 
+    let policy = policy;
     let mut scanned = pool.install(|| {
         installed_plugins
             .par_iter()
@@ -281,7 +286,7 @@ pub async fn scan_all_installed_plugins(
                     &locale_owned,
                     ScanOptions {
                         skip_readme: true,
-                        ..Default::default()
+                        policy: Some(policy.clone()),
                     },
                     None,
                 ) {
@@ -323,8 +328,10 @@ pub async fn scan_installed_plugin(
     claude_command: Option<String>,
     scan_id: Option<String>,
     skip_sync: Option<bool>,
+    scan_policy: Option<String>,
 ) -> Result<String, String> {
     let locale = validate_locale(&locale);
+    let policy = crate::commands::resolve_scan_policy(scan_policy.as_deref());
 
     // 尝试同步 installPath（不强制成功）
     if !skip_sync.unwrap_or(false) {
@@ -376,7 +383,7 @@ pub async fn scan_installed_plugin(
                 &locale,
                 ScanOptions {
                     skip_readme: true,
-                    ..Default::default()
+                    policy: Some(policy.clone()),
                 },
                 Some(&mut progress_cb),
             )
@@ -389,7 +396,7 @@ pub async fn scan_installed_plugin(
                 &locale,
                 ScanOptions {
                     skip_readme: true,
-                    ..Default::default()
+                    policy: Some(policy.clone()),
                 },
                 None,
             )
