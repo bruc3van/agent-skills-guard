@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   Gauge,
   Power,
+  Shield,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -38,6 +39,8 @@ import {
   getScanConcurrency,
   setPluginScanPromptEnabled,
   setScanConcurrency,
+  getScanPolicy,
+  setScanPolicy,
 } from "@/lib/storage";
 
 declare const __APP_VERSION__: string;
@@ -209,6 +212,7 @@ export function SettingsPage() {
   const [isResetting, setIsResetting] = useState(false);
   const [scanPromptEnabled, setScanPromptEnabled] = useState(() => getPluginScanPromptEnabled());
   const [scanConcurrency, setScanConcurrencyState] = useState(() => getScanConcurrency());
+  const [scanPolicy, setScanPolicyState] = useState(() => getScanPolicy());
   const updatePhase = updateContext.updatePhase;
   const isDownloading = updatePhase === "downloading";
   const isInstalling = updatePhase === "installing" || updatePhase === "restarting";
@@ -313,6 +317,11 @@ export function SettingsPage() {
 
   const handleScanConcurrencyStep = (delta: number) => {
     handleScanConcurrencyChange(scanConcurrency + delta);
+  };
+
+  const handleScanPolicyChange = (policy: string) => {
+    setScanPolicy(policy);
+    setScanPolicyState(policy);
   };
 
   return (
@@ -522,6 +531,36 @@ export function SettingsPage() {
                   +
                 </button>
               </div>
+            </div>
+          </div>
+        </GroupCardItem>
+        <GroupCardItem>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-500 flex items-center justify-center">
+                <Shield className="w-4 h-4 text-white" />
+              </div>
+              <div className="space-y-1">
+                <div className="text-sm font-medium">{t("settings.preferences.scanPolicy.title")}</div>
+                <div className="text-xs text-muted-foreground">
+                  {t("settings.preferences.scanPolicy.description")}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {(["default", "strict", "permissive"] as const).map((policy) => (
+                <button
+                  key={policy}
+                  onClick={() => handleScanPolicyChange(policy)}
+                  className={`h-8 px-3 text-xs font-medium rounded-lg transition-all ${
+                    scanPolicy === policy
+                      ? "bg-blue-500 text-white"
+                      : "bg-secondary text-muted-foreground hover:bg-secondary/80"
+                  }`}
+                >
+                  {t(`settings.preferences.scanPolicy.${policy}`)}
+                </button>
+              ))}
             </div>
           </div>
         </GroupCardItem>
