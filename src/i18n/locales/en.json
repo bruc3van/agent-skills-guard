@@ -732,6 +732,13 @@
         "decrease": "Decrease parallel scan slots",
         "increase": "Increase parallel scan slots"
       },
+      "scanPolicy": {
+        "title": "Scan Policy",
+        "description": "Control the strictness of security scanning.",
+        "default": "Default",
+        "strict": "Strict",
+        "permissive": "Permissive"
+      },
       "comingSoon": "More settings coming soon..."
     }
   },

@@ -732,6 +732,13 @@
         "decrease": "减少并行数",
         "increase": "增加并行数"
       },
+      "scanPolicy": {
+        "title": "扫描策略",
+        "description": "控制安全扫描的严格程度。",
+        "default": "默认",
+        "strict": "严格",
+        "permissive": "宽松"
+      },
       "comingSoon": "更多设置项即将推出..."
     }
   },
