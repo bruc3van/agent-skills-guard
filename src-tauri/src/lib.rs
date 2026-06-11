@@ -7,7 +7,7 @@ pub mod models;
 pub mod security;
 pub mod services;
 
-use commands::security::{get_scan_results, scan_all_installed_skills, scan_skill_archive};
+use commands::security::{get_scan_results, scan_all_installed_skills};
 use commands::AppState;
 use services::{Database, PluginManager, SkillManager};
 use std::path::PathBuf;
@@ -482,7 +482,6 @@ pub fn run() {
             commands::security::scan_installed_skill,
             commands::security::count_scan_files,
             get_scan_results,
-            scan_skill_archive,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

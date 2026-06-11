@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Generate SKILL.md stubs and binary fixtures for security rule matrix."""
 from pathlib import Path
-import zipfile
 
 BASE = Path(__file__).resolve().parent
 DESC = (
@@ -25,22 +24,6 @@ def write_script(dir_path: str, rel: str, content: str):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
 
-
-# Archives
-write_skill("p2-archive/path-traversal", "Archive with path traversal entry.")
-write_skill("p2-archive/zip-bomb", "Archive with high compression ratio.")
-write_skill("p2-archive/ole-docx", "Office document with embedded OLE.")
-
-with zipfile.ZipFile(BASE / "p2-archive/path-traversal/evil.zip", "w") as z:
-    z.writestr("../../etc/passwd", b"root:x:0:0")
-    z.writestr("safe.txt", b"ok")
-
-with zipfile.ZipFile(BASE / "p2-archive/zip-bomb/bomb.zip", "w", compression=zipfile.ZIP_DEFLATED) as z:
-    z.writestr("bomb.txt", b"A" * (2 * 1024 * 1024))
-
-with zipfile.ZipFile(BASE / "p2-archive/ole-docx/macro.docx", "w") as z:
-    z.writestr("word/embeddings/oleObject1.bin", b"OLE")
-    z.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types/>')
 
 # Unicode
 zw_body = ("\u200b" * 8) + "Visible instructions for the agent."
