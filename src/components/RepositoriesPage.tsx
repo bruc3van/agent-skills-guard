@@ -27,7 +27,7 @@ import type { FeaturedMarketplacesConfig, Skill } from "../types";
 import type { SecurityReport } from "../types/security";
 import { invoke } from "@tauri-apps/api/core";
 import { InstallPathSelector } from "./InstallPathSelector";
-import { addRecentInstallPath } from "@/lib/storage";
+import { addRecentInstallPath, getScanPolicy } from "@/lib/storage";
 import { formatAppDate, formatAppDateTime } from "@/lib/locale";
 import { PageBusyNotice } from "./ui/PageBusyNotice";
 import {
@@ -423,7 +423,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
     const requestId = ++prepareGenerationRef.current;
     try {
       setPreparingSkillId(skill.id);
-      const report = await api.prepareSkillInstallation(skill.id, i18n.language);
+      const report = await api.prepareSkillInstallation(skill.id, i18n.language, false, getScanPolicy());
       if (prepareGenerationRef.current !== requestId) {
         void invoke("cancel_skill_installation", { skillId: skill.id }).catch(console.error);
         return;
