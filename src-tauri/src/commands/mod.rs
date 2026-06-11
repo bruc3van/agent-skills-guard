@@ -35,6 +35,14 @@ pub fn clamp_scan_parallelism(scan_parallelism: Option<usize>) -> usize {
         .clamp(1, MAX_SCAN_PARALLELISM)
 }
 
+/// 将前端传入的策略名解析为 ScanPolicy，非法名称降级为 default
+pub fn resolve_scan_policy(scan_policy: Option<&str>) -> crate::security::policy::ScanPolicy {
+    scan_policy
+        .and_then(|name| crate::security::policy::ScanPolicy::from_name(name))
+        .cloned()
+        .unwrap_or_else(|| crate::security::policy::ScanPolicy::builtin_default().clone())
+}
+
 pub struct AppState {
     pub db: Arc<Database>,
     pub skill_manager: Arc<Mutex<SkillManager>>,
