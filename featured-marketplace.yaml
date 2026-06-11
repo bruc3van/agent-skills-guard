@@ -872,7 +872,7 @@ marketplace:
             description:
               en: "Design vocabulary and frontend design skillset with 17 commands such as /polish, /distill, /audit, /bolder, and /quieter, plus curated anti-patterns"
               zh: "面向前端设计的词汇与技能包，包含 /polish、/distill、/audit、/bolder、/quieter 等 17 个命令，并附带精选反模式清单"
-            version: "1.3.0"
+            version: "1.3.1"
             author:
               name: "Paul Bakaus"
               email: "paul@paulbakaus.com"
