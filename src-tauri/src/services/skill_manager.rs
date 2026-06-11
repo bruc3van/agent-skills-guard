@@ -666,8 +666,7 @@ impl SkillManager {
         allow_partial_scan: bool,
     ) -> Result<()> {
         let locale = rust_i18n::locale();
-        let policy = crate::security::policy::ScanPolicy::builtin_default().clone();
-        self.prepare_skill_installation(skill_id, &locale, allow_partial_scan, policy)
+        self.prepare_skill_installation(skill_id, &locale, allow_partial_scan)
             .await?;
         self.confirm_skill_installation(skill_id, install_path, allow_partial_scan, Vec::new())?;
         Ok(())
@@ -680,7 +679,6 @@ impl SkillManager {
         skill_id: &str,
         locale: &str,
         allow_partial_scan: bool,
-        policy: crate::security::policy::ScanPolicy,
     ) -> Result<crate::models::security::SecurityReport> {
         use anyhow::Context;
 
@@ -736,7 +734,7 @@ impl SkillManager {
             locale,
             ScanOptions {
                 skip_readme: true,
-                policy: Some(policy.clone()),
+                ..Default::default()
             },
             None,
         )?;
@@ -2420,7 +2418,6 @@ impl SkillManager {
         &self,
         skill_id: &str,
         locale: &str,
-        policy: crate::security::policy::ScanPolicy,
     ) -> Result<(crate::models::security::SecurityReport, Vec<String>)> {
         use anyhow::Context;
 
@@ -2483,7 +2480,7 @@ impl SkillManager {
             locale,
             ScanOptions {
                 skip_readme: true,
-                policy: Some(policy.clone()),
+                ..Default::default()
             },
             None,
         )?;

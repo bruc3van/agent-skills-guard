@@ -17,7 +17,7 @@ import { useTranslation } from "react-i18next";
 import { formatRepositoryTag, parseRepositoryOwner } from "../lib/utils";
 import { invoke } from "@tauri-apps/api/core";
 import { api } from "@/lib/api";
-import { addRecentInstallPath, getPluginScanPromptEnabled, getScanPolicy } from "@/lib/storage";
+import { addRecentInstallPath, getPluginScanPromptEnabled } from "@/lib/storage";
 import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
 import { InstallPathSelector } from "./InstallPathSelector";
 import { appToast } from "@/lib/toast";
@@ -467,9 +467,7 @@ export function MarketplacePage({
                         }));
                         const report = await api.prepareSkillInstallation(
                           entry.item.id,
-                          i18n.language,
-                          false,
-                          getScanPolicy()
+                          i18n.language
                         );
                         if (prepareGenerationRef.current !== requestId) {
                           void invoke("cancel_skill_installation", {

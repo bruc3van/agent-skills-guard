@@ -90,27 +90,3 @@ export function getMaxScanConcurrency(): number {
 export function getDefaultScanConcurrency(): number {
   return DEFAULT_SCAN_CONCURRENCY;
 }
-
-const SCAN_POLICY_KEY = "asguard.preferences.scanPolicy.v1";
-const DEFAULT_SCAN_POLICY = "default";
-
-export function getScanPolicy(): string {
-  try {
-    const stored = localStorage.getItem(SCAN_POLICY_KEY);
-    if (stored === "default" || stored === "strict") {
-      return stored;
-    }
-    return DEFAULT_SCAN_POLICY;
-  } catch (error) {
-    console.warn("Failed to read scan policy preference:", error);
-    return DEFAULT_SCAN_POLICY;
-  }
-}
-
-export function setScanPolicy(policy: string): void {
-  try {
-    localStorage.setItem(SCAN_POLICY_KEY, policy);
-  } catch (error) {
-    console.warn("Failed to save scan policy preference:", error);
-  }
-}

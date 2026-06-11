@@ -1141,7 +1141,6 @@ impl PluginManager {
         &self,
         plugin_id: &str,
         locale: &str,
-        policy: crate::security::policy::ScanPolicy,
     ) -> Result<SecurityReport> {
         let plugin = self
             .db
@@ -1206,7 +1205,7 @@ impl PluginManager {
                 locale,
                 ScanOptions {
                     skip_readme: true,
-                    policy: Some(policy.clone()),
+                    ..Default::default()
                 },
                 None,
             )?;

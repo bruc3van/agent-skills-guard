@@ -63,14 +63,12 @@ export const api = {
   async prepareSkillInstallation(
     skillId: string,
     locale: string,
-    allowPartialScan = false,
-    scanPolicy?: string
+    allowPartialScan = false
   ): Promise<SecurityReport> {
     return invoke("prepare_skill_installation", {
       skillId,
       locale,
       allowPartialScan,
-      scanPolicy: scanPolicy || null,
     });
   },
 
@@ -159,12 +157,8 @@ export const api = {
     return invoke("check_skills_updates");
   },
 
-  async prepareSkillUpdate(
-    skillId: string,
-    locale: string,
-    scanPolicy?: string
-  ): Promise<[SecurityReport, string[]]> {
-    return invoke("prepare_skill_update", { skillId, locale, scanPolicy: scanPolicy || null });
+  async prepareSkillUpdate(skillId: string, locale: string): Promise<[SecurityReport, string[]]> {
+    return invoke("prepare_skill_update", { skillId, locale });
   },
 
   async confirmSkillUpdate(
@@ -193,16 +187,8 @@ export const api = {
     return invoke("sync_featured_marketplace_plugins", { locale });
   },
 
-  async preparePluginInstallation(
-    pluginId: string,
-    locale: string,
-    scanPolicy?: string
-  ): Promise<SecurityReport> {
-    return invoke("prepare_plugin_installation", {
-      pluginId,
-      locale,
-      scanPolicy: scanPolicy || null,
-    });
+  async preparePluginInstallation(pluginId: string, locale: string): Promise<SecurityReport> {
+    return invoke("prepare_plugin_installation", { pluginId, locale });
   },
 
   async confirmPluginInstallation(
@@ -277,29 +263,21 @@ export const api = {
   async scanAllInstalledPlugins(
     locale: string,
     claudeCommand?: string,
-    scanParallelism?: number,
-    scanPolicy?: string
+    scanParallelism?: number
   ): Promise<string[]> {
     return invoke("scan_all_installed_plugins", {
       locale,
       claudeCommand: claudeCommand || null,
       scanParallelism: scanParallelism ?? null,
-      scanPolicy: scanPolicy || null,
     });
   },
 
   async scanInstalledSkill(
     skillId: string,
     locale: string,
-    scanId?: string,
-    scanPolicy?: string
+    scanId?: string
   ): Promise<SkillScanResult> {
-    return invoke("scan_installed_skill", {
-      skillId,
-      locale,
-      scanId: scanId || null,
-      scanPolicy: scanPolicy || null,
-    });
+    return invoke("scan_installed_skill", { skillId, locale, scanId: scanId || null });
   },
 
   async scanInstalledPlugin(
@@ -307,8 +285,7 @@ export const api = {
     locale: string,
     claudeCommand?: string,
     scanId?: string,
-    skipSync?: boolean,
-    scanPolicy?: string
+    skipSync?: boolean
   ): Promise<string> {
     return invoke("scan_installed_plugin", {
       pluginId,
@@ -316,7 +293,6 @@ export const api = {
       claudeCommand: claudeCommand || null,
       scanId: scanId || null,
       skipSync: skipSync ?? null,
-      scanPolicy: scanPolicy || null,
     });
   },
 

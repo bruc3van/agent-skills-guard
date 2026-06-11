@@ -470,18 +470,6 @@ impl ScanPolicy {
         &STRICT_POLICY
     }
 
-    /// 根据策略名称获取对应的内置策略
-    ///
-    /// 支持的名称: "default", "strict"
-    /// 返回 None 表示名称不合法
-    pub fn from_name(name: &str) -> Option<&'static ScanPolicy> {
-        match name {
-            "default" => Some(Self::builtin_default()),
-            "strict" => Some(Self::builtin_strict()),
-            _ => None,
-        }
-    }
-
     /// 检查规则是否被禁用
     pub fn is_rule_disabled(&self, rule_id: &str) -> bool {
         self.disabled_rules.contains(rule_id)
@@ -544,16 +532,3 @@ impl ScanPolicy {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_from_name() {
-        assert!(ScanPolicy::from_name("default").is_some());
-        assert!(ScanPolicy::from_name("strict").is_some());
-        assert!(ScanPolicy::from_name("permissive").is_none());
-        assert!(ScanPolicy::from_name("unknown").is_none());
-        assert!(ScanPolicy::from_name("").is_none());
-    }
-}

@@ -8,7 +8,7 @@ import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
 import type { SkillScanResult } from "@/types/security";
 import { countIssuesBySeverity } from "@/lib/security-utils";
 import { appToast } from "@/lib/toast";
-import { getScanConcurrency, getScanPolicy } from "@/lib/storage";
+import { getScanConcurrency } from "@/lib/storage";
 
 export function SecurityDashboard() {
   const { t, i18n } = useTranslation();
@@ -45,11 +45,9 @@ export function SecurityDashboard() {
     setIsScanning(true);
     try {
       const scanConcurrency = getScanConcurrency();
-      const policy = getScanPolicy();
       const results = await invoke<SkillScanResult[]>("scan_all_installed_skills", {
         locale: i18n.language,
         scanParallelism: scanConcurrency,
-        scanPolicy: policy,
       });
       queryClient.invalidateQueries({ queryKey: ["scanResults"] });
       appToast.banner(t("security.dashboard.scanSuccess", { count: results.length }), {

@@ -29,7 +29,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
 import { translateError } from "../lib/error-codes";
-import { getScanPolicy } from "@/lib/storage";
 import {
   getDisplayedPluginToolIds,
   getDisplayedToolIds,
@@ -640,7 +639,7 @@ export function InstalledSkillsPage() {
     for (const skillId of skillTargets) {
       const displayName = skillById.get(skillId)?.name ?? skillId;
       try {
-        const [report, conflicts] = await api.prepareSkillUpdate(skillId, i18n.language, getScanPolicy());
+        const [report, conflicts] = await api.prepareSkillUpdate(skillId, i18n.language);
         const isClean =
           report.level === "Safe" &&
           !report.blocked &&
@@ -1184,7 +1183,7 @@ export function InstalledSkillsPage() {
         onUpdate={async () => {
           try {
             setPreparingUpdateSkillId(skill.id);
-            const [report, conflicts] = await api.prepareSkillUpdate(skill.id, i18n.language, getScanPolicy());
+            const [report, conflicts] = await api.prepareSkillUpdate(skill.id, i18n.language);
             setPreparingUpdateSkillId(null);
             setPendingUpdate({ skill, report, conflicts });
           } catch (error: any) {

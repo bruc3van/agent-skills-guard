@@ -35,14 +35,6 @@ pub fn clamp_scan_parallelism(scan_parallelism: Option<usize>) -> usize {
         .clamp(1, MAX_SCAN_PARALLELISM)
 }
 
-/// 将前端传入的策略名解析为 ScanPolicy，非法名称降级为 default
-pub fn resolve_scan_policy(scan_policy: Option<&str>) -> crate::security::policy::ScanPolicy {
-    scan_policy
-        .and_then(|name| crate::security::policy::ScanPolicy::from_name(name))
-        .cloned()
-        .unwrap_or_else(|| crate::security::policy::ScanPolicy::builtin_default().clone())
-}
-
 pub struct AppState {
     pub db: Arc<Database>,
     pub skill_manager: Arc<Mutex<SkillManager>>,
@@ -612,16 +604,13 @@ pub async fn prepare_skill_installation(
     skill_id: String,
     locale: String,
     allow_partial_scan: Option<bool>,
-    scan_policy: Option<String>,
 ) -> Result<crate::models::security::SecurityReport, String> {
-    let policy = crate::commands::resolve_scan_policy(scan_policy.as_deref());
     let manager = state.skill_manager.lock().await;
     manager
         .prepare_skill_installation(
             &skill_id,
             &locale,
             allow_partial_scan_or_default(allow_partial_scan),
-            policy,
         )
         .await
         .map_err(|e| e.to_string())
@@ -1397,12 +1386,10 @@ pub async fn prepare_skill_update(
     state: State<'_, AppState>,
     skill_id: String,
     locale: String,
-    scan_policy: Option<String>,
 ) -> Result<(crate::models::security::SecurityReport, Vec<String>), String> {
-    let policy = crate::commands::resolve_scan_policy(scan_policy.as_deref());
     let manager = state.skill_manager.lock().await;
     manager
-        .prepare_skill_update(&skill_id, &locale, policy)
+        .prepare_skill_update(&skill_id, &locale)
         .await
         .map_err(|e| e.to_string())
 }

@@ -15,7 +15,7 @@ import { GroupCard, GroupCardItem } from "./ui/GroupCard";
 import type { SecurityReport } from "@/types/security";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useClaudeMarketplaces, usePlugins } from "@/hooks/usePlugins";
-import { getScanConcurrency, getScanPolicy } from "@/lib/storage";
+import { getScanConcurrency } from "@/lib/storage";
 import { groupSkillsByName, getSkillGroupKey } from "@/lib/installed-skills";
 
 export function OverviewPage() {
@@ -174,7 +174,7 @@ export function OverviewPage() {
         try {
           await runWithConcurrency(items, scanConcurrency, async (skill) => {
             try {
-              const result = await api.scanInstalledSkill(skill.id, i18n.language, undefined, getScanPolicy());
+              const result = await api.scanInstalledSkill(skill.id, i18n.language);
               results.push(result);
             } catch (e) {
               failedSkillsCount += 1;

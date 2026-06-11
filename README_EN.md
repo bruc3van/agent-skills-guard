@@ -62,7 +62,6 @@ Manage Claude Code skills like managing mobile apps, from discovery, installatio
 - ✅ **Consistency validation**: Compare declared capabilities vs actual code behavior, detect misleading descriptions
 - 📊 **Analyzability assessment**: Scan coverage scoring, identify unanalyzable binary files
 - 🔐 **Automatic secret masking**: 9 secret pattern types automatically redacted, prevent key leakage in scan reports
-- ⚙️ **Configurable policies**: Default / Strict built-in presets, switch scanning strictness as needed
 - 🚫 **Hard-trigger protection**: Directly block high-risk operations, no risk taking
 
 ### 🌟 Featured Resource Marketplace
@@ -194,7 +193,7 @@ Add and manage skill sources, built-in featured marketplace and GitHub repositor
 
 All-new multi-layer scanning pipeline engine. From file traversal to final report, multiple specialized analyzers work together:
 
-1. **Policy Loading** — Load ScanPolicy (Default / Strict presets)
+1. **Policy Loading** — Load ScanPolicy configuration
 2. **SkillContext Construction** — Unified context object, one-pass file classification, frontmatter parsing, reference extraction
 3. **Strict Structure Validation** — 15 directory/file structure checks (optional)
 4. **Per-File Scanning** — File type disguise detection → Unicode deception detection → Asset contamination detection → YAML rule matching → Archive deep scan
