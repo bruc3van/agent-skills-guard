@@ -60,7 +60,6 @@ Manage Claude Code skills like managing mobile apps, from discovery, installatio
 - 📦 **File type disguise detection**: 14 magic signature types, prevent binary files disguised as text
 - ✅ **Consistency validation**: Compare declared capabilities vs actual code behavior, detect misleading descriptions
 - 📊 **Analyzability assessment**: Scan coverage scoring, identify unanalyzable binary files
-- 🔐 **Automatic secret masking**: 9 secret pattern types automatically redacted, prevent key leakage in scan reports
 - 🚫 **Hard-trigger protection**: Directly block high-risk operations, no risk taking
 
 ### 🌟 Featured Resource Marketplace
@@ -197,7 +196,7 @@ All-new multi-layer scanning pipeline engine. From file traversal to final repor
 3. **Strict Structure Validation** — 15 directory/file structure checks (optional)
 4. **Per-File Scanning** — File type disguise detection → Unicode deception detection → Asset contamination detection → YAML rule matching
 5. **Context-Level Analysis** — Consistency validation → Multi-step attack chain detection → Analyzability assessment
-6. **Post-Processing** — Secret masking + Finding deduplication + Geometric decay scoring
+6. **Post-Processing** — Finding deduplication + Geometric decay scoring
 
 **Technical Highlights:**
 
@@ -314,12 +313,6 @@ Verify that Skill declarations match actual behavior:
 - **Capability Declaration Consistency** — Compare manifest `allowed_tools` with actual code patterns for Read/Write/Bash/Grep/Glob/Network capabilities
 - **Description Consistency** — Detect misleading behavior where description claims "offline tool" but code uses network
 - **Description Quality** — Detect overly generic, too short, vague, or keyword-stuffed descriptions
-
-### Automatic Secret Masking
-
-Scan reports automatically redact **9 secret pattern types**, preventing sensitive information leakage:
-
-AWS Access Key, GitHub Token, PEM Private Key, JWT Token, Database Connection String, Generic Secret Assignment, Stripe Live/Test Key, OpenAI API Key
 
 ### Confidence Grading
 
