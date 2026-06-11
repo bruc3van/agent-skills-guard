@@ -441,8 +441,6 @@ fn default_score_kinds() -> HashSet<String> {
 /// 内置默认策略 YAML
 const DEFAULT_POLICY_YAML: &str = include_str!("../../resources/security/policies/default.yaml");
 const STRICT_POLICY_YAML: &str = include_str!("../../resources/security/policies/strict.yaml");
-const PERMISSIVE_POLICY_YAML: &str =
-    include_str!("../../resources/security/policies/permissive.yaml");
 
 lazy_static::lazy_static! {
     /// 默认策略（启动时解析一次）
@@ -453,10 +451,6 @@ lazy_static::lazy_static! {
     static ref STRICT_POLICY: ScanPolicy = {
         serde_yaml::from_str(STRICT_POLICY_YAML)
             .expect("Failed to parse embedded strict policy YAML")
-    };
-    static ref PERMISSIVE_POLICY: ScanPolicy = {
-        serde_yaml::from_str(PERMISSIVE_POLICY_YAML)
-            .expect("Failed to parse embedded permissive policy YAML")
     };
 }
 
@@ -476,20 +470,14 @@ impl ScanPolicy {
         &STRICT_POLICY
     }
 
-    /// 宽松策略（更多文档降级）
-    pub fn builtin_permissive() -> &'static ScanPolicy {
-        &PERMISSIVE_POLICY
-    }
-
     /// 根据策略名称获取对应的内置策略
     ///
-    /// 支持的名称: "default", "strict", "permissive"
+    /// 支持的名称: "default", "strict"
     /// 返回 None 表示名称不合法
     pub fn from_name(name: &str) -> Option<&'static ScanPolicy> {
         match name {
             "default" => Some(Self::builtin_default()),
             "strict" => Some(Self::builtin_strict()),
-            "permissive" => Some(Self::builtin_permissive()),
             _ => None,
         }
     }
@@ -564,7 +552,7 @@ mod tests {
     fn test_from_name() {
         assert!(ScanPolicy::from_name("default").is_some());
         assert!(ScanPolicy::from_name("strict").is_some());
-        assert!(ScanPolicy::from_name("permissive").is_some());
+        assert!(ScanPolicy::from_name("permissive").is_none());
         assert!(ScanPolicy::from_name("unknown").is_none());
         assert!(ScanPolicy::from_name("").is_none());
     }

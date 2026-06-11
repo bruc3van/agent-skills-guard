@@ -51,7 +51,6 @@ struct RuleMatrixCase {
 fn scan_options_for_case(case: &RuleMatrixCase) -> ScanOptions {
     let mut policy = match case.policy.as_deref() {
         Some("strict") => ScanPolicy::builtin_strict().clone(),
-        Some("permissive") => ScanPolicy::builtin_permissive().clone(),
         _ => ScanPolicy::builtin_default().clone(),
     };
     for rule_id in &case.disabled_rules {
@@ -162,9 +161,9 @@ fn rule_matrix_manifest_case_count() {
 
 #[test]
 fn rule_matrix_strict_policy_has_lower_file_limit() {
+    let default = ScanPolicy::builtin_default();
     let strict = ScanPolicy::builtin_strict();
-    let permissive = ScanPolicy::builtin_permissive();
-    assert!(strict.file_limits.max_files < permissive.file_limits.max_files);
+    assert!(strict.file_limits.max_files < default.file_limits.max_files);
 }
 
 #[test]

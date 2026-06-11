@@ -97,7 +97,7 @@ const DEFAULT_SCAN_POLICY = "default";
 export function getScanPolicy(): string {
   try {
     const stored = localStorage.getItem(SCAN_POLICY_KEY);
-    if (stored === "default" || stored === "strict" || stored === "permissive") {
+    if (stored === "default" || stored === "strict") {
       return stored;
     }
     return DEFAULT_SCAN_POLICY;

@@ -370,25 +370,4 @@ rules:
         }
     }
 
-    #[test]
-    fn test_default_and_permissive_hard_trigger_overrides_in_sync() {
-        let default = crate::security::policy::ScanPolicy::builtin_default();
-        let permissive = crate::security::policy::ScanPolicy::builtin_permissive();
-
-        let default_ids: std::collections::HashSet<_> = default
-            .hard_trigger_overrides
-            .iter()
-            .map(|o| o.rule_id.as_str())
-            .collect();
-        let permissive_ids: std::collections::HashSet<_> = permissive
-            .hard_trigger_overrides
-            .iter()
-            .map(|o| o.rule_id.as_str())
-            .collect();
-
-        assert_eq!(
-            default_ids, permissive_ids,
-            "default and permissive policies should have the same set of hard_trigger_override rule_ids"
-        );
-    }
 }

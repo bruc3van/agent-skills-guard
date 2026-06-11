@@ -736,8 +736,7 @@
         "title": "Scan Policy",
         "description": "Control the strictness of security scanning.",
         "default": "Default",
-        "strict": "Strict",
-        "permissive": "Permissive"
+        "strict": "Strict"
       },
       "comingSoon": "More settings coming soon..."
     }

@@ -548,7 +548,7 @@ export function SettingsPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {(["default", "strict", "permissive"] as const).map((policy) => (
+              {(["default", "strict"] as const).map((policy) => (
                 <button
                   key={policy}
                   onClick={() => handleScanPolicyChange(policy)}
