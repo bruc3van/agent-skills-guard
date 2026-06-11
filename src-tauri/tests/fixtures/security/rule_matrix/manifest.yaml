@@ -41,11 +41,6 @@ cases:
     path: p1b-pi/assets-suspicious-url
     expect_any: [ASSET_SUSPICIOUS_URL]
 
-  - id: manifest_missing_license
-    path: p1a-structure/missing-license
-    policy: strict
-    expect_any: [MANIFEST_MISSING_LICENSE]
-
   - id: undeclared_network
     path: p1a-consistency/undeclared-network
     expect_any: [TOOL_ABUSE_UNDECLARED_NETWORK]
@@ -58,11 +53,6 @@ cases:
     path: p2-pipeline/compound-laundering
     expect_any: [COMPOUND_LAUNDERING_CHAIN]
 
-  - id: archive_contains_executable
-    path: p2-archive/contains-exe
-    policy: strict
-    expect_any: [ARCHIVE_CONTAINS_EXECUTABLE, ARCHIVE_FILE_DETECTED]
-
   - id: secret_google_api
     path: p0-signatures/secret-google
     expect_any: [SECRET_GOOGLE_API]
@@ -70,21 +60,6 @@ cases:
   - id: data_exfil_base64_network
     path: p0-signatures/base64-network
     expect_any: [DATA_EXFIL_BASE64_AND_NETWORK]
-
-  - id: social_eng_anthropic
-    path: p0-signatures/anthropic-impersonation
-    policy: strict
-    expect_any: [SOCIAL_ENG_ANTHROPIC_IMPERSONATION]
-
-  - id: permissive_skips_curl_mention_in_docs
-    path: p0-policy/permissive-doc-curl
-    policy: permissive
-    expect_none: [CURL_PIPE_SH_MENTION]
-
-  - id: strict_policy_metadata
-    path: p0-signatures/secret-stripe
-    policy: strict
-    expect_policy_name: strict
 
   - id: prompt_injection_ignore
     path: p1b-pi/prompt-ignore
@@ -138,16 +113,6 @@ cases:
     path: p2-unicode/homoglyph
     expect_any: [HOMOGLYPH_ATTACK]
 
-  - id: office_vba_macro
-    path: p2-archive/vba-docx
-    policy: strict
-    expect_any: [OFFICE_VBA_MACRO]
-
-  - id: hidden_executable_script
-    path: p1a-structure/hidden-script
-    policy: strict
-    expect_any: [HIDDEN_EXECUTABLE_SCRIPT, STRUCTURE_HIDDEN_FILE]
-
   - id: network_declared_no_undeclared
     path: p1a-consistency/network-declared
     expect_none: [TOOL_ABUSE_UNDECLARED_NETWORK]
@@ -156,21 +121,6 @@ cases:
     path: p0-signatures/secret-stripe
     expect_any: [SECRET_STRIPE_KEY]
     expect_blocked: true
-
-  - id: archive_path_traversal
-    path: p2-archive/path-traversal
-    policy: strict
-    expect_any: [ARCHIVE_PATH_TRAVERSAL]
-
-  - id: archive_zip_bomb
-    path: p2-archive/zip-bomb
-    policy: strict
-    expect_any: [ARCHIVE_ZIP_BOMB]
-
-  - id: office_embedded_ole
-    path: p2-archive/ole-docx
-    policy: strict
-    expect_any: [OFFICE_EMBEDDED_OLE]
 
   - id: unicode_steganography
     path: p2-unicode/zero-width
@@ -209,24 +159,9 @@ cases:
     path: p1a-consistency/bash-violation
     expect_any: [ALLOWED_TOOLS_BASH_VIOLATION]
 
-  - id: pycache_detected
-    path: p1a-structure/pycache
-    policy: strict
-    expect_any: [PYCACHE_FILES_DETECTED]
-
-  - id: hidden_data_file
-    path: p1a-structure/hidden-data
-    policy: strict
-    expect_any: [HIDDEN_DATA_FILE, STRUCTURE_HIDDEN_FILE]
-
   - id: pipeline_download_chmod_exec
     path: p2-pipeline/download-chmod
     expect_any: [PIPELINE_DOWNLOAD_CHMOD_EXEC]
-
-  - id: trigger_description_too_short
-    path: p1a-consistency/trigger-short-desc
-    policy: strict
-    expect_any: [TRIGGER_DESCRIPTION_TOO_SHORT]
 
   - id: aws_key_detected
     path: p0-signatures/aws-key
@@ -241,12 +176,6 @@ cases:
     disabled_rules: [CURL_PIPE_SH]
     expect_none: [CURL_PIPE_SH]
 
-  # --- P0: strict policy disables noisy rules ---
-  - id: strict_disables_js_network
-    path: p0-policy/strict-disabled-js-net
-    policy: strict
-    expect_none: [DATA_EXFIL_JS_NETWORK]
-
   # --- P1: new security rule matrix rules ---
   - id: resource_abuse_large_allocation
     path: p0-signatures/large-alloc
@@ -260,11 +189,6 @@ cases:
   - id: obfuscation_base64_large
     path: p0-signatures/base64-blob
     expect_any: [OBFUSCATION_BASE64_LARGE]
-
-  - id: social_eng_vague_description
-    path: p1a-consistency/vague-desc
-    policy: strict
-    expect_any: [SOCIAL_ENG_VAGUE_DESCRIPTION]
 
   # --- P0-negative: false positive regression cases ---
   - id: neg_sql_parameterized
@@ -323,36 +247,15 @@ cases:
   # --- P3: hard trigger policy override verification ---
   - id: js_function_default_not_blocked
     path: p0-signatures/js-function
-    policy: default
     expect_any: [COMMAND_INJECTION_JS_FUNCTION_CONSTRUCTOR]
     expect_blocked: false
 
   - id: svg_script_default_not_blocked
     path: p0-signatures/svg-script
-    policy: default
     expect_any: [SVG_EMBEDDED_SCRIPT]
     expect_blocked: false
 
   - id: pdf_js_default_not_blocked
     path: p0-signatures/pdf-js
-    policy: default
     expect_any: [PDF_EMBEDDED_JAVASCRIPT]
     expect_blocked: false
-
-  - id: js_function_strict_blocked
-    path: p0-signatures/js-function
-    policy: strict
-    expect_any: [COMMAND_INJECTION_JS_FUNCTION_CONSTRUCTOR]
-    expect_blocked: true
-
-  - id: svg_script_strict_blocked
-    path: p0-signatures/svg-script
-    policy: strict
-    expect_any: [SVG_EMBEDDED_SCRIPT]
-    expect_blocked: true
-
-  - id: pdf_js_strict_blocked
-    path: p0-signatures/pdf-js
-    policy: strict
-    expect_any: [PDF_EMBEDDED_JAVASCRIPT]
-    expect_blocked: true

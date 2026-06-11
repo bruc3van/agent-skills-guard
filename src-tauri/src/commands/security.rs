@@ -461,7 +461,7 @@ mod tests {
         zip.finish().unwrap();
 
         let report =
-            scan_skill_archive(archive_path.to_string_lossy().to_string(), "en".to_string(), None)
+            scan_skill_archive(archive_path.to_string_lossy().to_string(), "en".to_string())
                 .await
                 .unwrap();
 

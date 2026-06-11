@@ -34,12 +34,6 @@ struct RuleMatrixCase {
     expect_any: Vec<String>,
     #[serde(default)]
     expect_none: Vec<String>,
-    /// 可选策略：default | strict | permissive
-    #[serde(default)]
-    policy: Option<String>,
-    /// 期望报告 metadata.policy_name（可选）
-    #[serde(default)]
-    expect_policy_name: Option<String>,
     /// 期望扫描结果被 hard_trigger 阻止（可选）
     #[serde(default)]
     expect_blocked: Option<bool>,
@@ -49,10 +43,7 @@ struct RuleMatrixCase {
 }
 
 fn scan_options_for_case(case: &RuleMatrixCase) -> ScanOptions {
-    let mut policy = match case.policy.as_deref() {
-        Some("strict") => ScanPolicy::builtin_strict().clone(),
-        _ => ScanPolicy::builtin_default().clone(),
-    };
+    let mut policy = ScanPolicy::builtin_default().clone();
     for rule_id in &case.disabled_rules {
         policy.disabled_rules.insert(rule_id.clone());
     }
@@ -115,25 +106,9 @@ fn run_case(case: &RuleMatrixCase) {
         );
     }
 
-    if let Some(ref policy_name) = case.expect_policy_name {
-        let actual = report
-            .metadata
-            .as_ref()
-            .and_then(|m| m.policy_name.as_deref());
-        assert_eq!(
-            actual,
-            Some(policy_name.as_str()),
-            "case {}: expected policy_name {}, metadata {:?}",
-            case.id,
-            policy_name,
-            report.metadata
-        );
-    }
-
     if case.expect_any.is_empty()
         && case.expect_none.is_empty()
         && case.expect_blocked.is_none()
-        && case.expect_policy_name.is_none()
     {
         panic!("case {} has no expectations", case.id);
     }
@@ -153,17 +128,10 @@ fn rule_matrix_manifest_all_cases() {
 fn rule_matrix_manifest_case_count() {
     let manifest = load_manifest();
     assert!(
-        manifest.cases.len() >= 60,
-        "expected at least 60 rule matrix cases, got {}",
+        manifest.cases.len() >= 55,
+        "expected at least 55 rule matrix cases, got {}",
         manifest.cases.len()
     );
-}
-
-#[test]
-fn rule_matrix_strict_policy_has_lower_file_limit() {
-    let default = ScanPolicy::builtin_default();
-    let strict = ScanPolicy::builtin_strict();
-    assert!(strict.file_limits.max_files < default.file_limits.max_files);
 }
 
 #[test]

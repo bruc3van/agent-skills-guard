@@ -15,8 +15,7 @@ disabled_rules: []
 severity_overrides: []
 
 # 硬触发覆盖（将规则强制设为 hard_trigger 或取消 hard_trigger）
-# 以下规则在 default 策略下不阻断安装，但 strict 策略仍会阻断
-# 注意：default 和 permissive 的 hard_trigger_overrides 需保持 rule_id 同步，新增条目时须同时更新
+# 以下规则在默认策略下降为 High 仍计入评分，但不阻断安装
 hard_trigger_overrides:
   - rule_id: COMMAND_INJECTION_JS_FUNCTION_CONSTRUCTOR
     hard_trigger: false
@@ -33,7 +32,7 @@ score_kinds:
   - Security
   - Auditability
 
-# 是否启用严格结构校验（默认关闭，只在 strict 策略中启用）
+# 是否启用严格结构校验（默认关闭；结构合规 finding 不计入安全分）
 strict_structure_enabled: false
 
 # 文件限制
