@@ -36,9 +36,6 @@ score_kinds:
 # 是否启用严格结构校验（默认关闭，只在 strict 策略中启用）
 strict_structure_enabled: false
 
-# 是否启用归档深度扫描（默认关闭，只提示不可审计，不解压内容）
-archive_deep_scan_enabled: false
-
 # 文件限制
 file_limits:
   max_files: 2000

@@ -1,5 +1,4 @@
 pub mod analyzability;
-pub mod archive_extractor;
 pub mod asset_checks;
 pub mod consistency_checker;
 pub mod cross_skill;

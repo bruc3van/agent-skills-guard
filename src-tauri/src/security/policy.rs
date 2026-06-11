@@ -38,9 +38,6 @@ pub struct ScanPolicy {
     /// 是否启用严格结构校验
     #[serde(default)]
     pub strict_structure_enabled: bool,
-    /// 是否启用归档深度扫描
-    #[serde(default)]
-    pub archive_deep_scan_enabled: bool,
 
     /// 文件限制
     #[serde(default)]

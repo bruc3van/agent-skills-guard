@@ -20,9 +20,6 @@ score_kinds:
 # 启用严格结构校验
 strict_structure_enabled: true
 
-# 启用归档深度扫描
-archive_deep_scan_enabled: true
-
 file_limits:
   max_files: 500
   max_depth: 12

@@ -21,9 +21,6 @@ const MAX_SCAN_DEPTH: usize = 20;
 /// 单文件最大读取字节数 (2 MiB)
 const MAX_BYTES_PER_FILE: u64 = 2 * 1024 * 1024;
 
-/// 归档提取文件最大读取字节数 (4 MiB)
-const MAX_EXTRACTED_FILE_BYTES: u64 = 4 * 1024 * 1024;
-
 /// 常见大目录（依赖/构建产物），默认不深入扫描（与 crate::security::SKIP_DIR_NAMES 共用）
 use crate::security::SKIP_DIR_NAMES;
 
@@ -1516,101 +1513,6 @@ impl SecurityScanner {
             }
 
             // ── 归档文件检测 ──
-            if crate::security::archive_extractor::detect_archive_type(&rel_str).is_some() {
-                if let Some(magic_finding) =
-                    crate::security::file_magic::check_magic(&rel_str, &buf)
-                {
-                    Self::apply_finding_blocking(
-                        &magic_finding,
-                        &mut blocked,
-                        &mut total_hard_trigger_issues,
-                    );
-                    all_issues.push(Self::issue_from_finding(&magic_finding));
-                }
-                // 输出 Auditability 级别的归档存在提示
-                all_issues.push(SecurityIssue {
-                    severity: IssueSeverity::Low,
-                    description: format!("Archive file detected: {}", rel_str),
-                    file_path: Some(rel_str.clone()),
-                    rule_id: Some("ARCHIVE_FILE_DETECTED".to_string()),
-                    remediation: Some(
-                        "Review archive contents; malicious payloads may be hidden inside archives"
-                            .to_string(),
-                    ),
-                    threat_category: Some("Obfuscation".to_string()),
-                    finding_kind: Some(FindingKind::Auditability.as_str().to_string()),
-                    ..Default::default()
-                });
-
-                // 默认策略不解压归档；不可审计内容只降低信任。
-                if policy.archive_deep_scan_enabled {
-                    let extraction = crate::security::archive_extractor::extract_archive(
-                        file_path.to_str().unwrap_or(""),
-                        &policy,
-                    );
-
-                    for finding in &extraction.findings {
-                        Self::apply_finding_blocking(
-                            finding,
-                            &mut blocked,
-                            &mut total_hard_trigger_issues,
-                        );
-                        all_issues.push(Self::issue_from_finding(finding));
-                    }
-
-                    if let Some(ref temp_dir) = extraction.temp_dir {
-                        for extracted_path in &extraction.extracted_files {
-                            let full_path = std::path::Path::new(extracted_path);
-                            let Ok(f) = std::fs::File::open(full_path) else {
-                                continue;
-                            };
-                            let mut extracted_buf = Vec::new();
-                            if f.take(MAX_EXTRACTED_FILE_BYTES + 1)
-                                .read_to_end(&mut extracted_buf)
-                                .is_err()
-                            {
-                                continue;
-                            }
-                            if extracted_buf.contains(&0u8) {
-                                continue;
-                            }
-                            if extracted_buf.len() as u64 > MAX_EXTRACTED_FILE_BYTES {
-                                log::warn!(
-                                    "Extracted file {} exceeds size limit ({} bytes), truncating",
-                                    full_path.display(),
-                                    MAX_EXTRACTED_FILE_BYTES
-                                );
-                                extracted_buf.truncate(MAX_EXTRACTED_FILE_BYTES as usize);
-                            }
-                            let extracted_content =
-                                String::from_utf8_lossy(&extracted_buf).into_owned();
-                            let extracted_display = format!(
-                                "{}>{}",
-                                rel_str,
-                                full_path
-                                    .strip_prefix(temp_dir.path())
-                                    .unwrap_or(full_path)
-                                    .to_string_lossy()
-                            );
-                            self.scan_text_content(
-                                &extracted_content,
-                                &extracted_display,
-                                Some(extracted_buf.as_slice()),
-                                &policy,
-                                locale,
-                                &mut all_issues,
-                                &mut all_matches,
-                                &mut blocked,
-                                &mut total_hard_trigger_issues,
-                            );
-                        }
-                    }
-                }
-
-                // 归档文件本身不做 pattern matching
-                continue;
-            }
-
             let mut content = None;
             if let Some((encoding, offset)) = Self::detect_utf16_encoding(&buf) {
                 let decoded = Self::decode_utf16(&buf, encoding, offset);

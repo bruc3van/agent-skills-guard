@@ -58,7 +58,6 @@ Manage Claude Code skills like managing mobile apps, from discovery, installatio
 - 🎭 **Unicode security detection**: Three-layer detection — homoglyph attacks, zero-width character steganography, invisible control characters
 - 🌐 **Cross-skill coordinated attack detection**: Discover data relay, shared malicious domains and other coordinated attack behaviors across multiple skills
 - 📦 **File type disguise detection**: 14 magic signature types, prevent binary files disguised as text
-- 🗜️ **Safe archive extraction**: ZIP/TAR/Office formats + 8-layer security including ZIP bomb protection
 - ✅ **Consistency validation**: Compare declared capabilities vs actual code behavior, detect misleading descriptions
 - 📊 **Analyzability assessment**: Scan coverage scoring, identify unanalyzable binary files
 - 🔐 **Automatic secret masking**: 9 secret pattern types automatically redacted, prevent key leakage in scan reports
@@ -196,7 +195,7 @@ All-new multi-layer scanning pipeline engine. From file traversal to final repor
 1. **Policy Loading** — Load ScanPolicy configuration
 2. **SkillContext Construction** — Unified context object, one-pass file classification, frontmatter parsing, reference extraction
 3. **Strict Structure Validation** — 15 directory/file structure checks (optional)
-4. **Per-File Scanning** — File type disguise detection → Unicode deception detection → Asset contamination detection → YAML rule matching → Archive deep scan
+4. **Per-File Scanning** — File type disguise detection → Unicode deception detection → Asset contamination detection → YAML rule matching
 5. **Context-Level Analysis** — Consistency validation → Multi-step attack chain detection → Analyzability assessment
 6. **Post-Processing** — Secret masking + Finding deduplication + Geometric decay scoring
 
@@ -307,21 +306,6 @@ Pure Rust file magic signature detection (no external dependencies), reading the
 - **Markup**: HTML, SVG
 
 Alerts trigger when file extension doesn't match actual content (e.g., `.py` file is actually a PE executable → Critical).
-
-### Archive Deep Scanning
-
-Safely extract and scan archive contents with **8 layers of security protection**:
-
-- 🔒 Path traversal detection (reject `..` and absolute paths)
-- 💣 ZIP bomb detection (20:1 compression ratio threshold)
-- 📊 File count limit (default 500)
-- 📦 Total size limit (default 100 MiB)
-- 📏 Single entry size limit (25% of total)
-- 🪆 Nesting depth limit (default 3 levels)
-- 🔗 Symlink detection
-- ⚙️ Executable detection
-
-Supported formats: ZIP, TAR, TAR.GZ, Office OOXML (DOCX/XLSX/PPTX). Additional detection for VBA macros and OLE embedded objects in Office documents.
 
 ### Consistency Validation
 
