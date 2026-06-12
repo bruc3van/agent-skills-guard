@@ -6,11 +6,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 
 if (typeof ResizeObserver === "undefined") {
-  (globalThis as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver = class {
+  type ResizeObserverConstructor = new (
+    callback: ResizeObserverCallback
+  ) => ResizeObserver;
+  const MockResizeObserver = class {
     observe() {}
     unobserve() {}
     disconnect() {}
   };
+  (globalThis as unknown as { ResizeObserver: ResizeObserverConstructor }).ResizeObserver =
+    MockResizeObserver as ResizeObserverConstructor;
 }
 
 vi.mock("../hooks/useSkills", () => ({

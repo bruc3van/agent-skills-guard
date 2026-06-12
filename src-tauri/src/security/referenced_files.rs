@@ -7,36 +7,28 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use lazy_static::lazy_static;
+use lazy_regex::{lazy_regex, Lazy};
 use regex::Regex;
 
 // ── 正则表达式 ──
 
-lazy_static! {
-    /// 模式 1: Markdown 链接 [text](path)
-    static ref MD_LINK_RE: Regex =
-        Regex::new(r#"\[.*?\]\(([^)]+)\)"#).unwrap();
+/// 模式 1: Markdown 链接 [text](path)
+static MD_LINK_RE: Lazy<Regex> = lazy_regex!(r#"\[.*?\]\(([^)]+)\)"#);
 
-    /// 模式 2: 自然语言引用 (see|refer to|check|read) `path.ext`
-    static ref NATURAL_LANG_RE: Regex =
-        Regex::new(r#"(?i)(?:see|refer to|check|read)\s+[`"']?(\S+\.\w+)[`"']?"#).unwrap();
+/// 模式 2: 自然语言引用 (see|refer to|check|read) `path.ext`
+static NATURAL_LANG_RE: Lazy<Regex> = lazy_regex!(r#"(?i)(?:see|refer to|check|read)\s+[`"']?(\S+\.\w+)[`"']?"#);
 
-    /// 模式 3: 执行型引用 (run|execute|invoke) scripts/...
-    static ref EXEC_REF_RE: Regex =
-        Regex::new(r#"(?i)(?:run|execute|invoke)\s+(scripts/\S+)"#).unwrap();
+/// 模式 3: 执行型引用 (run|execute|invoke) scripts/...
+static EXEC_REF_RE: Lazy<Regex> = lazy_regex!(r#"(?i)(?:run|execute|invoke)\s+(scripts/\S+)"#);
 
-    /// 模式 4: @reference: 指令
-    static ref AT_REFERENCE_RE: Regex =
-        Regex::new(r#"@reference:\s*(.+)"#).unwrap();
+/// 模式 4: @reference: 指令
+static AT_REFERENCE_RE: Lazy<Regex> = lazy_regex!(r#"@reference:\s*(.+)"#);
 
-    /// 模式 5: include/import/load: 指令
-    static ref INCLUDE_RE: Regex =
-        Regex::new(r#"(?i)(?:include|import|load):\s*(.+)"#).unwrap();
+/// 模式 5: include/import/load: 指令
+static INCLUDE_RE: Lazy<Regex> = lazy_regex!(r#"(?i)(?:include|import|load):\s*(.+)"#);
 
-    /// 模式 6: Python import (from X import Y / import Y)
-    static ref PYTHON_IMPORT_RE: Regex =
-        Regex::new(r#"(?m)^(?:from\s+(\S+)\s+)?import\s+(\S+)"#).unwrap();
-}
+/// 模式 6: Python import (from X import Y / import Y)
+static PYTHON_IMPORT_RE: Lazy<Regex> = lazy_regex!(r#"(?m)^(?:from\s+(\S+)\s+)?import\s+(\S+)"#);
 
 // ── 常量 ──
 

@@ -438,6 +438,7 @@ pnpm build
 ## 🙏 鸣谢
 
 - [Cisco AI Defense - Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) — 静态代码扫描规则设计的参考与借鉴
+- [security-test-hskills](https://github.com/yaojingang/yao-open-skills/tree/main/skills/security-test-hskills) — 引用了其中的安全测试用 Skills 作为扫描测试用例
 
 ## ⭐ Star History
 

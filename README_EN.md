@@ -12,6 +12,18 @@
 
 English | [简体中文](README.md)
 
+<div align="center">
+
+![Community](screen-shot/agentskillsgroup.jpg)
+
+</div>
+
+### 🚀 More Open Source Projects
+
+[📄 bruce-doc-converter](https://github.com/bruc3van/bruce-doc-converter) - Bidirectional conversion between Office/PDF and Markdown, automatic Mermaid diagram rendering, making AI easily understand your documents
+
+[📊 bruce-drawio](https://github.com/bruc3van/bruce-drawio) - Generate various draw.io diagrams with natural language, supporting flowcharts, architecture diagrams, ER diagrams, etc., one-click export to PNG/SVG/PDF
+
 </div>
 
 ---
@@ -337,6 +349,39 @@ To reduce false positives, each risk is marked with a confidence level:
 | **Sensitive Info Leakage** | Hardcoded keys, Tokens              | AWS Key, GitHub Token             |
 | **Sensitive File Access**  | Access system sensitive files       | `~/.ssh/`, `/etc/passwd`      |
 
+### Rule Pack Maintenance Conventions
+
+Security scanning rules are divided into two rule packs with clear responsibilities:
+
+#### core_rules.yaml — Product Default Security Baseline
+
+Covering general security detection capabilities, including destructive commands, remote code execution, code execution APIs, credentials/sensitive files, Prompt Injection, etc. Rules are product-tuned with clear false-positive boundaries, maintained as default security capabilities long-term.
+
+#### cisco_parity_signatures.yaml — Cisco skill_scanner Alignment Supplement Pack
+
+Supplementary rules aligned with Cisco AI Defense skill_scanner key detection capabilities, keeping them few and precise. Rules that are sufficiently product-tuned can be migrated to core.
+
+#### Checklist for Adding New Rules
+
+When adding new rules, the following must be clarified:
+
+1. **Rule Placement**: General security baseline goes in `core_rules.yaml`, Cisco alignment goes in `cisco_parity_signatures.yaml`
+2. **hard_trigger**: Only set to `true` for rules that are clearly dangerous and should not be allowed during installation
+3. **file_types**: Use only when matching specific file types
+4. **exclude_patterns**: High-noise rules must include exclusion patterns
+5. **fixture**: New rules must provide positive examples; when adjusting existing rules, negative examples must be added
+
+### Document Path Degradation Mechanism
+
+The scanner applies degradation handling to files located in document paths (`docs/`, `examples/`, `test/`, `references/`, etc.):
+
+- **skip_in_docs**: Rules configured in the policy are skipped directly in document paths (e.g., `CURL_POST`, `PY_EVAL`)
+- **Non hard_trigger rules**: Automatically reduce severity and weight in document paths
+- **PROMPT_INJECTION_ rules**: Even hard_trigger rules are degraded in document paths (but not skipped)
+- **Truly high-risk rules**: hard_trigger rules (secret leakage, destructive commands, etc.) are **not degraded** in document paths, maintaining blocking
+
+**SKILL.md Special Handling**: `SKILL.md` as the main skill file is not affected by document path degradation, always scanned with full rules.
+
 ### Disclaimer
 
 Security scanning is based on preset rules, designed to help identify potential risks, but cannot guarantee 100% accuracy, and false positives or false negatives may exist. It is recommended to carefully read the skill source code before installation and be extra cautious with skills from untrusted sources. Users assume all consequences of using this program.
@@ -362,12 +407,6 @@ Have questions or suggestions? Contact via:
 - 💬 [GitHub Issues](https://github.com/bruc3van/agent-skills-guard/issues) - Report issues or suggest features
 - 🐦 [X/Twitter](https://x.com/bruc3van) - Follow project updates
 - 💬 **Agent Skills Security Community**
-
-<div align="center">
-
-![Community](screen-shot/agentskillsgroup.jpg)
-
-</div>
 
 ---
 
@@ -397,6 +436,7 @@ pnpm build
 ## 🙏 Acknowledgments
 
 - [Cisco AI Defense - Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) — Reference and inspiration for static code scanning rule design
+- [security-test-hskills](https://github.com/yaojingang/yao-open-skills/tree/main/skills/security-test-hskills) — Used security test skills as scan test cases
 
 ## ⭐ Star History
 
@@ -412,7 +452,7 @@ MIT License - Free to use, free to share
 
 <div align="center">
 
-Made with ❤️ by [Bruce](https://github.com/bruc3van)
+Made by [Bruce](https://github.com/bruc3van)
 
 If this project helps you, please give it a ⭐️ Star!
 

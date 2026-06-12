@@ -395,13 +395,11 @@ fn default_score_kinds() -> HashSet<String> {
 /// 内置默认策略 YAML
 const DEFAULT_POLICY_YAML: &str = include_str!("../../resources/security/policies/default.yaml");
 
-lazy_static::lazy_static! {
-    /// 默认策略（启动时解析一次）
-    static ref DEFAULT_POLICY: ScanPolicy = {
-        serde_yaml::from_str(DEFAULT_POLICY_YAML)
-            .expect("Failed to parse embedded default policy YAML")
-    };
-}
+/// 默认策略（启动时解析一次）
+static DEFAULT_POLICY: std::sync::LazyLock<ScanPolicy> = std::sync::LazyLock::new(|| {
+    serde_yaml::from_str(DEFAULT_POLICY_YAML)
+        .expect("Failed to parse embedded default policy YAML")
+});
 
 impl ScanPolicy {
     /// 从 YAML 字符串解析策略

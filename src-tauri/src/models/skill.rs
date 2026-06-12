@@ -94,13 +94,3 @@ pub enum SkillStatus {
     Failed,
     UpdateAvailable,
 }
-
-/// Skill 安装记录
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillInstallation {
-    pub skill_id: String,
-    pub installed_at: DateTime<Utc>,
-    pub version: String,
-    pub local_path: String,
-    pub checksum: String,
-}

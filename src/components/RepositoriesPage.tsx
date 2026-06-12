@@ -21,7 +21,7 @@ import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
-import { translateError } from "../lib/error-codes";
+import { ApiError } from "../lib/api-error";
 import { FeaturedRepositories } from "./FeaturedRepositories";
 import type { FeaturedMarketplacesConfig, Skill } from "../types";
 import type { SecurityReport } from "../types/security";
@@ -45,6 +45,7 @@ import { pluginsCachedQueryKey } from "../hooks/usePlugins";
 import { REPOSITORIES_PAGE_STATUS_KEY } from "../hooks/useNavigationProtection";
 
 function isLinkCreationAllFailed(error: unknown): boolean {
+  if (error instanceof ApiError) return error.code === "LINK_CREATION_ALL_FAILED";
   const message = error instanceof Error ? error.message : String(error);
   return message.startsWith("LINK_CREATION_ALL_FAILED");
 }
@@ -402,7 +403,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
     return i18n.language === "zh" ? text.zh : text.en;
   };
 
-  const getErrorMessage = (error: any) => translateError(error?.message || String(error));
+  const getErrorMessage = (error: any) => error?.message || String(error);
 
   const openRepositoryPreview = async (repoUrl: string, repoName: string) => {
     try {
@@ -1135,7 +1136,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
             appToast.success(t("skills.toast.installed"));
           } catch (error: any) {
             const message = error?.message || String(error);
-            if (isLinkCreationAllFailed(message)) {
+            if (isLinkCreationAllFailed(error)) {
               addRecentInstallPath(selectedPath);
               await queryClient.refetchQueries({ queryKey: ["skills"] });
               await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
@@ -1150,10 +1151,10 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
                 };
               });
               appToast.warning(
-                `${t("skills.toast.installedWithSyncWarning")}: ${translateError(message)}`
+                `${t("skills.toast.installedWithSyncWarning")}: ${message}`
               );
             } else {
-              appToast.error(`${t("skills.toast.installFailed")}: ${translateError(message)}`);
+              appToast.error(`${t("skills.toast.installFailed")}: ${message}`);
             }
           } finally {
             setInstallingSkillId(null);

@@ -5,7 +5,7 @@ use crate::security::rules::{Category, Confidence};
 use crate::security::skill_context::SkillContext;
 use crate::security::strict_structure;
 use anyhow::Result;
-use lazy_static::lazy_static;
+use lazy_regex::{lazy_regex, Lazy};
 use regex::Regex;
 use rust_i18n::t;
 use sha2::{Digest, Sha256};
@@ -67,13 +67,13 @@ fn make_scan_meta_issue(
     }
 }
 
-lazy_static! {
-    static ref STRING_CONCAT_SEPARATOR: Regex =
-        Regex::new(r#"(?:"\s*\+\s*"|'\s*\+\s*'|"\s*\+\s*'|'\s*\+\s*")"#)
-            .expect("Invalid string concat regex");
-    static ref STRING_PLUS_CONTINUATION: Regex =
-        Regex::new(r#"(?:["']\s*\+\s*$)"#).expect("Invalid string plus continuation regex");
-}
+/// 字符串拼接分隔符：匹配 `" + "` / `' + '` 等模式，用于归一化续行拼接
+static STRING_CONCAT_SEPARATOR: Lazy<Regex> = lazy_regex!(
+    r#"(?:"\s*\+\s*"|'\s*\+\s*'|"\s*\+\s*'|'\s*\+\s*")"#
+);
+
+/// 字符串续行检测：匹配行尾的 `' +` / `" +` 模式
+static STRING_PLUS_CONTINUATION: Lazy<Regex> = lazy_regex!(r#"(?:["']\s*\+\s*$)"#);
 
 #[derive(Debug, Clone)]
 pub struct ScanOptions {
@@ -107,94 +107,15 @@ impl SecurityScanner {
 
     /// 统一映射函数：根据 rule_id、threat_category 和 analyzer 确定 FindingKind
     ///
-    /// Security：可执行风险、注入、外联、敏感数据、密钥、Prompt Injection
-    /// Auditability：不可审计或扫描覆盖不足
-    /// Structure：包装规范、目录/扩展名/许可证等合规问题
+    /// 优先级：rule_id 前缀 → ThreatCategory → analyzer → 默认 Security
     pub fn finding_kind_for_rule(
         rule_id: &str,
         category: Option<&Category>,
         analyzer: Option<&str>,
     ) -> FindingKind {
-        // 基于 rule_id 前缀/模式的快速映射
-        let upper = rule_id.to_uppercase();
-
-        // Security 类：明确的安全风险
-        if upper.starts_with("CURL_PIPE_SH")
-            || upper.starts_with("REVERSE_SHELL")
-            || upper.starts_with("COMMAND_INJECTION")
-            || upper.starts_with("CMD_INJECTION")
-            || upper.starts_with("SQL_INJECTION")
-            || upper.starts_with("PROMPT_INJECTION")
-            || upper.starts_with("PI_")
-            || upper.starts_with("SECRET_")
-            || upper.starts_with("API_KEY")
-            || upper.starts_with("PRIVATE_KEY")
-            || upper.starts_with("DATA_EXFIL")
-            || upper.starts_with("PIPELINE_")
-            || upper.starts_with("TAINT_")
-            || upper.starts_with("CONTENT_POISON_")
-            || upper.starts_with("RAG_POISON_")
-            || upper.starts_with("PICKLE_LOAD")
-            || upper.starts_with("SUBPROCESS_CALL")
-            || upper.starts_with("TOOL_ABUSE_")
-            || upper.starts_with("RESOURCE_ABUSE_")
-            || upper.starts_with("PATH_TRAVERSAL_")
-            || upper.starts_with("GLOB_HIDDEN_FILE_TARGETING")
-            || upper.starts_with("EVAL_")
-            || upper.starts_with("EXEC_")
-            || upper.starts_with("IEX_")
-        {
-            return FindingKind::Security;
-        }
-
-        // HOMOGLYPH_ATTACK：非 Office 内部 XML 时为 Security
-        if upper.starts_with("HOMOGLYPH_ATTACK") {
-            // 如果 analyzer 是 homoglyph 且来自 Office XML，降为 Auditability
-            // 这里先返回 Security，调用方可以覆盖
-            return FindingKind::Security;
-        }
-
-        // FILE_MAGIC_MISMATCH：文本/图片伪装可执行、归档、Office 时为 Security
-        if upper.starts_with("FILE_MAGIC_MISMATCH") {
-            return FindingKind::Security;
-        }
-
-        // Auditability 类：不可审计或扫描覆盖不足
-        if upper.starts_with("UNANALYZABLE_BINARY")
-            || upper.starts_with("OVERSIZED_FILE")
-            || upper.starts_with("LOW_ANALYZABILITY")
-            || upper.starts_with("STRUCTURE_BINARY_CONTENT")
-        {
-            return FindingKind::Auditability;
-        }
-
-        // Office/PDF/bytecode 存在
-        if upper.starts_with("OFFICE_") && !upper.contains("VBA") && !upper.contains("OLE") {
-            return FindingKind::Auditability;
-        }
-        if upper.starts_with("PDF_") {
-            return FindingKind::Auditability;
-        }
-        if upper.starts_with("BYTECODE_") {
-            return FindingKind::Auditability;
-        }
-
-        // VBA/OLE 是明确的安全风险
-        if upper.starts_with("OFFICE_VBA_MACRO") || upper.starts_with("OFFICE_EMBEDDED_OLE") {
-            return FindingKind::Security;
-        }
-
-        // Structure 类：包装规范、目录/扩展名/许可证等合规问题
-        if upper.starts_with("STRUCTURE_DISALLOWED_SUBDIR")
-            || upper.starts_with("STRUCTURE_DISALLOWED_EXTENSION")
-            || upper.starts_with("STRUCTURE_NAME_DIR_MISMATCH")
-            || upper.starts_with("MANIFEST_MISSING_LICENSE")
-            || upper.starts_with("STRUCTURE_ORPHAN_SCRIPT")
-            || upper.starts_with("TRIGGER_DESCRIPTION_TOO_SHORT")
-            || upper.starts_with("TRIGGER_KEYWORD_BAITING")
-            || upper.starts_with("TRIGGER_VAGUE_DESCRIPTION")
-        {
-            return FindingKind::Structure;
+        // 基于 rule_id 前缀的快速映射（委托给 FindingKind::classify_by_rule_id）
+        if let Some(kind) = FindingKind::classify_by_rule_id(rule_id) {
+            return kind;
         }
 
         // 基于 ThreatCategory 的兜底映射
@@ -705,10 +626,9 @@ impl SecurityScanner {
             .map(|(line_num, line)| (line_num + 1, line.to_string()))
             .collect();
 
-        let mut scan_lines = physical_lines.clone();
+        let mut scan_lines = Vec::with_capacity(physical_lines.len());
         let mut current = String::new();
         let mut start_line = 1usize;
-        let mut has_joined_line = false;
 
         for (line_number, line) in &physical_lines {
             if current.is_empty() {
@@ -717,7 +637,6 @@ impl SecurityScanner {
             } else {
                 current.push(' ');
                 current.push_str(line.trim_start());
-                has_joined_line = true;
             }
 
             let trimmed = current.trim_end();
@@ -728,28 +647,26 @@ impl SecurityScanner {
                 Self::supports_plus_continuation(ext) && STRING_PLUS_CONTINUATION.is_match(trimmed);
 
             if backslash_cont || backtick_cont || plus_cont {
-                current = trimmed[..trimmed.len() - 1].trim_end().to_string();
-                has_joined_line = true;
+                // 安全移除尾部续行符（\、`、+ 均为 ASCII 单字节字符）
+                // 使用 char_indices 确保在字符边界处切割，避免 UTF-8 多字节字符切片 panic
+                if let Some((idx, _)) = trimmed.char_indices().next_back() {
+                    current = trimmed[..idx].trim_end().to_string();
+                }
                 continue;
             }
 
             let normalized = STRING_CONCAT_SEPARATOR
                 .replace_all(&current, "")
                 .into_owned();
-            if has_joined_line || normalized != *line {
-                scan_lines.push((start_line, normalized));
-            }
+            scan_lines.push((start_line, normalized));
             current.clear();
-            has_joined_line = false;
         }
 
         if !current.is_empty() {
             let normalized = STRING_CONCAT_SEPARATOR
                 .replace_all(&current, "")
                 .into_owned();
-            if has_joined_line {
-                scan_lines.push((start_line, normalized));
-            }
+            scan_lines.push((start_line, normalized));
         }
 
         scan_lines
@@ -1177,6 +1094,14 @@ impl SecurityScanner {
         replacement_ratio < 0.05 && control_ratio < 0.02
     }
 
+    /// 检测字节采样是否为非文本二进制内容。
+    ///
+    /// 判定逻辑：包含 NUL 字节且非 UTF-16 编码 → 视为二进制。
+    /// UTF-16 编码的文本文件（含 BOM 或符合统计特征）不被判定为二进制。
+    fn is_binary_sample(sample: &[u8]) -> bool {
+        sample.contains(&0u8) && Self::detect_utf16_encoding(sample).is_none()
+    }
+
     pub fn count_scan_files(&self, dir_path: &str, options: ScanOptions) -> Result<usize> {
         use std::path::Path;
         use walkdir::WalkDir;
@@ -1233,16 +1158,12 @@ impl SecurityScanner {
                 }
             }
 
-            // 跳过二进制文件（与 scan_directory_with_options 逻辑对齐）
-            // UTF-16 编码的文本文件不应被跳过
+            // 跳过二进制文件；UTF-16 编码的文本文件不应被跳过
             if let Ok(mut f) = std::fs::File::open(entry.path()) {
                 let mut sample = [0u8; 512];
                 if let Ok(n) = std::io::Read::read(&mut f, &mut sample) {
-                    if sample[..n].contains(&0u8) {
-                        // 检查是否为 UTF-16 编码（含 BOM 或统计特征）
-                        if Self::detect_utf16_encoding(&sample[..n]).is_none() {
-                            continue;
-                        }
+                    if Self::is_binary_sample(&sample[..n]) {
+                        continue;
                     }
                 }
             }

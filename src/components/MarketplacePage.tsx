@@ -20,7 +20,7 @@ import { addRecentInstallPath, getPluginScanPromptEnabled } from "@/lib/storage"
 import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
 import { InstallPathSelector } from "./InstallPathSelector";
 import { appToast } from "@/lib/toast";
-import { translateError } from "@/lib/error-codes";
+import { ApiError } from "@/lib/api-error";
 import { PageBusyNotice } from "./ui/PageBusyNotice";
 import {
   AlertDialog,
@@ -36,6 +36,7 @@ import { getDefaultInstallTargetToolIds, useAgentTools } from "@/lib/agent-tools
 import { MARKETPLACE_INSTALL_STATUS_KEY } from "@/hooks/useNavigationProtection";
 
 function isLinkCreationAllFailed(error: unknown): boolean {
+  if (error instanceof ApiError) return error.code === "LINK_CREATION_ALL_FAILED";
   const message = error instanceof Error ? error.message : String(error);
   return message.startsWith("LINK_CREATION_ALL_FAILED");
 }
@@ -656,16 +657,16 @@ export function MarketplacePage({
             appToast.success(t("skills.toast.installed"));
           } catch (error: any) {
             const message = error?.message || String(error);
-            if (isLinkCreationAllFailed(message)) {
+            if (isLinkCreationAllFailed(error)) {
               addRecentInstallPath(selectedPath);
               await queryClient.refetchQueries({ queryKey: ["skills"] });
               await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
               await queryClient.refetchQueries({ queryKey: ["scanResults"] });
               appToast.warning(
-                `${t("skills.toast.installedWithSyncWarning")}: ${translateError(message)}`
+                `${t("skills.toast.installedWithSyncWarning")}: ${message}`
               );
             } else {
-              appToast.error(`${t("skills.toast.installFailed")}: ${translateError(message)}`);
+              appToast.error(`${t("skills.toast.installFailed")}: ${message}`);
             }
           } finally {
             setInstallStatus((prev) => ({

@@ -8,9 +8,10 @@
 
 use crate::models::security::{Finding, FindingKind, IssueSeverity, ThreatCategory};
 use crate::security::finding_builder::{self, FindingSpec};
-use lazy_static::lazy_static;
+use lazy_regex::{lazy_regex, Lazy};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 /// 单个 Skill 的扫描上下文（供跨 Skill 分析使用）
 pub struct SkillScanContext {
@@ -24,37 +25,57 @@ const ANALYZER_NAME: &str = "cross_skill";
 
 // ── 常量 ──
 
-lazy_static! {
-    // Collector 模式：凭据/敏感数据收集
-    static ref COLLECTOR_PATTERNS: Vec<Regex> = vec![
-        Regex::new(r"(?i)\b(?:credential\w*|password\w*|secret\w*|api_key\w*|token\w*|auth\w*)\b").unwrap(),
-        Regex::new(r"(?i)\b\.env\b").unwrap(),
-        Regex::new(r"(?i)\bconfig\b.*\b(?:key|secret|password)\b").unwrap(),
-        Regex::new(r"(?i)\bssh\b.*\b(?:key|pem|id_rsa)\b").unwrap(),
-        Regex::new(r"(?i)\bkeychain\b|\bwallet\b|\bcookie\b").unwrap(),
-    ];
+// Collector 模式：凭据/敏感数据收集
+static COLLECTOR_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r"(?i)\b(?:credential\w*|password\w*|secret\w*|api_key\w*|token\w*|auth\w*)\b").expect("COLLECTOR"),
+        Regex::new(r"(?i)\b\.env\b").expect("COLLECTOR"),
+        Regex::new(r"(?i)\bconfig\b.*\b(?:key|secret|password)\b").expect("COLLECTOR"),
+        Regex::new(r"(?i)\bssh\b.*\b(?:key|pem|id_rsa)\b").expect("COLLECTOR"),
+        Regex::new(r"(?i)\bkeychain\b|\bwallet\b|\bcookie\b").expect("COLLECTOR"),
+    ]
+});
 
-    // Exfiltrator 模式：数据外传
-    static ref EXFILTRATOR_PATTERNS: Vec<Regex> = vec![
-        Regex::new(r"(?i)requests\.post|urllib\.request|socket\.send").unwrap(),
-        Regex::new(r"(?i)\bwebhook\b|\bngrok\b|\btunnel\b").unwrap(),
-        Regex::new(r"(?i)curl.*-X\s*POST|curl.*--data").unwrap(),
-    ];
+// Exfiltrator 模式：数据外传
+static EXFILTRATOR_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r"(?i)requests\.post|urllib\.request|socket\.send").expect("EXFIL"),
+        Regex::new(r"(?i)\bwebhook\b|\bngrok\b|\btunnel\b").expect("EXFIL"),
+        Regex::new(r"(?i)curl.*-X\s*POST|curl.*--data").expect("EXFIL"),
+    ]
+});
 
-    // Collector 描述词
-    static ref COLLECTOR_WORDS: HashSet<&'static str> = [
+// 可疑共享模式
+static SUSPICIOUS_PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
+    vec![
+        ("base64_decode", Regex::new(r"base64[\s.]*(?:b64)?decode").expect("SUSP")),
+        ("exec_call", Regex::new(r"\bexec\s*\(").expect("SUSP")),
+        ("eval_call", Regex::new(r"\beval\s*\(").expect("SUSP")),
+        ("hex_escape", Regex::new(r"\\x[0-9a-fA-F]{2}").expect("SUSP")),
+        ("chr_call", Regex::new(r"\bchr\s*\(\s*\d+\s*\)").expect("SUSP")),
+        ("getattr_dynamic", Regex::new(r#"getattr\s*\([^,]+,\s*["']"#).expect("SUSP")),
+    ]
+});
+
+// Collector 描述词
+static COLLECTOR_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    [
         "gather", "collect", "read", "scan", "fetch", "extract",
         "retrieve", "download", "import", "load", "parse",
-    ].iter().copied().collect();
+    ].iter().copied().collect()
+});
 
-    // Sender 描述词
-    static ref SENDER_WORDS: HashSet<&'static str> = [
+// Sender 描述词
+static SENDER_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    [
         "send", "upload", "post", "transfer", "sync", "export",
         "share", "transmit", "deliver", "push", "submit",
-    ].iter().copied().collect();
+    ].iter().copied().collect()
+});
 
-    // 停用词（排除后计算上下文词重叠）
-    static ref STOP_WORDS: HashSet<&'static str> = [
+// 停用词（排除后计算上下文词重叠）
+static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    [
         "a", "an", "the", "is", "are", "was", "were", "be", "been",
         "being", "have", "has", "had", "do", "does", "did", "will",
         "would", "could", "should", "may", "might", "can", "shall",
@@ -70,10 +91,12 @@ lazy_static! {
         "before", "until", "unless", "since", "because", "about",
         "tool", "utility", "helper", "assistant", "service", "agent",
         "skill", "plugin", "extension", "function", "feature",
-    ].iter().copied().collect();
+    ].iter().copied().collect()
+});
 
-    // 常见/可信域名（不报告）
-    static ref COMMON_DOMAINS: HashSet<&'static str> = [
+// 常见/可信域名（不报告）
+static COMMON_DOMAINS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    [
         "github.com", "gitlab.com", "bitbucket.org",
         "pypi.org", "npmjs.com", "npmjs.org", "npm.io",
         "crates.io", "rubygems.org", "packagist.org",
@@ -86,18 +109,12 @@ lazy_static! {
         "rust-lang.org", "python.org", "nodejs.org",
         "deno.land", "bun.sh", "astral.sh",
         "anthropic.com", "openai.com",
-    ].iter().copied().collect();
+    ].iter().copied().collect()
+});
 
-    // 可疑共享模式
-    static ref SUSPICIOUS_PATTERNS: Vec<(&'static str, Regex)> = vec![
-        ("base64_decode", Regex::new(r"base64[\s.]*(?:b64)?decode").unwrap()),
-        ("exec_call", Regex::new(r"\bexec\s*\(").unwrap()),
-        ("eval_call", Regex::new(r"\beval\s*\(").unwrap()),
-        ("hex_escape", Regex::new(r"\\x[0-9a-fA-F]{2}").unwrap()),
-        ("chr_call", Regex::new(r"\bchr\s*\(\s*\d+\s*\)").unwrap()),
-        ("getattr_dynamic", Regex::new(r#"getattr\s*\([^,]+,\s*["']"#).unwrap()),
-    ];
-}
+// URL / 域名提取（从函数级移至模块级，避免每次调用重新初始化）
+static RE_URL: Lazy<Regex> = lazy_regex!(r#"https?://[^\s"'<>]+"#);
+static RE_DOMAIN: Lazy<Regex> = lazy_regex!(r"https?://([^/\s:]+)");
 
 // ── 检测器 ──
 
@@ -308,9 +325,6 @@ fn get_skill_content(skill: &SkillScanContext) -> String {
 }
 
 fn extract_urls(text: &str) -> Vec<String> {
-    lazy_static! {
-        static ref RE_URL: Regex = Regex::new(r#"https?://[^\s"'<>]+"#).unwrap();
-    }
     RE_URL
         .find_iter(text)
         .map(|m| m.as_str().to_string())
@@ -318,9 +332,6 @@ fn extract_urls(text: &str) -> Vec<String> {
 }
 
 fn extract_domain(url: &str) -> Option<String> {
-    lazy_static! {
-        static ref RE_DOMAIN: Regex = Regex::new(r"https?://([^/\s:]+)").unwrap();
-    }
     RE_DOMAIN
         .captures(url)
         .and_then(|c| c.get(1))

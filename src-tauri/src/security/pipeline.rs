@@ -11,8 +11,9 @@
 //! 与单行规则不同，Pipeline 分析扫描整个文件内容，
 //! 捕获跨行的恶意行为链路。
 
-use lazy_static::lazy_static;
+use lazy_regex::{lazy_regex, Lazy};
 use regex::Regex;
+use std::sync::LazyLock;
 
 use crate::models::security::{Finding, FindingKind, IssueSeverity, ThreatCategory};
 use crate::security::finding_builder::{self, FindingSpec};
@@ -24,167 +25,162 @@ use crate::security::skill_context::{SkillContext, SkillFileType};
 const ANALYZER_NAME: &str = "pipeline";
 
 // ── 正则表达式 ──
+// 简单字面量正则使用 lazy_regex!（编译期验证）
+// concat!() 拼接的正则使用 LazyLock（运行时编译，带 expect 错误提示）
 
-lazy_static! {
-    // 下载工具：curl / wget / iwr (Invoke-WebRequest)
-    static ref RE_FETCH: Regex = Regex::new(
-        r"(?i)\b(?:curl|wget|iwr|Invoke-WebRequest)\b"
-    ).unwrap();
+// 下载工具：curl / wget / iwr (Invoke-WebRequest)
+static RE_FETCH: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:curl|wget|iwr|Invoke-WebRequest)\b");
 
-    // 管道执行：| bash / | sh / | python / | IEX 等
-    static ref RE_PIPE_EXEC: Regex = Regex::new(
-        r"(?i)\|\s*(?:bash|sh|zsh|ksh|dash|python[23]?|ruby|perl|node|pwsh|powershell|IEX)\b"
-    ).unwrap();
+// 管道执行：| bash / | sh / | python / | IEX 等
+static RE_PIPE_EXEC: Lazy<Regex> = lazy_regex!(
+    r"(?i)\|\s*(?:bash|sh|zsh|ksh|dash|python[23]?|ruby|perl|node|pwsh|powershell|IEX)\b"
+);
 
-    // 执行命令：bash xxx.sh / sh xxx / ./xxx / python xxx
-    static ref RE_EXEC_COMMAND: Regex = Regex::new(
-        r"(?i)\b(?:bash|sh|zsh|ksh|dash|python[23]?|ruby|perl|node|pwsh)\s+[^\s;|&]+"
-    ).unwrap();
+// 执行命令：bash xxx.sh / sh xxx / ./xxx / python xxx
+static RE_EXEC_COMMAND: Lazy<Regex> = lazy_regex!(
+    r"(?i)\b(?:bash|sh|zsh|ksh|dash|python[23]?|ruby|perl|node|pwsh)\s+[^\s;|&]+"
+);
 
-    // chmod +x 模式
-    static ref RE_CHMOD_X: Regex = Regex::new(
-        r"(?i)\bchmod\s+[+\-]x\b"
-    ).unwrap();
+// chmod +x 模式
+static RE_CHMOD_X: Lazy<Regex> = lazy_regex!(r"(?i)\bchmod\s+[+\-]x\b");
 
-    // 基础的 curl/wget 行（同一行包含 fetch 和 URL）
-    static ref RE_FETCH_LINE: Regex = Regex::new(
-        r"(?i)\b(?:curl|wget)\s+[^\n]*https?://"
-    ).unwrap();
+// 基础的 curl/wget 行（同一行包含 fetch 和 URL）
+static RE_FETCH_LINE: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:curl|wget)\s+[^\n]*https?://");
 
-    // curl -o / wget -O 输出到文件
-    static ref RE_FETCH_TO_FILE: Regex = Regex::new(
-        r"(?i)\b(?:curl\s+-[oO]|wget\s+(?:-[oO]\s+|[^\s]*-[oO]))\s+\S+"
-    ).unwrap();
+// curl -o / wget -O 输出到文件
+static RE_FETCH_TO_FILE: Lazy<Regex> = lazy_regex!(
+    r"(?i)\b(?:curl\s+-[oO]|wget\s+(?:-[oO]\s+|[^\s]*-[oO]))\s+\S+"
+);
 
-    // 敏感文件路径模式
-    static ref RE_SENSITIVE_FILE: Regex = Regex::new(
-        concat!(
-            r"(?i)\b(?:cat|less|more|head|tail|type)\s+",
-            r"(?:~?/\.ssh/(?:id_(?:rsa|dsa|ecdsa|ed25519)|known_hosts|authorized_keys|config)",
-            r"|/etc/(?:passwd|shadow|sudoers)",
-            r"|~?/\.aws/(?:credentials|config)",
-            r"|~?/\.gnupg/(?:.*\.gpg|private-keys-v1\.d)",
-            r"|~?/\.kube/config",
-            r"|~?/\.docker/config\.json",
-            r"|~?/\.npmrc",
-            r"|~?/\.env(?:\.local|\.production|\.development)?",
-            r"|~?/\.netrc",
-            r"|\*\.pem",
-            r"|\*\.key",
-            r"|\.env(?:\.\w+)?",
-            r")",
-        )
-    ).unwrap();
+// 敏感文件路径模式（concat!() 拼接，使用 LazyLock）
+static RE_SENSITIVE_FILE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"(?i)\b(?:cat|less|more|head|tail|type)\s+",
+        r"(?:~?/\.ssh/(?:id_(?:rsa|dsa|ecdsa|ed25519)|known_hosts|authorized_keys|config)",
+        r"|/etc/(?:passwd|shadow|sudoers)",
+        r"|~?/\.aws/(?:credentials|config)",
+        r"|~?/\.gnupg/(?:.*\.gpg|private-keys-v1\.d)",
+        r"|~?/\.kube/config",
+        r"|~?/\.docker/config\.json",
+        r"|~?/\.npmrc",
+        r"|~?/\.env(?:\.local|\.production|\.development)?",
+        r"|~?/\.netrc",
+        r"|\*\.pem",
+        r"|\*\.key",
+        r"|\.env(?:\.\w+)?",
+        r")",
+    )).expect("invalid RE_SENSITIVE_FILE pattern")
+});
 
-    // 敏感文件（不带 cat 前缀，用于 find -exec 场景）
-    static ref RE_SENSITIVE_FILE_PATH: Regex = Regex::new(
-        concat!(
-            r"(?i)(?:\.ssh/id_(?:rsa|dsa|ecdsa|ed25519)",
-            r"|/etc/(?:passwd|shadow)",
-            r"|\.aws/credentials",
-            r"|\.env(?:\.\w+)?",
-            r"|\.pem",
-            r"|\.key)",
-        )
-    ).unwrap();
+// 敏感文件（不带 cat 前缀，用于 find -exec 场景）
+static RE_SENSITIVE_FILE_PATH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"(?i)(?:\.ssh/id_(?:rsa|dsa|ecdsa|ed25519)",
+        r"|/etc/(?:passwd|shadow)",
+        r"|\.aws/credentials",
+        r"|\.env(?:\.\w+)?",
+        r"|\.pem",
+        r"|\.key)",
+    )).expect("invalid RE_SENSITIVE_FILE_PATH pattern")
+});
 
-    // base64 编码/解码
-    static ref RE_BASE64: Regex = Regex::new(
-        r"(?i)\bbase64(?:\s+-[dwa]|(?:\s+--(?:decode|wrap|ignore-garbage)))?"
-    ).unwrap();
+// base64 编码/解码
+static RE_BASE64: Lazy<Regex> = lazy_regex!(
+    r"(?i)\bbase64(?:\s+-[dwa]|(?:\s+--(?:decode|wrap|ignore-garbage)))?"
+);
 
-    // base64 解码管道
-    static ref RE_BASE64_DECODE: Regex = Regex::new(
-        r"(?i)\bbase64\s+(?:-d|--decode)\b"
-    ).unwrap();
+// base64 解码管道
+static RE_BASE64_DECODE: Lazy<Regex> = lazy_regex!(r"(?i)\bbase64\s+(?:-d|--decode)\b");
 
-    // 网络发送：curl -X POST / wget --post-file / curl -d / curl --data
-    static ref RE_NET_SEND: Regex = Regex::new(
-        concat!(
-            r"(?i)\b(?:curl\s+(?:-[X]\s*POST|--data|-d\b|--data-raw|--data-binary|--data-urlencode)",
-            r"|wget\s+--post-file",
-            r"|curl\s+-F\b",
-            r"|curl\s+--form\b",
-            r"|Invoke-RestMethod\s+.*-Method\s+POST",
-            r"|iwr\s+.*-Method\s+POST)",
-        )
-    ).unwrap();
+// 网络发送（concat!() 拼接，使用 LazyLock）
+static RE_NET_SEND: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"(?i)\b(?:curl\s+(?:-[X]\s*POST|--data|-d\b|--data-raw|--data-binary|--data-urlencode)",
+        r"|wget\s+--post-file",
+        r"|curl\s+-F\b",
+        r"|curl\s+--form\b",
+        r"|Invoke-RestMethod\s+.*-Method\s+POST",
+        r"|iwr\s+.*-Method\s+POST)",
+    )).expect("invalid RE_NET_SEND pattern")
+});
 
-    // 网络外传（更宽泛的 curl/wget 后跟 URL）
-    static ref RE_NET_EXFIL: Regex = Regex::new(
-        r"(?i)\b(?:curl|wget)\b[^\n]*https?://[^\s]+"
-    ).unwrap();
+// 网络外传（更宽泛的 curl/wget 后跟 URL）
+static RE_NET_EXFIL: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:curl|wget)\b[^\n]*https?://[^\s]+");
 
-    // find ... -exec 模式
-    static ref RE_FIND_EXEC: Regex = Regex::new(
-        r"(?i)\bfind\b[^\n]*-exec\b"
-    ).unwrap();
+// find ... -exec 模式
+static RE_FIND_EXEC: Lazy<Regex> = lazy_regex!(r"(?i)\bfind\b[^\n]*-exec\b");
 
-    // find | xargs sh/bash 模式
-    static ref RE_FIND_XARGS_SH: Regex = Regex::new(
-        r"(?i)\bfind\b[^\n]*\|\s*xargs\s+(?:sh|bash|zsh)\b"
-    ).unwrap();
+// find | xargs sh/bash 模式
+static RE_FIND_XARGS_SH: Lazy<Regex> = lazy_regex!(
+    r"(?i)\bfind\b[^\n]*\|\s*xargs\s+(?:sh|bash|zsh)\b"
+);
 
-    // env / printenv 输出到网络
-    static ref RE_ENV_PRINT: Regex = Regex::new(
-        r"(?i)\b(?:env|printenv)\b"
-    ).unwrap();
+// env / printenv 输出到网络
+static RE_ENV_PRINT: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:env|printenv)\b");
 
-    // 敏感环境变量
-    static ref RE_SENSITIVE_ENV: Regex = Regex::new(
-        r"(?i)\b(?:env|printenv)\s+(?:\w*(?:SECRET|TOKEN|KEY|PASSWORD|CRED|AUTH|API)\w*)"
-    ).unwrap();
+// 敏感环境变量
+static RE_SENSITIVE_ENV: Lazy<Regex> = lazy_regex!(
+    r"(?i)\b(?:env|printenv)\s+(?:\w*(?:SECRET|TOKEN|KEY|PASSWORD|CRED|AUTH|API)\w*)"
+);
 
-    // 裸脚本执行（./script.sh、/path/to/script.sh、script.sh 等，无解释器前缀）
-    static ref RE_EXEC_BARE: Regex = Regex::new(
-        r"(?i)(?:^|[;&|]\s*)(?:\./|[a-zA-Z]:\\|~/|[^\s;|&]*\.(?:sh|bash|py|rb|pl|js|ts|ps1|bat|cmd))\b"
-    ).unwrap();
+// 裸脚本执行（./script.sh、/path/to/script.sh、script.sh 等，无解释器前缀）
+static RE_EXEC_BARE: Lazy<Regex> = lazy_regex!(
+    r"(?i)(?:^|[;&|]\s*)(?:\./|[a-zA-Z]:\\|~/|[^\s;|&]*\.(?:sh|bash|py|rb|pl|js|ts|ps1|bat|cmd))\b"
+);
 
-    // 管道整体模式（敏感文件 | 编码 | 网络发送，同一行内）
-    static ref RE_SENSITIVE_PIPELINE: Regex = Regex::new(
-        concat!(
-            r"(?i)\b(?:cat|less|more|head|tail|type)\s+",
-            r"(?:~?/\.ssh/id_(?:rsa|dsa|ecdsa|ed25519)",
-            r"|/etc/(?:passwd|shadow)",
-            r"|~?/\.aws/credentials",
-            r"|~?/\.env(?:\.\w+)?",
-            r"|\.env(?:\.\w+)?)",
-            r"[^|]*\|\s*base64\b[^\|]*\|\s*(?:curl|wget)\b",
-        )
-    ).unwrap();
+// 管道整体模式（concat!() 拼接，使用 LazyLock）
+static RE_SENSITIVE_PIPELINE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"(?i)\b(?:cat|less|more|head|tail|type)\s+",
+        r"(?:~?/\.ssh/id_(?:rsa|dsa|ecdsa|ed25519)",
+        r"|/etc/(?:passwd|shadow)",
+        r"|~?/\.aws/credentials",
+        r"|~?/\.env(?:\.\w+)?",
+        r"|\.env(?:\.\w+)?)",
+        r"[^|]*\|\s*base64\b[^\|]*\|\s*(?:curl|wget)\b",
+    )).expect("invalid RE_SENSITIVE_PIPELINE pattern")
+});
 
-    // 敏感文件直接管道到网络（无 base64 中间步骤）
-    static ref RE_SENSITIVE_DIRECT_NET: Regex = Regex::new(
-        concat!(
-            r"(?i)\b(?:cat|less|more|head|tail|type)\s+",
-            r"(?:~?/\.ssh/id_(?:rsa|dsa|ecdsa|ed25519)",
-            r"|/etc/(?:passwd|shadow)",
-            r"|~?/\.aws/credentials",
-            r"|~?/\.env(?:\.\w+)?",
-            r"|\.env(?:\.\w+)?)",
-            r"[^|]*\|\s*(?:curl|wget)\b",
-        )
-    ).unwrap();
+// 敏感文件直接管道到网络（concat!() 拼接，使用 LazyLock）
+static RE_SENSITIVE_DIRECT_NET: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"(?i)\b(?:cat|less|more|head|tail|type)\s+",
+        r"(?:~?/\.ssh/id_(?:rsa|dsa|ecdsa|ed25519)",
+        r"|/etc/(?:passwd|shadow)",
+        r"|~?/\.aws/credentials",
+        r"|~?/\.env(?:\.\w+)?",
+        r"|\.env(?:\.\w+)?)",
+        r"[^|]*\|\s*(?:curl|wget)\b",
+    )).expect("invalid RE_SENSITIVE_DIRECT_NET pattern")
+});
 
-    // env/printenv 管道到网络（同一行，可跨多个管道如 env | grep | curl）
-    static ref RE_ENV_NET_SAME_LINE: Regex = Regex::new(
-        r"(?i)\b(?:env|printenv)\b[^\n]*\|\s*(?:curl|wget)\b"
-    ).unwrap();
+// env/printenv 管道到网络（同一行，可跨多个管道如 env | grep | curl）
+static RE_ENV_NET_SAME_LINE: Lazy<Regex> = lazy_regex!(
+    r"(?i)\b(?:env|printenv)\b[^\n]*\|\s*(?:curl|wget)\b"
+);
 
-    // find ... -name "*.key" -exec curl 模式（同一行）
-    static ref RE_FIND_KEY_CURL: Regex = Regex::new(
-        r"(?i)\bfind\b[^\n]*(?:\.key|\.pem|id_rsa|\.env)[^\n]*(?:curl|wget)\b"
-    ).unwrap();
+// find ... -name "*.key" -exec curl 模式（同一行）
+static RE_FIND_KEY_CURL: Lazy<Regex> = lazy_regex!(
+    r"(?i)\bfind\b[^\n]*(?:\.key|\.pem|id_rsa|\.env)[^\n]*(?:curl|wget)\b"
+);
 
-    static ref RE_DOC_CONVERT: Regex =
-        Regex::new(r"(?i)\b(?:pandoc|pdftotext|libreoffice|textutil)\b").unwrap();
-    static ref RE_CAT_CONVERTED: Regex =
-        Regex::new(r"(?i)\b(?:cat|head|tail|less|more)\b.*\.(?:md|txt|html)").unwrap();
+static RE_DOC_CONVERT: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:pandoc|pdftotext|libreoffice|textutil)\b");
+static RE_CAT_CONVERTED: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:cat|head|tail|less|more)\b.*\.(?:md|txt|html)");
 
-    // ── Taint source/transform/sink 分类表 ──
+// 匹配 env VAR=val 前缀
+static RE_ENV_PREFIX: Lazy<Regex> = lazy_regex!(r"(?i)^env(?:\s+\w+=\S+)*\s+");
 
-    // Source：产生污点的命令（命令前缀 → 污点类型）
-    static ref TAINT_SOURCES: Vec<(&'static str, TaintType)> = vec![
+// 匹配 sudo 前缀（含可选参数）
+static RE_SUDO_PREFIX: Lazy<Regex> = lazy_regex!(r"(?i)^sudo\s+(?:-\S+\s+)*");
+
+// URL 提取正则
+static RE_URL_EXTRACT: Lazy<Regex> = lazy_regex!(r#"https?://[^\s'"`]+"#);
+
+// ── Taint source/transform/sink 分类表（非正则，使用 LazyLock） ──
+
+// Source：产生污点的命令（命令前缀 → 污点类型）
+static TAINT_SOURCES: LazyLock<Vec<(&'static str, TaintType)>> = LazyLock::new(|| {
+    vec![
         ("cat", TaintType::SensitiveData),
         ("less", TaintType::SensitiveData),
         ("head", TaintType::SensitiveData),
@@ -197,10 +193,12 @@ lazy_static! {
         ("wget", TaintType::NetworkData),
         ("iwr", TaintType::NetworkData),
         ("invoke-webrequest", TaintType::NetworkData),
-    ];
+    ]
+});
 
-    // Transform：传播污点的命令（可选追加新污点类型）
-    static ref TAINT_TRANSFORMS: Vec<(&'static str, Option<TaintType>)> = vec![
+// Transform：传播污点的命令（可选追加新污点类型）
+static TAINT_TRANSFORMS: LazyLock<Vec<(&'static str, Option<TaintType>)>> = LazyLock::new(|| {
+    vec![
         ("base64", Some(TaintType::Obfuscation)),
         ("xxd", Some(TaintType::Obfuscation)),
         ("openssl", Some(TaintType::Obfuscation)),
@@ -217,10 +215,12 @@ lazy_static! {
         ("jq", None),
         ("pandoc", None),
         ("pdftotext", None),
-    ];
+    ]
+});
 
-    // Sink：消费污点产生威胁的命令（命令前缀 → 污点类型）
-    static ref TAINT_SINKS: Vec<(&'static str, TaintType)> = vec![
+// Sink：消费污点产生威胁的命令（命令前缀 → 污点类型）
+static TAINT_SINKS: LazyLock<Vec<(&'static str, TaintType)>> = LazyLock::new(|| {
+    vec![
         ("bash", TaintType::CodeExecution),
         ("sh", TaintType::CodeExecution),
         ("zsh", TaintType::CodeExecution),
@@ -233,19 +233,8 @@ lazy_static! {
         ("powershell", TaintType::CodeExecution),
         ("iex", TaintType::CodeExecution),
         ("tee", TaintType::FileWrite),
-    ];
-
-    // ── extract_command_name 辅助正则 ──
-
-    // 匹配 env VAR=val 前缀
-    static ref RE_ENV_PREFIX: Regex = Regex::new(r"(?i)^env(?:\s+\w+=\S+)*\s+").unwrap();
-
-    // 匹配 sudo 前缀（含可选参数）
-    static ref RE_SUDO_PREFIX: Regex = Regex::new(r"(?i)^sudo\s+(?:-\S+\s+)*").unwrap();
-
-    // URL 提取正则
-    static ref RE_URL_EXTRACT: Regex = Regex::new(r#"https?://[^\s'"`]+"#).unwrap();
-}
+    ]
+});
 
 // ── Taint 追踪类型 ──
 

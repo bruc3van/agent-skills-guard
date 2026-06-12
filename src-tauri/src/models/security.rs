@@ -22,6 +22,115 @@ impl FindingKind {
             FindingKind::Structure => "Structure",
         }
     }
+
+    /// 根据 rule_id 前缀快速分类 FindingKind。
+    ///
+    /// 使用有序前缀查找表替代冗长的 if-else 链。
+    /// 检查顺序：Security → Auditability → Structure，利用前缀优先级实现精确匹配。
+    /// 返回 `None` 表示该 rule_id 无法仅凭前缀确定分类。
+    pub fn classify_by_rule_id(rule_id: &str) -> Option<FindingKind> {
+        use std::sync::LazyLock;
+
+        // Security 类前缀：明确的可执行风险、注入、外联、密钥等
+        static SECURITY_PREFIXES: LazyLock<Vec<&str>> = LazyLock::new(|| {
+            vec![
+                "CURL_PIPE_SH",
+                "REVERSE_SHELL",
+                "COMMAND_INJECTION",
+                "CMD_INJECTION",
+                "SQL_INJECTION",
+                "PROMPT_INJECTION",
+                "PI_",
+                "SECRET_",
+                "API_KEY",
+                "PRIVATE_KEY",
+                "DATA_EXFIL",
+                "PIPELINE_",
+                "TAINT_",
+                "CONTENT_POISON_",
+                "RAG_POISON_",
+                "PICKLE_LOAD",
+                "SUBPROCESS_CALL",
+                "TOOL_ABUSE_",
+                "RESOURCE_ABUSE_",
+                "PATH_TRAVERSAL_",
+                "GLOB_HIDDEN_FILE_TARGETING",
+                "EVAL_",
+                "EXEC_",
+                "IEX_",
+                "HOMOGLYPH_ATTACK",
+                "FILE_MAGIC_MISMATCH",
+                "OFFICE_VBA_MACRO",
+                "OFFICE_EMBEDDED_OLE",
+                "ALLOWED_TOOLS_READ_VIOLATION",
+                "ALLOWED_TOOLS_WRITE_VIOLATION",
+                "ALLOWED_TOOLS_BASH_VIOLATION",
+                "ALLOWED_TOOLS_GREP_VIOLATION",
+                "ALLOWED_TOOLS_GLOB_VIOLATION",
+                "ALLOWED_TOOLS_NETWORK_USAGE",
+            ]
+        });
+
+        // Auditability 类前缀：不可审计、扫描覆盖不足
+        static AUDITABILITY_PREFIXES: LazyLock<Vec<&str>> = LazyLock::new(|| {
+            vec![
+                "UNANALYZABLE_BINARY",
+                "OVERSIZED_FILE",
+                "LOW_ANALYZABILITY",
+                "BYTECODE_",
+                "PDF_",
+                "OFFICE_", // 兜底：OFFICE_VBA_MACRO / OFFICE_EMBEDDED_OLE 已在 SECURITY_PREFIXES 中优先匹配
+            ]
+        });
+
+        // Structure 类前缀：包装规范、目录/扩展名/许可证等合规问题
+        static STRUCTURE_PREFIXES: LazyLock<Vec<&str>> = LazyLock::new(|| {
+            vec![
+                "STRUCTURE_DISALLOWED_SUBDIR",
+                "STRUCTURE_DISALLOWED_EXTENSION",
+                "STRUCTURE_NAME_DIR_MISMATCH",
+                "STRUCTURE_MISSING_SKILL_MD",
+                "STRUCTURE_INVALID_NAME",
+                "STRUCTURE_INVALID_DESCRIPTION",
+                "STRUCTURE_HIDDEN_FILE",
+                "STRUCTURE_BINARY_CONTENT",
+                "STRUCTURE_NON_UTF8",
+                "STRUCTURE_COMPATIBILITY_TOO_LONG",
+                "STRUCTURE_MISSING_REFERENCE",
+                "STRUCTURE_ORPHAN_SCRIPT",
+                "MANIFEST_MISSING_LICENSE",
+                "FRONTMATTER_PARSE_ERROR",
+                "HIDDEN_EXECUTABLE_SCRIPT",
+                "HIDDEN_DATA_FILE",
+                "PYCACHE_FILES_DETECTED",
+                "TRIGGER_DESCRIPTION_TOO_SHORT",
+                "TRIGGER_KEYWORD_BAITING",
+                "TRIGGER_VAGUE_DESCRIPTION",
+                "SOCIAL_ENG_MISLEADING_DESC",
+                "TRIGGER_OVERLY_GENERIC",
+            ]
+        });
+
+        let upper = rule_id.to_uppercase();
+
+        for prefix in SECURITY_PREFIXES.iter() {
+            if upper.starts_with(prefix) {
+                return Some(FindingKind::Security);
+            }
+        }
+        for prefix in AUDITABILITY_PREFIXES.iter() {
+            if upper.starts_with(prefix) {
+                return Some(FindingKind::Auditability);
+            }
+        }
+        for prefix in STRUCTURE_PREFIXES.iter() {
+            if upper.starts_with(prefix) {
+                return Some(FindingKind::Structure);
+            }
+        }
+
+        None
+    }
 }
 
 impl std::str::FromStr for FindingKind {

@@ -1,6 +1,6 @@
 //! 资产目录 Prompt Injection / 可疑 URL 检测（对齐 Cisco asset_checks.py）
 
-use lazy_static::lazy_static;
+use lazy_regex::{lazy_regex, Lazy};
 use regex::Regex;
 
 use crate::models::security::{Finding, FindingKind, IssueSeverity, ThreatCategory};
@@ -10,14 +10,10 @@ const ANALYZER_NAME: &str = "asset_checks";
 
 const ASSET_DIR_SEGMENTS: &[&str] = &["assets/", "templates/", "references/", "data/"];
 
-lazy_static! {
-    static ref RE_PI_IGNORE: Regex =
-        Regex::new(r"(?i)ignore\s+(?:all\s+)?previous\s+instructions?").unwrap();
-    static ref RE_PI_DISREGARD: Regex = Regex::new(r"(?i)disregard\s+(?:all\s+)?prior").unwrap();
-    static ref RE_PI_ROLE: Regex = Regex::new(r"(?i)you\s+are\s+now\s+").unwrap();
-    static ref RE_SUSPICIOUS_URL: Regex =
-        Regex::new(r"(?i)https?://[^\s]+\.(?:tk|ml|ga|cf|gq)/").unwrap();
-}
+static RE_PI_IGNORE: Lazy<Regex> = lazy_regex!(r"(?i)ignore\s+(?:all\s+)?previous\s+instructions?");
+static RE_PI_DISREGARD: Lazy<Regex> = lazy_regex!(r"(?i)disregard\s+(?:all\s+)?prior");
+static RE_PI_ROLE: Lazy<Regex> = lazy_regex!(r"(?i)you\s+are\s+now\s+");
+static RE_SUSPICIOUS_URL: Lazy<Regex> = lazy_regex!(r"(?i)https?://[^\s]+\.(?:tk|ml|ga|cf|gq)/");
 
 /// 路径是否位于 assets/references/templates/data 目录
 pub fn is_asset_path(file_path: &str) -> bool {

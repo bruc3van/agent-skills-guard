@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { act, render } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UpdateProvider, useUpdate } from "./UpdateContext";
 import { checkForUpdate, type UpdateHandle, type UpdateInfo } from "../lib/updater";
 
@@ -20,6 +20,27 @@ vi.mock("../lib/rateLimit", () => ({
   markThrottleCompleted: vi.fn(),
 }));
 
+const localStorageMock = (() => {
+  let store = new Map<string, string>();
+  return {
+    getItem: vi.fn((key: string) => store.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      store.set(key, value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      store.delete(key);
+    }),
+    clear: vi.fn(() => {
+      store = new Map();
+    }),
+  };
+})();
+
+Object.defineProperty(globalThis, "localStorage", {
+  value: localStorageMock,
+  configurable: true,
+});
+
 function Probe({ onReady }: { onReady: (ctx: ReturnType<typeof useUpdate>) => void }) {
   const ctx = useUpdate();
 
@@ -31,6 +52,11 @@ function Probe({ onReady }: { onReady: (ctx: ReturnType<typeof useUpdate>) => vo
 }
 
 describe("UpdateProvider", () => {
+  beforeEach(() => {
+    localStorageMock.clear();
+    vi.mocked(checkForUpdate).mockReset();
+  });
+
   it("returns available update info from manual checks immediately", async () => {
     const info: UpdateInfo = {
       currentVersion: "1.1.3",

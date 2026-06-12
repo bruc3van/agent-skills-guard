@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
-import { translateError } from "../lib/error-codes";
 
 export function useSkills() {
   return useQuery({
@@ -39,7 +38,7 @@ export function useInstallSkill() {
     },
     onError: (error: Error) => {
       console.error('Install skill failed:', error);
-      appToast.error(translateError(error.message));
+      appToast.error(error.message);
     },
   });
 }
@@ -55,7 +54,7 @@ export function useUninstallSkill() {
     },
     onError: (error: Error) => {
       console.error('Uninstall skill failed:', error);
-      appToast.error(translateError(error.message));
+      appToast.error(error.message);
     },
   });
 }
@@ -71,7 +70,7 @@ export function useUninstallSkillPath() {
     },
     onError: (error: Error) => {
       console.error('Uninstall skill path failed:', error);
-      appToast.error(translateError(error.message));
+      appToast.error(error.message);
     },
   });
 }
@@ -87,7 +86,7 @@ export function useDeleteSkill() {
     },
     onError: (error: Error) => {
       console.error('Delete skill failed:', error);
-      appToast.error(translateError(error.message));
+      appToast.error(error.message);
     },
   });
 }

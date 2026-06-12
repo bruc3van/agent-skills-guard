@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
-import { translateError } from "../lib/error-codes";
 import type { Plugin, PluginUninstallResult } from "../types";
 
 type UsePluginsOptions = {
@@ -69,7 +68,7 @@ export function useUninstallPlugin() {
     },
     onError: (error: Error) => {
       console.error('Uninstall plugin failed:', error);
-      appToast.error(translateError(error.message));
+      appToast.error(error.message);
     },
   });
 }
@@ -92,7 +91,7 @@ export function useRemoveMarketplace() {
     },
     onError: (error: Error) => {
       console.error('Remove marketplace failed:', error);
-      appToast.error(translateError(error.message));
+      appToast.error(error.message);
     },
   });
 }

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { safeInvoke } from "./api-error";
 import type {
   Repository,
   ImportFeaturedRepositoriesResult,
@@ -24,28 +25,28 @@ import type { SkillScanResult } from "../types/security";
 export const api = {
   // Repository APIs
   async addRepository(url: string, name: string): Promise<string> {
-    return invoke<string>("add_repository", { url, name });
+    return safeInvoke(invoke<string>("add_repository", { url, name }));
   },
 
   async getRepositories(): Promise<Repository[]> {
-    return invoke<Repository[]>("get_repositories");
+    return safeInvoke(invoke<Repository[]>("get_repositories"));
   },
 
   async deleteRepository(repoId: string): Promise<void> {
-    return invoke<void>("delete_repository", { repoId });
+    return safeInvoke(invoke<void>("delete_repository", { repoId }));
   },
 
   async scanRepository(repoId: string): Promise<Skill[]> {
-    return invoke<Skill[]>("scan_repository", { repoId });
+    return safeInvoke(invoke<Skill[]>("scan_repository", { repoId }));
   },
 
   // Skill APIs
   async getSkills(): Promise<Skill[]> {
-    return invoke<Skill[]>("get_skills");
+    return safeInvoke(invoke<Skill[]>("get_skills"));
   },
 
   async getInstalledSkills(): Promise<Skill[]> {
-    return invoke<Skill[]>("get_installed_skills");
+    return safeInvoke(invoke<Skill[]>("get_installed_skills"));
   },
 
   async installSkill(
@@ -53,11 +54,11 @@ export const api = {
     installPath?: string,
     allowPartialScan = false
   ): Promise<void> {
-    return invoke<void>("install_skill", {
+    return safeInvoke(invoke<void>("install_skill", {
       skillId,
       installPath: installPath || null,
       allowPartialScan,
-    });
+    }));
   },
 
   async prepareSkillInstallation(
@@ -65,11 +66,11 @@ export const api = {
     locale: string,
     allowPartialScan = false
   ): Promise<SecurityReport> {
-    return invoke<SecurityReport>("prepare_skill_installation", {
+    return safeInvoke(invoke<SecurityReport>("prepare_skill_installation", {
       skillId,
       locale,
       allowPartialScan,
-    });
+    }));
   },
 
   async confirmSkillInstallation(
@@ -78,113 +79,113 @@ export const api = {
     allowPartialScan = false,
     targetTools?: string[]
   ): Promise<void> {
-    return invoke<void>("confirm_skill_installation", {
+    return safeInvoke(invoke<void>("confirm_skill_installation", {
       skillId,
       installPath: installPath || null,
       allowPartialScan,
       targetTools: targetTools ?? null,
-    });
+    }));
   },
 
   async cancelSkillInstallation(skillId: string): Promise<void> {
-    return invoke<void>("cancel_skill_installation", { skillId });
+    return safeInvoke(invoke<void>("cancel_skill_installation", { skillId }));
   },
 
   async getDefaultInstallPath(): Promise<string> {
-    return invoke<string>("get_default_install_path");
+    return safeInvoke(invoke<string>("get_default_install_path"));
   },
 
   async selectCustomInstallPath(): Promise<string | null> {
-    return invoke<string | null>("select_custom_install_path");
+    return safeInvoke(invoke<string | null>("select_custom_install_path"));
   },
 
   async getScanResults(): Promise<SkillScanResult[]> {
-    return invoke<SkillScanResult[]>("get_scan_results");
+    return safeInvoke(invoke<SkillScanResult[]>("get_scan_results"));
   },
 
   async scanAllInstalledSkills(
     locale: string,
     scanParallelism?: number
   ): Promise<SkillScanResult[]> {
-    return invoke<SkillScanResult[]>("scan_all_installed_skills", {
+    return safeInvoke(invoke<SkillScanResult[]>("scan_all_installed_skills", {
       locale,
       scanParallelism: scanParallelism ?? null,
-    });
+    }));
   },
 
   async uninstallSkill(skillId: string): Promise<void> {
-    return invoke<void>("uninstall_skill", { skillId });
+    return safeInvoke(invoke<void>("uninstall_skill", { skillId }));
   },
 
   async uninstallSkillPath(skillId: string, path: string): Promise<void> {
-    return invoke<void>("uninstall_skill_path", { skillId, path });
+    return safeInvoke(invoke<void>("uninstall_skill_path", { skillId, path }));
   },
 
   async deleteSkill(skillId: string): Promise<void> {
-    return invoke<void>("delete_skill", { skillId });
+    return safeInvoke(invoke<void>("delete_skill", { skillId }));
   },
 
   // Scan local skills directory
   async scanLocalSkills(): Promise<Skill[]> {
-    return invoke<Skill[]>("scan_local_skills");
+    return safeInvoke(invoke<Skill[]>("scan_local_skills"));
   },
 
   // 缓存管理
   async clearRepositoryCache(repoId: string): Promise<void> {
-    return invoke<void>("clear_repository_cache", { repoId });
+    return safeInvoke(invoke<void>("clear_repository_cache", { repoId }));
   },
 
   async clearAllRepositoryCaches(): Promise<ClearAllCachesResult> {
-    return invoke<ClearAllCachesResult>("clear_all_repository_caches");
+    return safeInvoke(invoke<ClearAllCachesResult>("clear_all_repository_caches"));
   },
 
   async refreshRepositoryCache(repoId: string): Promise<Skill[]> {
-    return invoke<Skill[]>("refresh_repository_cache", { repoId });
+    return safeInvoke(invoke<Skill[]>("refresh_repository_cache", { repoId }));
   },
 
   async getCacheStats(): Promise<CacheStats> {
-    return invoke<CacheStats>("get_cache_stats");
+    return safeInvoke(invoke<CacheStats>("get_cache_stats"));
   },
 
   // 打开技能目录
   async openSkillDirectory(localPath: string): Promise<void> {
-    return invoke<void>("open_skill_directory", { localPath });
+    return safeInvoke(invoke<void>("open_skill_directory", { localPath }));
   },
 
   // Featured repositories
   async getFeaturedRepositories(): Promise<FeaturedRepositoriesConfig> {
-    return invoke<FeaturedRepositoriesConfig>("get_featured_repositories");
+    return safeInvoke(invoke<FeaturedRepositoriesConfig>("get_featured_repositories"));
   },
 
   async refreshFeaturedRepositories(): Promise<FeaturedRepositoriesConfig> {
-    return invoke<FeaturedRepositoriesConfig>("refresh_featured_repositories");
+    return safeInvoke(invoke<FeaturedRepositoriesConfig>("refresh_featured_repositories"));
   },
 
   async getFeaturedMarketplaces(): Promise<FeaturedMarketplacesConfig> {
-    return invoke<FeaturedMarketplacesConfig>("get_featured_marketplaces");
+    return safeInvoke(invoke<FeaturedMarketplacesConfig>("get_featured_marketplaces"));
   },
 
   async refreshFeaturedMarketplaces(): Promise<FeaturedMarketplacesConfig> {
-    return invoke<FeaturedMarketplacesConfig>("refresh_featured_marketplaces");
+    return safeInvoke(invoke<FeaturedMarketplacesConfig>("refresh_featured_marketplaces"));
   },
 
   async importFeaturedRepositories(
     categoryIds?: string[]
   ): Promise<ImportFeaturedRepositoriesResult> {
-    return invoke<ImportFeaturedRepositoriesResult>("import_featured_repositories", { categoryIds: categoryIds || null });
+    return safeInvoke(invoke<ImportFeaturedRepositoriesResult>("import_featured_repositories", { categoryIds: categoryIds || null }));
   },
 
   async isRepositoryAdded(url: string): Promise<boolean> {
-    return invoke<boolean>("is_repository_added", { url });
+    return safeInvoke(invoke<boolean>("is_repository_added", { url }));
   },
 
   // Skill Update APIs
   async checkSkillsUpdates(): Promise<Array<[string, string]>> {
-    return invoke<Array<[string, string]>>("check_skills_updates");
+    return safeInvoke(invoke<Array<[string, string]>>("check_skills_updates"));
   },
 
   async prepareSkillUpdate(skillId: string, locale: string): Promise<[SecurityReport, string[]]> {
-    return invoke<[SecurityReport, string[]]>("prepare_skill_update", { skillId, locale });
+    return safeInvoke(invoke<[SecurityReport, string[]]>("prepare_skill_update", { skillId, locale }));
   },
 
   async confirmSkillUpdate(
@@ -192,50 +193,50 @@ export const api = {
     forceOverwrite: boolean,
     allowPartialScan = false
   ): Promise<void> {
-    return invoke<void>("confirm_skill_update", { skillId, forceOverwrite, allowPartialScan });
+    return safeInvoke(invoke<void>("confirm_skill_update", { skillId, forceOverwrite, allowPartialScan }));
   },
 
   async cancelSkillUpdate(skillId: string): Promise<void> {
-    return invoke<void>("cancel_skill_update", { skillId });
+    return safeInvoke(invoke<void>("cancel_skill_update", { skillId }));
   },
 
   // 自动扫描未扫描的仓库（首次启动）
   async autoScanUnscannedRepositories(): Promise<string[]> {
-    return invoke<string[]>("auto_scan_unscanned_repositories");
+    return safeInvoke(invoke<string[]>("auto_scan_unscanned_repositories"));
   },
 
   // Plugin APIs
   async getPlugins(locale?: string): Promise<Plugin[]> {
-    return invoke<Plugin[]>("get_plugins", { locale: locale || null });
+    return safeInvoke(invoke<Plugin[]>("get_plugins", { locale: locale || null }));
   },
 
   async syncFeaturedMarketplacePlugins(locale: string): Promise<Plugin[]> {
-    return invoke<Plugin[]>("sync_featured_marketplace_plugins", { locale });
+    return safeInvoke(invoke<Plugin[]>("sync_featured_marketplace_plugins", { locale }));
   },
 
   async preparePluginInstallation(pluginId: string, locale: string): Promise<SecurityReport> {
-    return invoke<SecurityReport>("prepare_plugin_installation", { pluginId, locale });
+    return safeInvoke(invoke<SecurityReport>("prepare_plugin_installation", { pluginId, locale }));
   },
 
   async confirmPluginInstallation(
     pluginId: string,
     claudeCommand?: string
   ): Promise<PluginInstallResult> {
-    return invoke<PluginInstallResult>("confirm_plugin_installation", {
+    return safeInvoke(invoke<PluginInstallResult>("confirm_plugin_installation", {
       pluginId,
       claudeCommand: claudeCommand || null,
-    });
+    }));
   },
 
   async cancelPluginInstallation(pluginId: string): Promise<void> {
-    return invoke<void>("cancel_plugin_installation", { pluginId });
+    return safeInvoke(invoke<void>("cancel_plugin_installation", { pluginId }));
   },
 
   async uninstallPlugin(pluginId: string, claudeCommand?: string): Promise<PluginUninstallResult> {
-    return invoke<PluginUninstallResult>("uninstall_plugin", {
+    return safeInvoke(invoke<PluginUninstallResult>("uninstall_plugin", {
       pluginId,
       claudeCommand: claudeCommand || null,
-    });
+    }));
   },
 
   async removeMarketplace(
@@ -243,47 +244,47 @@ export const api = {
     marketplaceRepo: string,
     claudeCommand?: string
   ): Promise<MarketplaceRemoveResult> {
-    return invoke<MarketplaceRemoveResult>("remove_marketplace", {
+    return safeInvoke(invoke<MarketplaceRemoveResult>("remove_marketplace", {
       marketplaceName,
       marketplaceRepo,
       claudeCommand: claudeCommand || null,
-    });
+    }));
   },
 
   async getClaudeMarketplaces(claudeCommand?: string): Promise<ClaudeMarketplace[]> {
-    return invoke<ClaudeMarketplace[]>("get_claude_marketplaces", { claudeCommand: claudeCommand || null });
+    return safeInvoke(invoke<ClaudeMarketplace[]>("get_claude_marketplaces", { claudeCommand: claudeCommand || null }));
   },
 
   async getPluginsCached(): Promise<Plugin[]> {
-    return invoke<Plugin[]>("get_plugins_cached");
+    return safeInvoke(invoke<Plugin[]>("get_plugins_cached"));
   },
 
   async checkPluginsUpdates(claudeCommand?: string): Promise<Array<[string, string]>> {
-    return invoke<Array<[string, string]>>("check_plugins_updates", { claudeCommand: claudeCommand || null });
+    return safeInvoke(invoke<Array<[string, string]>>("check_plugins_updates", { claudeCommand: claudeCommand || null }));
   },
 
   async updatePlugin(pluginId: string, claudeCommand?: string): Promise<PluginUpdateResult> {
-    return invoke<PluginUpdateResult>("update_plugin", { pluginId, claudeCommand: claudeCommand || null });
+    return safeInvoke(invoke<PluginUpdateResult>("update_plugin", { pluginId, claudeCommand: claudeCommand || null }));
   },
 
   async checkMarketplacesUpdates(claudeCommand?: string): Promise<Array<[string, string]>> {
-    return invoke<Array<[string, string]>>("check_marketplaces_updates", { claudeCommand: claudeCommand || null });
+    return safeInvoke(invoke<Array<[string, string]>>("check_marketplaces_updates", { claudeCommand: claudeCommand || null }));
   },
 
   async updateMarketplace(
     marketplaceName: string,
     claudeCommand?: string
   ): Promise<MarketplaceUpdateResult> {
-    return invoke<MarketplaceUpdateResult>("update_marketplace", {
+    return safeInvoke(invoke<MarketplaceUpdateResult>("update_marketplace", {
       marketplaceName,
       claudeCommand: claudeCommand || null,
-    });
+    }));
   },
 
   async getSkillPluginUpgradeCandidates(
     claudeCommand?: string
   ): Promise<SkillPluginUpgradeCandidate[]> {
-    return invoke<SkillPluginUpgradeCandidate[]>("get_skill_plugin_upgrade_candidates", { claudeCommand: claudeCommand || null });
+    return safeInvoke(invoke<SkillPluginUpgradeCandidate[]>("get_skill_plugin_upgrade_candidates", { claudeCommand: claudeCommand || null }));
   },
 
   async scanAllInstalledPlugins(
@@ -291,11 +292,11 @@ export const api = {
     claudeCommand?: string,
     scanParallelism?: number
   ): Promise<string[]> {
-    return invoke<string[]>("scan_all_installed_plugins", {
+    return safeInvoke(invoke<string[]>("scan_all_installed_plugins", {
       locale,
       claudeCommand: claudeCommand || null,
       scanParallelism: scanParallelism ?? null,
-    });
+    }));
   },
 
   async scanInstalledSkill(
@@ -303,7 +304,7 @@ export const api = {
     locale: string,
     scanId?: string
   ): Promise<SkillScanResult> {
-    return invoke<SkillScanResult>("scan_installed_skill", { skillId, locale, scanId: scanId || null });
+    return safeInvoke(invoke<SkillScanResult>("scan_installed_skill", { skillId, locale, scanId: scanId || null }));
   },
 
   async scanInstalledPlugin(
@@ -313,63 +314,63 @@ export const api = {
     scanId?: string,
     skipSync?: boolean
   ): Promise<string> {
-    return invoke<string>("scan_installed_plugin", {
+    return safeInvoke(invoke<string>("scan_installed_plugin", {
       pluginId,
       locale,
       claudeCommand: claudeCommand || null,
       scanId: scanId || null,
       skipSync: skipSync ?? null,
-    });
+    }));
   },
 
   async countScanFiles(dirPath: string, skipReadme = true): Promise<number> {
-    return invoke<number>("count_scan_files", { dirPath, skipReadme });
+    return safeInvoke(invoke<number>("count_scan_files", { dirPath, skipReadme }));
   },
 
   // Reset
   async resetAppData(): Promise<void> {
-    return invoke<void>("reset_app_data");
+    return safeInvoke(invoke<void>("reset_app_data"));
   },
 
   // Agent Tools
   async listAgentTools(): Promise<AgentToolInfo[]> {
-    return invoke<AgentToolInfo[]>("list_agent_tools");
+    return safeInvoke(invoke<AgentToolInfo[]>("list_agent_tools"));
   },
 
   async syncSkillToTools(skillId: string, tools: string[]): Promise<void> {
-    return invoke<void>("sync_skill_to_tools", { skillId, tools });
+    return safeInvoke(invoke<void>("sync_skill_to_tools", { skillId, tools }));
   },
 
   async syncAllSkillsToTools(tools: string[]): Promise<void> {
-    return invoke<void>("sync_all_skills_to_tools", { tools });
+    return safeInvoke(invoke<void>("sync_all_skills_to_tools", { tools }));
   },
 
   // 本地 CLI 管理
   async listLocalCliTools(): Promise<LocalCliTool[]> {
-    return invoke<LocalCliTool[]>("list_local_cli_tools");
+    return safeInvoke(invoke<LocalCliTool[]>("list_local_cli_tools"));
   },
 
   async checkLocalCliUpdates(): Promise<LocalCliTool[]> {
-    return invoke<LocalCliTool[]>("check_local_cli_updates");
+    return safeInvoke(invoke<LocalCliTool[]>("check_local_cli_updates"));
   },
 
   async rescanLocalCliTools(): Promise<LocalCliTool[]> {
-    return invoke<LocalCliTool[]>("rescan_local_cli_tools");
+    return safeInvoke(invoke<LocalCliTool[]>("rescan_local_cli_tools"));
   },
 
   async updateLocalCliTool(toolPath: string): Promise<string> {
-    return invoke<string>("update_local_cli_tool", { toolPath });
+    return safeInvoke(invoke<string>("update_local_cli_tool", { toolPath }));
   },
 
   async uninstallLocalCliTool(toolPath: string): Promise<string> {
-    return invoke<string>("uninstall_local_cli_tool", { toolPath });
+    return safeInvoke(invoke<string>("uninstall_local_cli_tool", { toolPath }));
   },
 
   async openLocalCliFolder(toolPath: string): Promise<void> {
-    return invoke<void>("open_local_cli_folder", { toolPath });
+    return safeInvoke(invoke<void>("open_local_cli_folder", { toolPath }));
   },
 
   async fetchLocalCliDescriptions(toolPaths: string[]): Promise<Array<[string, string]>> {
-    return invoke<Array<[string, string]>>("fetch_local_cli_descriptions", { toolPaths });
+    return safeInvoke(invoke<Array<[string, string]>>("fetch_local_cli_descriptions", { toolPaths }));
   },
 };

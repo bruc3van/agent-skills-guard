@@ -108,12 +108,9 @@ fn load_merged_builtin_rules() -> Vec<CompiledYamlRule> {
     rules
 }
 
-lazy_static::lazy_static! {
-    /// 内置编译后的规则包（core + Cisco parity）
-    static ref BUILTIN_COMPILED_RULES: Vec<CompiledYamlRule> = {
-        load_merged_builtin_rules()
-    };
-}
+/// 内置编译后的规则包（core + Cisco parity）
+static BUILTIN_COMPILED_RULES: std::sync::LazyLock<Vec<CompiledYamlRule>> =
+    std::sync::LazyLock::new(load_merged_builtin_rules);
 
 /// 获取内置编译后的规则包
 pub fn get_builtin_compiled_rules() -> &'static Vec<CompiledYamlRule> {

@@ -7,8 +7,9 @@
 //! - `check_manifest_consistency`: manifest 元数据与代码行为一致性
 //! - `check_description_quality`: description 泛化/质量检查
 
-use lazy_static::lazy_static;
+use lazy_regex::{lazy_regex, Lazy};
 use regex::Regex;
+use std::sync::LazyLock;
 
 use crate::models::security::{Finding, FindingKind, IssueSeverity, ThreatCategory};
 use crate::security::finding_builder::{self, FindingSpec};
@@ -20,83 +21,97 @@ const ANALYZER_NAME: &str = "consistency_checker";
 
 // ── 正则表达式 ──
 
-lazy_static! {
-    // Read 能力模式
-    static ref RE_READ: Vec<Regex> = vec![
-        Regex::new(r#"open\(.*['"]r"#).unwrap(),
-        Regex::new(r"\.read\(\)").unwrap(),
-        Regex::new(r"\.read_text\(").unwrap(),
-        Regex::new(r"\.read_bytes\(").unwrap(),
-    ];
+// Read 能力模式
+static RE_READ: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r#"open\(.*['"]r"#).expect("RE_READ"),
+        Regex::new(r"\.read\(\)").expect("RE_READ"),
+        Regex::new(r"\.read_text\(").expect("RE_READ"),
+        Regex::new(r"\.read_bytes\(").expect("RE_READ"),
+    ]
+});
 
-    // Write 能力模式
-    static ref RE_WRITE: Vec<Regex> = vec![
-        Regex::new(r#"open\(.*['"]w"#).unwrap(),
-        Regex::new(r"\.write\(").unwrap(),
-        Regex::new(r"\.writelines\(").unwrap(),
-        Regex::new(r"\.write_text\(").unwrap(),
-        Regex::new(r"\.write_bytes\(").unwrap(),
-    ];
+// Write 能力模式
+static RE_WRITE: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r#"open\(.*['"]w"#).expect("RE_WRITE"),
+        Regex::new(r"\.write\(").expect("RE_WRITE"),
+        Regex::new(r"\.writelines\(").expect("RE_WRITE"),
+        Regex::new(r"\.write_text\(").expect("RE_WRITE"),
+        Regex::new(r"\.write_bytes\(").expect("RE_WRITE"),
+    ]
+});
 
-    // Bash/进程执行能力模式（Python + shell 脚本）
-    static ref RE_BASH: Vec<Regex> = vec![
-        Regex::new(r"subprocess\.(run|call|Popen)").unwrap(),
-        Regex::new(r"os\.system").unwrap(),
-        Regex::new(r"shell\s*=\s*True").unwrap(),
-        Regex::new(r"os\.popen").unwrap(),
-        Regex::new(r"(?i)\bbash\b").unwrap(),
-        Regex::new(r"(?i)\bsh\s+-c\b").unwrap(),
-        Regex::new(r"(?i)\b(?:/bin/)?sh\b\s+").unwrap(),
-        Regex::new(r"(?i)\bexec\s+").unwrap(),
-        Regex::new(r"(?i)\b(?:pwsh|powershell)\b").unwrap(),
-    ];
+// Bash/进程执行能力模式（Python + shell 脚本）
+static RE_BASH: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r"subprocess\.(run|call|Popen)").expect("RE_BASH"),
+        Regex::new(r"os\.system").expect("RE_BASH"),
+        Regex::new(r"shell\s*=\s*True").expect("RE_BASH"),
+        Regex::new(r"os\.popen").expect("RE_BASH"),
+        Regex::new(r"(?i)\bbash\b").expect("RE_BASH"),
+        Regex::new(r"(?i)\bsh\s+-c\b").expect("RE_BASH"),
+        Regex::new(r"(?i)\b(?:/bin/)?sh\b\s+").expect("RE_BASH"),
+        Regex::new(r"(?i)\bexec\s+").expect("RE_BASH"),
+        Regex::new(r"(?i)\b(?:pwsh|powershell)\b").expect("RE_BASH"),
+    ]
+});
 
-    // Grep/正则能力模式
-    static ref RE_GREP: Vec<Regex> = vec![
-        Regex::new(r"re\.(search|findall|match|finditer|sub)\(").unwrap(),
-        Regex::new(r"\bgrep\b").unwrap(),
-    ];
+// Grep/正则能力模式
+static RE_GREP: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r"re\.(search|findall|match|finditer|sub)\(").expect("RE_GREP"),
+        Regex::new(r"\bgrep\b").expect("RE_GREP"),
+    ]
+});
 
-    // Glob 能力模式
-    static ref RE_GLOB: Vec<Regex> = vec![
-        Regex::new(r"glob\.glob").unwrap(),
-        Regex::new(r"\.rglob\(").unwrap(),
-        Regex::new(r"\.glob\(").unwrap(),
-        Regex::new(r"fnmatch\.").unwrap(),
-    ];
+// Glob 能力模式
+static RE_GLOB: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r"glob\.glob").expect("RE_GLOB"),
+        Regex::new(r"\.rglob\(").expect("RE_GLOB"),
+        Regex::new(r"\.glob\(").expect("RE_GLOB"),
+        Regex::new(r"fnmatch\.").expect("RE_GLOB"),
+    ]
+});
 
-    // Network 能力模式（始终检查，不区分 allowed_tools）
-    static ref RE_NETWORK: Vec<Regex> = vec![
-        Regex::new(r"requests\.(get|post|put|delete)").unwrap(),
-        Regex::new(r"urllib").unwrap(),
-        Regex::new(r"httpx").unwrap(),
-        Regex::new(r"aiohttp").unwrap(),
-        Regex::new(r"socket\.connect").unwrap(),
-    ];
+// Network 能力模式（始终检查，不区分 allowed_tools）
+static RE_NETWORK: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r"requests\.(get|post|put|delete)").expect("RE_NETWORK"),
+        Regex::new(r"urllib").expect("RE_NETWORK"),
+        Regex::new(r"httpx").expect("RE_NETWORK"),
+        Regex::new(r"aiohttp").expect("RE_NETWORK"),
+        Regex::new(r"socket\.connect").expect("RE_NETWORK"),
+    ]
+});
 
-    static ref RE_HTTP_URL: Regex = Regex::new(r#"https?://[^\s"'`]+"#).unwrap();
+static RE_HTTP_URL: Lazy<Regex> = lazy_regex!(r#"https?://[^\s"'`]+"#);
 
-    // 描述泛化模式
-    static ref RE_GENERIC_DESC: Vec<Regex> = vec![
-        Regex::new(r"(?i)^help\s").unwrap(),
-        Regex::new(r"(?i)^assistant$").unwrap(),
-        Regex::new(r"(?i)^helper$").unwrap(),
-        Regex::new(r"(?i)do\s+(anything|everything)").unwrap(),
-        Regex::new(r"(?i)general\s+purpose").unwrap(),
-        Regex::new(r"(?i)universal").unwrap(),
-    ];
+// 描述泛化模式
+static RE_GENERIC_DESC: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r"(?i)^help\s").expect("RE_GENERIC_DESC"),
+        Regex::new(r"(?i)^assistant$").expect("RE_GENERIC_DESC"),
+        Regex::new(r"(?i)^helper$").expect("RE_GENERIC_DESC"),
+        Regex::new(r"(?i)do\s+(anything|everything)").expect("RE_GENERIC_DESC"),
+        Regex::new(r"(?i)general\s+purpose").expect("RE_GENERIC_DESC"),
+        Regex::new(r"(?i)universal").expect("RE_GENERIC_DESC"),
+    ]
+});
 
-    // 简单功能词（用于 SOCIAL_ENG_MISLEADING_DESC）
-    static ref RE_SIMPLE_FEATURE: Vec<Regex> = vec![
-        Regex::new(r"(?i)calculator").unwrap(),
-        Regex::new(r"(?i)format").unwrap(),
-        Regex::new(r"(?i)template").unwrap(),
-        Regex::new(r"(?i)style").unwrap(),
-        Regex::new(r"(?i)lint").unwrap(),
-        Regex::new(r"(?i)converter").unwrap(),
-        Regex::new(r"(?i)parser").unwrap(),
-    ];
-}
+// 简单功能词（用于 SOCIAL_ENG_MISLEADING_DESC）
+static RE_SIMPLE_FEATURE: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r"(?i)calculator").expect("RE_SIMPLE_FEATURE"),
+        Regex::new(r"(?i)format").expect("RE_SIMPLE_FEATURE"),
+        Regex::new(r"(?i)template").expect("RE_SIMPLE_FEATURE"),
+        Regex::new(r"(?i)style").expect("RE_SIMPLE_FEATURE"),
+        Regex::new(r"(?i)lint").expect("RE_SIMPLE_FEATURE"),
+        Regex::new(r"(?i)converter").expect("RE_SIMPLE_FEATURE"),
+        Regex::new(r"(?i)parser").expect("RE_SIMPLE_FEATURE"),
+    ]
+});
 
 // ── 能力名称映射 ──
 
@@ -123,7 +138,7 @@ fn matches_any(content: &str, patterns: &[Regex]) -> bool {
 
 /// 代码是否使用网络（排除仅 localhost 的开发/健康检查流量）
 fn uses_network_excluding_localhost(content: &str) -> bool {
-    if !matches_any(content, &RE_NETWORK) {
+    if !matches_any(content, &*RE_NETWORK) {
         return false;
     }
     for m in RE_HTTP_URL.find_iter(content) {
@@ -188,22 +203,9 @@ fn make_finding(
         _ => ("Consistency violation", ThreatCategory::PolicyViolation),
     };
 
-    // 根据规则类型确定 FindingKind
-    let finding_kind = match rule_id {
-        "ALLOWED_TOOLS_READ_VIOLATION"
-        | "ALLOWED_TOOLS_WRITE_VIOLATION"
-        | "ALLOWED_TOOLS_BASH_VIOLATION"
-        | "ALLOWED_TOOLS_GREP_VIOLATION"
-        | "ALLOWED_TOOLS_GLOB_VIOLATION"
-        | "ALLOWED_TOOLS_NETWORK_USAGE"
-        | "TOOL_ABUSE_UNDECLARED_NETWORK" => FindingKind::Security,
-        "SOCIAL_ENG_MISLEADING_DESC"
-        | "TRIGGER_OVERLY_GENERIC"
-        | "TRIGGER_DESCRIPTION_TOO_SHORT"
-        | "TRIGGER_VAGUE_DESCRIPTION"
-        | "TRIGGER_KEYWORD_BAITING" => FindingKind::Structure,
-        _ => FindingKind::Structure,
-    };
+    // 根据规则类型确定 FindingKind（委托给统一分类方法，避免映射漂移）
+    let finding_kind = FindingKind::classify_by_rule_id(rule_id)
+        .unwrap_or(FindingKind::Structure);
 
     finding_builder::make_finding(FindingSpec {
         rule_id,
@@ -277,38 +279,38 @@ pub fn check_allowed_tools(ctx: &SkillContext) -> Vec<Finding> {
             rule_id: "ALLOWED_TOOLS_READ_VIOLATION",
             severity: IssueSeverity::Medium,
             capability: "Read",
-            patterns: &RE_READ,
+            patterns: &*RE_READ,
         },
         CapabilityCheck {
             rule_id: "ALLOWED_TOOLS_WRITE_VIOLATION",
             severity: IssueSeverity::Medium,
             capability: "Write",
-            patterns: &RE_WRITE,
+            patterns: &*RE_WRITE,
         },
         CapabilityCheck {
             rule_id: "ALLOWED_TOOLS_BASH_VIOLATION",
             severity: IssueSeverity::High,
             capability: "Bash",
-            patterns: &RE_BASH,
+            patterns: &*RE_BASH,
         },
         CapabilityCheck {
             rule_id: "ALLOWED_TOOLS_GREP_VIOLATION",
             severity: IssueSeverity::Low,
             capability: "Grep",
-            patterns: &RE_GREP,
+            patterns: &*RE_GREP,
         },
         CapabilityCheck {
             rule_id: "ALLOWED_TOOLS_GLOB_VIOLATION",
             severity: IssueSeverity::Low,
             capability: "Glob",
-            patterns: &RE_GLOB,
+            patterns: &*RE_GLOB,
         },
         // Network 始终检查（不查看 allowed_tools）
         CapabilityCheck {
             rule_id: "ALLOWED_TOOLS_NETWORK_USAGE",
             severity: IssueSeverity::Medium,
             capability: "Network",
-            patterns: &RE_NETWORK,
+            patterns: &*RE_NETWORK,
         },
     ];
 

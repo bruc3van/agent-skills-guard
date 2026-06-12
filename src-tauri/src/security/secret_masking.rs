@@ -1,39 +1,21 @@
-use lazy_static::lazy_static;
+use lazy_regex::{lazy_regex, Lazy};
 use regex::Regex;
 
-lazy_static! {
-    static ref AWS_KEY_RE: Regex =
-        Regex::new(r"(AKIA|ASIA)[A-Z0-9]{16}").unwrap();
+static AWS_KEY_RE: Lazy<Regex> = lazy_regex!(r"(AKIA|ASIA)[A-Z0-9]{16}");
+static GITHUB_TOKEN_RE: Lazy<Regex> = lazy_regex!(r"(gh[opusr]_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{36,})");
+static PRIVATE_KEY_RE: Lazy<Regex> = lazy_regex!(
+    r"-----BEGIN\s+(?:RSA|OPENSSH|EC|DSA)?\s*PRIVATE KEY-----[\s\S]*?-----END\s+(?:RSA|OPENSSH|EC|DSA)?\s*PRIVATE KEY-----"
+);
+static JWT_RE: Lazy<Regex> = lazy_regex!(r"eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}");
+static DB_CONN_RE: Lazy<Regex> = lazy_regex!(r#"(mongodb|mysql|postgresql|postgres)://[^\s"'\\]{10,}"#);
+static GENERIC_TOKEN_RE: Lazy<Regex> = lazy_regex!(r#"(?:secret|token|key)\s*[=:]\s*["']([a-zA-Z0-9_-]{16,})["']"#);
 
-    static ref GITHUB_TOKEN_RE: Regex =
-        Regex::new(r"(gh[opusr]_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{36,})").unwrap();
+// Stripe key patterns
+static STRIPE_LIVE_KEY_RE: Lazy<Regex> = lazy_regex!(r"sk_live_[a-zA-Z0-9]{24,}");
+static STRIPE_TEST_KEY_RE: Lazy<Regex> = lazy_regex!(r"pk_test_[a-zA-Z0-9]{24,}");
 
-    static ref PRIVATE_KEY_RE: Regex = Regex::new(
-        r"-----BEGIN\s+(?:RSA|OPENSSH|EC|DSA)?\s*PRIVATE KEY-----[\s\S]*?-----END\s+(?:RSA|OPENSSH|EC|DSA)?\s*PRIVATE KEY-----"
-    ).unwrap();
-
-    static ref JWT_RE: Regex =
-        Regex::new(r"eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}").unwrap();
-
-    static ref DB_CONN_RE: Regex = Regex::new(
-        r#"(mongodb|mysql|postgresql|postgres)://[^\s"'\\]{10,}"#
-    ).unwrap();
-
-    static ref GENERIC_TOKEN_RE: Regex = Regex::new(
-        r#"(?:secret|token|key)\s*[=:]\s*["']([a-zA-Z0-9_-]{16,})["']"#
-    ).unwrap();
-
-    // Stripe key patterns
-    static ref STRIPE_LIVE_KEY_RE: Regex =
-        Regex::new(r"sk_live_[a-zA-Z0-9]{24,}").unwrap();
-
-    static ref STRIPE_TEST_KEY_RE: Regex =
-        Regex::new(r"pk_test_[a-zA-Z0-9]{24,}").unwrap();
-
-    // OpenAI key pattern
-    static ref OPENAI_KEY_RE: Regex =
-        Regex::new(r"sk-[a-zA-Z0-9]{20,}T3BlbkFJ[a-zA-Z0-9]{20,}").unwrap();
-}
+// OpenAI key pattern
+static OPENAI_KEY_RE: Lazy<Regex> = lazy_regex!(r"sk-[a-zA-Z0-9]{20,}T3BlbkFJ[a-zA-Z0-9]{20,}");
 
 /// 对代码片段中的 secret 进行脱敏处理，返回新的 String。
 pub fn mask_secrets(snippet: &str) -> String {

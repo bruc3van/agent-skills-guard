@@ -843,13 +843,13 @@ mod tests {
         let mut paths: Vec<_> = ctx
             .files
             .iter()
-            .map(|file| file.relative_path.to_string_lossy().to_string())
+            .map(|file| file.relative_path.to_string_lossy().replace('\\', "/"))
             .collect();
         paths.sort();
 
         assert_eq!(
             paths,
-            vec!["__pycache__\\helper.pyc", "skill.md"],
+            vec!["__pycache__/helper.pyc", "skill.md"],
             "__pycache__ stays visible to structure analyzers while VCS/system metadata is skipped"
         );
     }

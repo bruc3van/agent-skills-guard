@@ -28,7 +28,6 @@ import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
-import { translateError } from "../lib/error-codes";
 import {
   getDisplayedPluginToolIds,
   getDisplayedToolIds,
@@ -1175,7 +1174,7 @@ export function InstalledSkillsPage() {
               onSuccess: () => appToast.success(t("skills.toast.uninstalled")),
               onError: (error: any) =>
                 appToast.error(
-                  `${t("skills.toast.uninstallFailed")}: ${translateError(error?.message || String(error))}`
+                  `${t("skills.toast.uninstallFailed")}: ${error?.message || String(error)}`
                 ),
             }
           );
@@ -1189,7 +1188,7 @@ export function InstalledSkillsPage() {
           } catch (error: any) {
             setPreparingUpdateSkillId(null);
             appToast.error(
-              `${t("skills.toast.updateFailed")}: ${translateError(error?.message || String(error))}`
+              `${t("skills.toast.updateFailed")}: ${error?.message || String(error)}`
             );
           }
         }}
@@ -1276,7 +1275,7 @@ export function InstalledSkillsPage() {
           }
         } catch (error: any) {
           appToast.error(
-            `${t("plugins.toast.uninstallFailed")}: ${translateError(error?.message || String(error))}`
+            `${t("plugins.toast.uninstallFailed")}: ${error?.message || String(error)}`
           );
         } finally {
           setInstalledOps((prev) => ({ ...prev, uninstallingPluginId: null }));
@@ -1735,7 +1734,7 @@ export function InstalledSkillsPage() {
               appToast.success(t("skills.toast.updateSuccess"));
             } catch (error: any) {
               appToast.error(
-                `${t("skills.toast.updateFailed")}: ${translateError(error?.message || String(error))}`
+                `${t("skills.toast.updateFailed")}: ${error?.message || String(error)}`
               );
             } finally {
               setConfirmingUpdateSkillId(null);

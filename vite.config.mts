@@ -30,7 +30,7 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_"],
   test: {
-    exclude: [...configDefaults.exclude, "src-tauri/**"],
+    exclude: [...configDefaults.exclude, "src-tauri/**", "reference/**"],
   },
   build: {
     target: "esnext",
