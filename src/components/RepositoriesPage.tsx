@@ -25,7 +25,7 @@ import { translateError } from "../lib/error-codes";
 import { FeaturedRepositories } from "./FeaturedRepositories";
 import type { FeaturedMarketplacesConfig, Skill } from "../types";
 import type { SecurityReport } from "../types/security";
-import { invoke } from "@tauri-apps/api/core";
+
 import { InstallPathSelector } from "./InstallPathSelector";
 import { addRecentInstallPath } from "@/lib/storage";
 import { formatAppDate, formatAppDateTime } from "@/lib/locale";
@@ -425,7 +425,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
       setPreparingSkillId(skill.id);
       const report = await api.prepareSkillInstallation(skill.id, i18n.language);
       if (prepareGenerationRef.current !== requestId) {
-        void invoke("cancel_skill_installation", { skillId: skill.id }).catch(console.error);
+        void api.cancelSkillInstallation(skill.id).catch(console.error);
         return;
       }
       setPendingSkillInstall({ skill, report });
@@ -489,7 +489,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
       const currentPreparingId = status?.preparingSkillId;
       const shouldCancelPending = pendingSkillId && status?.installingSkillId !== pendingSkillId;
       if (shouldCancelPending) {
-        void invoke("cancel_skill_installation", { skillId: pendingSkillId }).catch(console.error);
+        void api.cancelSkillInstallation(pendingSkillId).catch(console.error);
       }
       queryClient.setQueryData(REPOSITORIES_PAGE_STATUS_KEY, (prev?: RepositoriesPageStatus) =>
         prev && (prev.pendingSkillInstall !== null || prev.preparingSkillId !== null)
@@ -1099,7 +1099,7 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
           const shouldCancel = skillId && installingSkillId !== skillId;
           setPendingSkillInstall(null);
           if (!shouldCancel) return;
-          void invoke("cancel_skill_installation", { skillId }).catch((error: any) => {
+          void api.cancelSkillInstallation(skillId).catch((error: unknown) => {
             console.error("[ERROR] 取消安装失败:", error);
           });
         }}
@@ -1110,15 +1110,15 @@ export function RepositoriesPage({ onNavigateToMarket }: RepositoriesPageProps) 
           setInstallingSkillId(skillId);
           setPendingSkillInstall(null);
           try {
-            await invoke("confirm_skill_installation", {
+            await api.confirmSkillInstallation(
               skillId,
-              installPath: selectedPath,
-              allowPartialScan: Boolean(
+              selectedPath,
+              Boolean(
                 pendingSkillInstall.report?.partial_scan ||
                 pendingSkillInstall.report?.skipped_files?.length
               ),
-              targetTools,
-            });
+              targetTools
+            );
             addRecentInstallPath(selectedPath);
             await queryClient.refetchQueries({ queryKey: ["skills"] });
             await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });

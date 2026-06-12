@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { User, Clock, FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { api } from "@/lib/api";
 import { getRecentInstallPaths } from "@/lib/storage";
 
 interface InstallPathSelectorProps {
@@ -18,7 +18,7 @@ export function InstallPathSelector({ onSelect, defaultPath }: InstallPathSelect
   const [isSelecting, setIsSelecting] = useState(false);
 
   useEffect(() => {
-    invoke<string>("get_default_install_path")
+    api.getDefaultInstallPath()
       .then((path) => {
         setUserPath(path);
         const initial = defaultPath || path;
@@ -40,7 +40,7 @@ export function InstallPathSelector({ onSelect, defaultPath }: InstallPathSelect
   const handleCustomPath = async () => {
     setIsSelecting(true);
     try {
-      const selectedCustomPath = await invoke<string | null>("select_custom_install_path");
+      const selectedCustomPath = await api.selectCustomInstallPath();
       if (selectedCustomPath) {
         setCustomPath(selectedCustomPath);
         handleSelect(selectedCustomPath);

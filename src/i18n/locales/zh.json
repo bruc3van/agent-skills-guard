@@ -805,6 +805,13 @@
       "cancel": "取消",
       "confirm": "卸载",
       "confirming": "卸载中..."
+    },
+    "toast": {
+      "updateSuccess": "{{id}} 更新完成",
+      "updateFailed": "{{id}} 更新失败: {{error}}",
+      "uninstallSuccess": "{{id}} 卸载完成",
+      "uninstallFailed": "{{id}} 卸载失败: {{error}}",
+      "unknownError": "未知错误"
     }
   }
 }

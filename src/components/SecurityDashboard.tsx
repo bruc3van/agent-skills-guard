@@ -1,8 +1,8 @@
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
 import { Search, Loader2, Shield } from "lucide-react";
+import { api } from "@/lib/api";
 import { SecurityDetailDialog } from "./SecurityDetailDialog";
 import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
 import type { SkillScanResult } from "@/types/security";
@@ -36,19 +36,14 @@ export function SecurityDashboard() {
 
   const { data: scanResults = [], isLoading } = useQuery<SkillScanResult[]>({
     queryKey: ["scanResults"],
-    queryFn: async () => {
-      return await invoke("get_scan_results");
-    },
+    queryFn: api.getScanResults,
   });
 
   const handleScan = async () => {
     setIsScanning(true);
     try {
       const scanConcurrency = getScanConcurrency();
-      const results = await invoke<SkillScanResult[]>("scan_all_installed_skills", {
-        locale: i18n.language,
-        scanParallelism: scanConcurrency,
-      });
+      const results = await api.scanAllInstalledSkills(i18n.language, scanConcurrency);
       queryClient.invalidateQueries({ queryKey: ["scanResults"] });
       appToast.banner(t("security.dashboard.scanSuccess", { count: results.length }), {
         tone: "success",

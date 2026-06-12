@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Network, Loader2, FolderOpen } from "lucide-react";
 import type { FC, SVGProps } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { api } from "@/lib/api";
 import { useAgentTools } from "@/lib/agent-tools";
 
 type IconComponent = FC<SVGProps<SVGSVGElement> & { size?: number }>;
@@ -75,7 +75,7 @@ const TOOLS: ToolDef[] = [
 
 async function openToolDir(path: string) {
   try {
-    await invoke("open_skill_directory", { localPath: path });
+    await api.openSkillDirectory(path);
   } catch {
     await openPath(path);
   }

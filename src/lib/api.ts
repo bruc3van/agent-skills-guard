@@ -86,6 +86,32 @@ export const api = {
     });
   },
 
+  async cancelSkillInstallation(skillId: string): Promise<void> {
+    return invoke("cancel_skill_installation", { skillId });
+  },
+
+  async getDefaultInstallPath(): Promise<string> {
+    return invoke("get_default_install_path");
+  },
+
+  async selectCustomInstallPath(): Promise<string | null> {
+    return invoke("select_custom_install_path");
+  },
+
+  async getScanResults(): Promise<SkillScanResult[]> {
+    return invoke("get_scan_results");
+  },
+
+  async scanAllInstalledSkills(
+    locale: string,
+    scanParallelism?: number
+  ): Promise<SkillScanResult[]> {
+    return invoke("scan_all_installed_skills", {
+      locale,
+      scanParallelism: scanParallelism ?? null,
+    });
+  },
+
   async uninstallSkill(skillId: string): Promise<void> {
     return invoke("uninstall_skill", { skillId });
   },

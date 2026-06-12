@@ -160,10 +160,7 @@ impl SecurityScanner {
         }
 
         // Auditability 类：不可审计或扫描覆盖不足
-        if upper.starts_with("ARCHIVE_FILE_DETECTED")
-            || upper.starts_with("ARCHIVE_NESTED_TOO_DEEP")
-            || upper.starts_with("ARCHIVE_CONTAINS_EXECUTABLE")
-            || upper.starts_with("UNANALYZABLE_BINARY")
+        if upper.starts_with("UNANALYZABLE_BINARY")
             || upper.starts_with("OVERSIZED_FILE")
             || upper.starts_with("LOW_ANALYZABILITY")
             || upper.starts_with("STRUCTURE_BINARY_CONTENT")
@@ -2709,12 +2706,13 @@ eval(user_input)
         .unwrap();
 
         let scanner = SecurityScanner::new();
+        let options = ScanOptions::with_policy(policy_with_structure_validation());
         let report = scanner
             .scan_directory_with_options(
                 dir.path().to_str().unwrap(),
                 "test",
                 "en",
-                ScanOptions::default(),
+                options,
                 None,
             )
             .unwrap();
@@ -2730,7 +2728,7 @@ eval(user_input)
             .collect();
         assert!(
             !trigger_issues.is_empty(),
-            "Should detect short description"
+            "Should detect short description when strict_structure_enabled is true"
         );
     }
 

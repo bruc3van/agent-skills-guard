@@ -1,7 +1,6 @@
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
 import { Loader2, CheckCircle, Shield, X } from "lucide-react";
 import type { SkillScanResult } from "@/types/security";
 import type { Plugin, Skill, Repository } from "@/types";
@@ -69,9 +68,7 @@ export function OverviewPage() {
 
   const { data: scanResults = [], isLoading: isScanResultsLoading } = useQuery<SkillScanResult[]>({
     queryKey: ["scanResults"],
-    queryFn: async () => {
-      return await invoke("get_scan_results");
-    },
+    queryFn: api.getScanResults,
   });
 
   const uniqueInstalledSkills = useMemo(() => {
@@ -472,7 +469,7 @@ export function OverviewPage() {
       if (item.kind === "skill") {
         const skill = uniqueInstalledSkills.find((s) => s.id === item.skill_id);
         if (skill?.local_path) {
-          await invoke("open_skill_directory", { localPath: skill.local_path });
+          await api.openSkillDirectory(skill.local_path);
         } else {
           appToast.error(t("skills.folder.skillPathNotFound"), {
             duration: 4000,
@@ -482,7 +479,7 @@ export function OverviewPage() {
         const path = item.local_path;
         if (path) {
           try {
-            await invoke("open_skill_directory", { localPath: path });
+            await api.openSkillDirectory(path);
           } catch {
             await openPath(path);
           }

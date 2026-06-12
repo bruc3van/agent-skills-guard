@@ -7,7 +7,52 @@ on:
   workflow_dispatch:
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust"
+          cache-bin: "false"
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Frontend unit tests
+        run: pnpm test:unit
+
+      - name: Rust unit tests
+        run: cargo test --lib
+        working-directory: src-tauri
+
+      - name: Rule matrix integration tests
+        run: cargo test --test rule_matrix
+        working-directory: src-tauri
+
+      - name: Skill fixture integration tests
+        run: cargo test --test scan_test_skills
+        working-directory: src-tauri
+
   release:
+    needs: test
     permissions:
       contents: write
     strategy:

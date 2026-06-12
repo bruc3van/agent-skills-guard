@@ -126,13 +126,6 @@ credentials:
 finding_output:
   dedupe: true
 
-# 归档文件限制
-archive:
-  max_depth: 3
-  max_total_size_bytes: 104857600  # 100 MiB
-  max_file_count: 500
-  max_compression_ratio: 100.0
-
 # 结构校验
 strict_structure:
   allowed_extensions:

@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { formatRepositoryTag, parseRepositoryOwner } from "../lib/utils";
-import { invoke } from "@tauri-apps/api/core";
 import { api } from "@/lib/api";
 import { addRecentInstallPath, getPluginScanPromptEnabled } from "@/lib/storage";
 import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
@@ -202,7 +201,7 @@ export function MarketplacePage({
       const pendingSkillId = status?.pendingInstall?.skill.id;
       const shouldCancelPending = pendingSkillId && status?.installingSkillId !== pendingSkillId;
       if (shouldCancelPending) {
-        void invoke("cancel_skill_installation", { skillId: pendingSkillId }).catch(console.error);
+        void api.cancelSkillInstallation(pendingSkillId).catch(console.error);
       }
       queryClient.setQueryData(MARKETPLACE_INSTALL_STATUS_KEY, (prev?: MarketplaceInstallStatus) =>
         prev && (prev.pendingInstall !== null || prev.preparingSkillId !== null)
@@ -470,9 +469,7 @@ export function MarketplacePage({
                           i18n.language
                         );
                         if (prepareGenerationRef.current !== requestId) {
-                          void invoke("cancel_skill_installation", {
-                            skillId: entry.item.id,
-                          }).catch(console.error);
+                          void api.cancelSkillInstallation(entry.item.id).catch(console.error);
                           return;
                         }
                         setInstallStatus((prev) => ({
@@ -526,13 +523,7 @@ export function MarketplacePage({
                           ...prev,
                           installingPluginId: entry.item.id,
                         }));
-                        const result = await invoke<PluginInstallResult>(
-                          "confirm_plugin_installation",
-                          {
-                            pluginId: entry.item.id,
-                            claudeCommand: null,
-                          }
-                        );
+                        const result = await api.confirmPluginInstallation(entry.item.id);
                         await queryClient.refetchQueries({ queryKey: ["plugins"] });
                         const hasFailed =
                           result.marketplace_status === "failed" ||
@@ -636,7 +627,7 @@ export function MarketplacePage({
             pendingInstall: null,
           }));
           if (!shouldCancel) return;
-          void invoke("cancel_skill_installation", { skillId }).catch((error: any) => {
+          void api.cancelSkillInstallation(skillId).catch((error: unknown) => {
             console.error("[ERROR] 取消安装失败:", error);
           });
         }}

@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import i18n from "../i18n/config";
 import { api } from "../lib/api";
 import { appToast } from "../lib/toast";
 import type { LocalCliTool } from "../types";
@@ -16,7 +17,7 @@ function errorMessage(error: unknown): string {
       // fall through
     }
   }
-  return "未知错误";
+  return i18n.t("localCli.toast.unknownError");
 }
 
 export function useLocalCliTools(opts: { enabled?: boolean } = {}) {
@@ -60,10 +61,12 @@ export function useUpdateLocalCliTool() {
         );
       });
       qc.invalidateQueries({ queryKey: LOCAL_CLI_QUERY_KEY });
-      appToast.success(`${tool.id} 更新完成`);
+      appToast.success(i18n.t("localCli.toast.updateSuccess", { id: tool.id }));
     },
     onError: (err, tool) => {
-      appToast.error(`${tool.id} 更新失败: ${errorMessage(err)}`);
+      appToast.error(
+        i18n.t("localCli.toast.updateFailed", { id: tool.id, error: errorMessage(err) })
+      );
     },
   });
 }
@@ -78,10 +81,12 @@ export function useUninstallLocalCliTool() {
         return old.filter((t) => t.detected_path !== tool.detected_path);
       });
       qc.invalidateQueries({ queryKey: LOCAL_CLI_QUERY_KEY });
-      appToast.success(`${tool.id} 卸载完成`);
+      appToast.success(i18n.t("localCli.toast.uninstallSuccess", { id: tool.id }));
     },
     onError: (err, tool) => {
-      appToast.error(`${tool.id} 卸载失败: ${errorMessage(err)}`);
+      appToast.error(
+        i18n.t("localCli.toast.uninstallFailed", { id: tool.id, error: errorMessage(err) })
+      );
     },
   });
 }

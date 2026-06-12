@@ -805,6 +805,13 @@
       "cancel": "Cancel",
       "confirm": "Uninstall",
       "confirming": "Uninstalling..."
+    },
+    "toast": {
+      "updateSuccess": "{{id}} updated",
+      "updateFailed": "{{id}} update failed: {{error}}",
+      "uninstallSuccess": "{{id}} uninstalled",
+      "uninstallFailed": "{{id}} uninstall failed: {{error}}",
+      "unknownError": "Unknown error"
     }
   }
 }

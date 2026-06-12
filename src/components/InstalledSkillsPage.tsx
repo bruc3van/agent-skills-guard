@@ -21,7 +21,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
+
 import { openPath } from "@tauri-apps/plugin-opener";
 import { formatRepositoryTag, formatFailurePreview } from "../lib/utils";
 import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
@@ -2280,7 +2280,7 @@ function SkillCard({
                       onClick={async () => {
                         try {
                           try {
-                            await invoke("open_skill_directory", { localPath: path });
+                            await api.openSkillDirectory(path);
                           } catch {
                             await openPath(path);
                           }
@@ -2451,7 +2451,7 @@ function InstalledPluginCard({
                 onClick={async () => {
                   try {
                     try {
-                      await invoke("open_skill_directory", { localPath: installPath });
+                      await api.openSkillDirectory(installPath);
                     } catch {
                       await openPath(installPath);
                     }

@@ -57,9 +57,6 @@ pub struct ScanPolicy {
     /// Finding 输出
     #[serde(default)]
     pub finding_output: FindingOutputPolicy,
-    /// 归档文件限制
-    #[serde(default)]
-    pub archive: ArchivePolicy,
     /// 结构校验
     #[serde(default)]
     pub strict_structure: StrictStructurePolicy,
@@ -194,34 +191,6 @@ impl Default for FindingOutputPolicy {
     }
 }
 
-/// 归档文件策略
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArchivePolicy {
-    /// 最大嵌套深度
-    #[serde(default = "default_archive_max_depth")]
-    pub max_depth: usize,
-    /// 最大解压总大小（字节）
-    #[serde(default = "default_archive_max_total_size_bytes")]
-    pub max_total_size_bytes: u64,
-    /// 最大解压文件数
-    #[serde(default = "default_archive_max_file_count")]
-    pub max_file_count: usize,
-    /// 最大压缩比（超过视为 zip bomb）
-    #[serde(default = "default_archive_max_compression_ratio")]
-    pub max_compression_ratio: f64,
-}
-
-impl Default for ArchivePolicy {
-    fn default() -> Self {
-        Self {
-            max_depth: default_archive_max_depth(),
-            max_total_size_bytes: default_archive_max_total_size_bytes(),
-            max_file_count: default_archive_max_file_count(),
-            max_compression_ratio: default_archive_max_compression_ratio(),
-        }
-    }
-}
-
 /// 结构校验策略
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StrictStructurePolicy {
@@ -281,18 +250,6 @@ fn default_max_scan_file_size_bytes() -> u64 {
 }
 fn default_true() -> bool {
     true
-}
-fn default_archive_max_depth() -> usize {
-    3
-}
-fn default_archive_max_total_size_bytes() -> u64 {
-    100 * 1024 * 1024 // 100 MiB
-}
-fn default_archive_max_file_count() -> usize {
-    500
-}
-fn default_archive_max_compression_ratio() -> f64 {
-    20.0 // 行业标准：10:1 到 20:1 为合理上限
 }
 fn default_min_description_length() -> usize {
     10

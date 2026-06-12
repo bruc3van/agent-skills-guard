@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import "../i18n/config";
 import { LOCAL_CLI_QUERY_KEY, useRescanLocalCliTools, useUpdateLocalCliTool } from "./useLocalCli";
 
 const mocks = vi.hoisted(() => ({
