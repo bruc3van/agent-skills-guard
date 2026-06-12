@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -219,6 +219,96 @@ describe("LocalCliPage", () => {
     rerender(<LocalCliPage />);
 
     expect(screen.queryByText("localCli.busy.fetchingDesc")).toBeNull();
+  });
+
+  it("卸载后停止继续获取后续说明", async () => {
+    mockTools = [
+      {
+        id: "first-cli",
+        detected_path: "/home/u/.local/bin/first-cli",
+        manager: "pip",
+        current_version: "1.0.0",
+        update_available: false,
+      },
+      {
+        id: "second-cli",
+        detected_path: "/home/u/.local/bin/second-cli",
+        manager: "pip",
+        current_version: "1.0.0",
+        update_available: false,
+      },
+    ];
+
+    let resolveFirst: (value: Array<[string, string]>) => void = () => {};
+    fetchLocalCliDescriptions.mockImplementation(
+      () =>
+        new Promise<Array<[string, string]>>((resolve) => {
+          resolveFirst = resolve;
+        })
+    );
+
+    const { LocalCliPage } = await import("./LocalCliPage");
+    const { unmount } = render(<LocalCliPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(fetchLocalCliDescriptions).toHaveBeenCalledWith(["/home/u/.local/bin/first-cli"]);
+    });
+
+    unmount();
+
+    await act(async () => {
+      resolveFirst([["/home/u/.local/bin/first-cli", "First CLI"]]);
+    });
+
+    expect(fetchLocalCliDescriptions).toHaveBeenCalledTimes(1);
+    expect(refetchLocalCliTools).not.toHaveBeenCalled();
+  });
+
+  it("列表变化取消获取后忽略旧说明结果", async () => {
+    mockTools = [
+      {
+        id: "first-cli",
+        detected_path: "/home/u/.local/bin/first-cli",
+        manager: "pip",
+        current_version: "1.0.0",
+        update_available: false,
+      },
+    ];
+
+    let resolveFirst: (value: Array<[string, string]>) => void = () => {};
+    fetchLocalCliDescriptions.mockImplementation(
+      () =>
+        new Promise<Array<[string, string]>>((resolve) => {
+          resolveFirst = resolve;
+        })
+    );
+
+    const { LocalCliPage } = await import("./LocalCliPage");
+    const { rerender } = render(<LocalCliPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(fetchLocalCliDescriptions).toHaveBeenCalledWith(["/home/u/.local/bin/first-cli"]);
+    });
+
+    mockTools = [];
+    rerender(<LocalCliPage />);
+
+    await act(async () => {
+      resolveFirst([["/home/u/.local/bin/first-cli", "Stale CLI description"]]);
+    });
+
+    mockTools = [
+      {
+        id: "first-cli",
+        detected_path: "/home/u/.local/bin/first-cli",
+        manager: "pip",
+        current_version: "1.0.0",
+        update_available: false,
+      },
+    ];
+    rerender(<LocalCliPage />);
+
+    expect(screen.queryByText("Stale CLI description")).toBeNull();
   });
 
   it("点击重新扫描会触发强制刷新并允许重试说明获取", async () => {

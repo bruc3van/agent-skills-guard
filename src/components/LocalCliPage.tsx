@@ -105,21 +105,22 @@ export function LocalCliPage() {
       setFetchProgress({ current: tool.id, done: index, total });
       try {
         const results = await api.fetchLocalCliDescriptions([tool.detected_path]);
+        if (cancelled) return;
         if (results.length > 0) {
           const [, desc] = results[0];
           setDescriptionMap((prev) => ({ ...prev, [tool.detected_path]: desc }));
         }
       } catch {
+        if (cancelled) return;
         // skip failed tool
       }
+      if (cancelled) return;
       void fetchNext(index + 1);
     };
 
     void fetchNext(0);
     return () => {
       cancelled = true;
-      setIsFetchingDesc(false);
-      setFetchProgress(null);
     };
   }, [tools, isLoading, refetch, descriptionRetryToken]);
 
