@@ -6,7 +6,7 @@
 
 ### Making Claude Code Skills Management as Simple and Secure as an App Store
 
-[![Version](https://img.shields.io/badge/version-1.3.1-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
+[![Version](https://img.shields.io/badge/version-1.3.2-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 
@@ -205,7 +205,7 @@ All-new multi-layer scanning pipeline engine. From file traversal to final repor
 
 1. **Policy Loading** — Load ScanPolicy configuration
 2. **SkillContext Construction** — Unified context object, one-pass file classification, frontmatter parsing, reference extraction
-3. **Strict Structure Validation** — 15 directory/file structure checks (optional)
+3. **Strict Structure Validation** — 17 directory/file structure checks (optional)
 4. **Per-File Scanning** — File type disguise detection → Unicode deception detection → Asset contamination detection → YAML rule matching
 5. **Context-Level Analysis** — Consistency validation → Multi-step attack chain detection → Analyzability assessment
 6. **Post-Processing** — Finding deduplication + Geometric decay scoring
@@ -236,14 +236,14 @@ Assume the following risks are detected:
 
 | Risk Item                   | Weight | Description                         |
 | --------------------------- | ------ | ----------------------------------- |
-| `rm -rf /` (hard trigger) | 100    | Installation prohibited directly    |
-| `curl \| bash`             | 90     | Deduct 90 points                    |
-| `eval()`                  | 6      | Deduct 6 points                     |
-| `os.system()`             | 6      | Deduct 6 points                     |
-| Hardcoded API Key           | 60     | Deduct 60 points                    |
-| **Total Score**       | -      | 100 - 90 - 6 - 6 - 60 =**-0** |
+| `rm -rf /` (hard trigger) | 100    | Directly blocks installation, score capped at 29 |
+| `curl \| bash`             | 90     | Deduct 90 points by weight          |
+| `eval()`                  | 6      | Deduct 6 points by weight           |
+| `os.system()`             | 6      | Deduct 6 points by weight           |
+| Hardcoded API Key           | 60     | Deduct 60 points by weight          |
 
-Due to the presence of hard-trigger rules, installation is directly blocked.
+> **Calculation**: 100 - 90 - 6 - 6 - 60 = -62 → floored to 0
+> Due to the presence of hard-trigger rules, the score is capped at 29 (Critical), directly blocking installation.
 
 #### Scoring Levels
 
@@ -294,7 +294,7 @@ Traditional single-line regex matching cannot detect combined attacks spanning m
 Three-layer Unicode security detection to prevent malicious code hiding through special characters:
 
 - **Homoglyph Attacks** — Detect ~90 Unicode characters (Cyrillic/Greek/Math) disguised as Latin letters
-- **Zero-Width Character Steganography** — Detect 13 zero-width/invisible character types (ZWSP, ZWNJ, ZWJ, BOM, Word Joiner, Soft Hyphen, Variation Selectors, etc.)
+- **Zero-Width Character Steganography** — Detect 14 zero-width/invisible character types (ZWSP, ZWNJ, ZWJ, BOM, Word Joiner, Soft Hyphen, Variation Selectors, etc.)
 - **Invisible Control Characters** — Detect C0 control characters, DEL, C1 control characters
 
 ### Cross-Skill Coordinated Attack Detection

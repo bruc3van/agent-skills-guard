@@ -6,7 +6,7 @@
 
 ### 让 Claude Code 技能管理像应用商店一样简单安全
 
-[![Version](https://img.shields.io/badge/version-1.3.1-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
+[![Version](https://img.shields.io/badge/version-1.3.2-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 
@@ -206,7 +206,7 @@
 
 1. **策略加载** — 加载 ScanPolicy 配置
 2. **SkillContext 构建** — 统一上下文对象，一次遍历完成文件分类、frontmatter 解析、引用提取
-3. **严格结构校验** — 15 项目录/文件结构检查（可选）
+3. **严格结构校验** — 17 项目录/文件结构检查（可选）
 4. **逐文件扫描** — 文件类型伪装检测 → Unicode 欺骗检测 → 资产污染检测 → YAML 规则匹配
 5. **上下文级分析** — 一致性校验 → 多步攻击链检测 → 可分析性评估
 6. **后处理** — Finding 去重 + 几何衰减评分
@@ -237,14 +237,14 @@
 
 | 风险项                 | 权重 | 说明                               |
 | ---------------------- | ---- | ---------------------------------- |
-| `rm -rf /`（硬触发） | 100  | 直接禁止安装                       |
-| `curl \| bash`        | 90   | 扣 90 分                           |
-| `eval()`             | 6    | 扣 6 分                            |
-| `os.system()`        | 6    | 扣 6 分                            |
-| 硬编码 API Key         | 60   | 扣 60 分                           |
-| **总分**         | -    | 100 - 90 - 6 - 6 - 60 =**0** |
+| `rm -rf /`（硬触发） | 100  | 直接阻止安装，评分封顶 29 分       |
+| `curl \| bash`        | 90   | 按权重扣 90 分                     |
+| `eval()`             | 6    | 按权重扣 6 分                      |
+| `os.system()`        | 6    | 按权重扣 6 分                      |
+| 硬编码 API Key         | 60   | 按权重扣 60 分                     |
 
-由于存在硬触发规则，直接阻止安装。
+> **计算过程**：100 - 90 - 6 - 6 - 60 = -62 → 下限为 0
+> 由于存在硬触发规则，评分封顶为 29 分（严重风险），直接阻止安装。
 
 #### 评分等级
 
@@ -295,7 +295,7 @@
 三层 Unicode 安全检测，防止通过特殊字符隐藏恶意代码：
 
 - **同形字攻击** — 检测 Cyrillic/Greek/Math 等 ~90 个 Unicode 字符伪装为拉丁字母
-- **零宽字符隐写** — 检测 13 种零宽/不可见字符类型（ZWSP、ZWNJ、ZWJ、BOM、Word Joiner、Soft Hyphen、Variation Selectors 等）
+- **零宽字符隐写** — 检测 14 种零宽/不可见字符类型（ZWSP、ZWNJ、ZWJ、BOM、Word Joiner、Soft Hyphen、Variation Selectors 等）
 - **不可见控制字符** — 检测 C0 控制字符、DEL、C1 控制字符
 
 ### 跨 Skill 协同攻击检测
