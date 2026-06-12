@@ -23,7 +23,7 @@ export function LanguageSwitcher() {
     <button
       onClick={toggleLanguage}
       className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all border border-border hover:border-primary/50 hover:bg-primary/5"
-      title="Switch Language / 切换语言"
+      title={t("language.switchTitle")}
     >
       <Languages className="w-4 h-4 text-muted-foreground" />
       <span className="font-medium">

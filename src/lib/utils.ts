@@ -1,3 +1,5 @@
+import i18next from "i18next";
+
 type RepositoryTagged = {
   repository_owner?: string;
   repository_url: string;
@@ -7,11 +9,11 @@ type RepositoryTagged = {
  * 从 repository_url 解析仓库所有者
  */
 export function parseRepositoryOwner(repositoryUrl: string): string {
-  if (repositoryUrl === "local") return "本地";
+  if (repositoryUrl === "local") return i18next.t("common.local");
 
   // 解析 GitHub URL: https://github.com/anthropics/skills
   const match = repositoryUrl.match(/github\.com\/([^\/]+)/);
-  return match ? match[1] : "未知";
+  return match ? match[1] : i18next.t("common.unknown");
 }
 
 /**
@@ -19,14 +21,14 @@ export function parseRepositoryOwner(repositoryUrl: string): string {
  */
 export function formatRepositoryTag(entry: RepositoryTagged): string {
   const owner = entry.repository_owner || parseRepositoryOwner(entry.repository_url);
-  return owner === "local" ? "本地" : `@${owner}`;
+  return owner === "local" ? i18next.t("common.local") : `@${owner}`;
 }
 
 /**
  * 获取仓库所有者的显示名称（用于筛选器）
  */
 export function getRepositoryDisplayName(owner: string): string {
-  if (owner === "local") return "本地";
+  if (owner === "local") return i18next.t("common.local");
   return `@${owner}`;
 }
 

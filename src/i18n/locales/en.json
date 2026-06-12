@@ -156,6 +156,8 @@
     "delete": "DELETE",
     "cancel": "Cancel",
     "confirm": "Confirm",
+    "local": "Local",
+    "unknown": "Unknown",
     "pageLoading": "Loading..."
   },
   "error_boundary": {
@@ -551,7 +553,8 @@
   },
   "language": {
     "zh": "中",
-    "en": "EN"
+    "en": "EN",
+    "switchTitle": "Switch Language"
   },
   "security": {
     "dashboard": {

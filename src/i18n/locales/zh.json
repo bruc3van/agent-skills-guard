@@ -156,6 +156,8 @@
     "delete": "删除",
     "cancel": "取消",
     "confirm": "确认",
+    "local": "本地",
+    "unknown": "未知",
     "pageLoading": "加载中..."
   },
   "error_boundary": {
@@ -551,7 +553,8 @@
   },
   "language": {
     "zh": "中",
-    "en": "EN"
+    "en": "EN",
+    "switchTitle": "切换语言"
   },
   "security": {
     "dashboard": {
