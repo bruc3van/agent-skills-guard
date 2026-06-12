@@ -907,14 +907,14 @@ export function InstalledSkillsPage() {
 
   const toolFilterOptions: CyberSelectOption[] = useMemo(() => {
     if (activeTab !== "all" && activeTab !== "skills") return [];
-    const options: CyberSelectOption[] = [{ value: "all", label: "全部工具" }];
+    const options: CyberSelectOption[] = [{ value: "all", label: t("installed_skills.all_tools", "全部工具") }];
     for (const tool of agentTools) {
       if (tool.present || tool.skill_count > 0) {
         options.push({ value: tool.id, label: tool.label });
       }
     }
     return options;
-  }, [activeTab, agentTools]);
+  }, [activeTab, agentTools, t]);
 
   const filteredSkills = useMemo(() => {
     let items = mergedInstalledSkills;
@@ -1207,9 +1207,9 @@ export function InstalledSkillsPage() {
               for (const sid of allSkillIds) {
                 await syncSkillMutation.mutateAsync({ skillId: sid, tools: current });
               }
-              appToast.success("已提升到通用目录");
+              appToast.success(t("installed_skills.promoted_to_universal", "已提升到通用目录"));
             } catch (e: any) {
-              appToast.error(`操作失败: ${e.message || e}`);
+              appToast.error(t("installed_skills.operation_failed", { error: String(e.message || e) }));
             } finally {
               setPendingToggleTarget(null);
             }
@@ -1224,9 +1224,9 @@ export function InstalledSkillsPage() {
             for (const sid of allSkillIds) {
               await syncSkillMutation.mutateAsync({ skillId: sid, tools: newTools });
             }
-            appToast.success(active ? "已移除同步" : "同步成功");
+            appToast.success(active ? t("installed_skills.sync_removed", "已移除同步") : t("installed_skills.sync_success", "同步成功"));
           } catch (e: any) {
-            appToast.error(`操作失败: ${e.message || e}`);
+            appToast.error(t("installed_skills.operation_failed", { error: String(e.message || e) }));
           } finally {
             setPendingToggleTarget(null);
           }
@@ -1357,14 +1357,14 @@ export function InstalledSkillsPage() {
                     onClick={() => setBatchSyncOpen(true)}
                     disabled={syncAllMutation.isPending}
                     className="apple-button-secondary h-10 px-4 flex items-center gap-2 disabled:opacity-50 text-sm"
-                    title="批量同步所有受管 skill 到工具"
+                    title={t("installed_skills.batch_sync_title_attr", "批量同步所有受管 skill 到工具")}
                   >
                     {syncAllMutation.isPending ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
                       <RefreshCw className="w-4 h-4" />
                     )}
-                    批量同步
+                    {t("installed_skills.batch_sync", "批量同步")}
                   </button>
                   <button
                     onClick={checkAllUpdates}
@@ -1929,17 +1929,17 @@ export function InstalledSkillsPage() {
       <ToolSyncDialog
         open={batchSyncOpen}
         onOpenChange={setBatchSyncOpen}
-        title="批量同步所有已安装 Skill"
-        description="将为所有已安装 skill（含本地 skill）在选中工具的目录下创建/更新链接。本地 skill 会先移至通用目录。"
+        title={t("installed_skills.batch_sync_all_title", "批量同步所有已安装 Skill")}
+        description={t("installed_skills.batch_sync_all_desc", "将为所有已安装 skill（含本地 skill）在选中工具的目录下创建/更新链接。本地 skill 会先移至通用目录。")}
         initialSelected={[]}
         loading={syncAllMutation.isPending}
         onConfirm={async (tools) => {
           try {
             await syncAllMutation.mutateAsync(tools);
             setBatchSyncOpen(false);
-            appToast.success("批量同步完成");
+            appToast.success(t("installed_skills.batch_sync_complete", "批量同步完成"));
           } catch (e: any) {
-            appToast.error(`批量同步失败: ${e.message || e}`);
+            appToast.error(t("installed_skills.batch_sync_failed", { error: String(e.message || e) }));
           }
         }}
       />
@@ -2155,7 +2155,7 @@ function SkillCard({
             </span>
             {skill.is_local_only && (
               <span className="text-xs px-2.5 py-1 rounded-full font-medium text-amber-600 bg-amber-500/10">
-                本地
+                {t("installed_skills.local", "本地")}
               </span>
             )}
             {pluginUpgradeCandidate && (
@@ -2267,7 +2267,7 @@ function SkillCard({
         return (
           <div className="pt-4 border-t border-border/60">
             <div className="text-xs font-medium text-blue-500 mb-3">
-              项目安装路径 ({extraPaths.length})
+              {t("installed_skills.project_install_paths", { count: extraPaths.length })}
             </div>
             <div className="space-y-2">
               {extraPaths.map((path, idx) => (

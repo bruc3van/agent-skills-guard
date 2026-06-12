@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo, startTransition } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Loader2, CheckCircle, Shield, X } from "lucide-react";
@@ -45,11 +45,13 @@ export function OverviewPage() {
       itemProgress: { scanned: number; total: number };
     }
   ) => {
-    queryClient.setQueryData(
-      scanStatusQueryKey,
-      (prev?: { isScanning: boolean; itemProgress: { scanned: number; total: number } }) =>
-        updater(prev ?? defaultScanStatus)
-    );
+    startTransition(() => {
+      queryClient.setQueryData(
+        scanStatusQueryKey,
+        (prev?: { isScanning: boolean; itemProgress: { scanned: number; total: number } }) =>
+          updater(prev ?? defaultScanStatus)
+      );
+    });
   };
 
   const { data: installedSkills = [] } = useQuery<Skill[]>({

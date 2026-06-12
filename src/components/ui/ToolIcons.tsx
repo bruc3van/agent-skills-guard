@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Network, Loader2, FolderOpen } from "lucide-react";
 import type { FC, SVGProps } from "react";
+import { useTranslation } from "react-i18next";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { api } from "@/lib/api";
 import { useAgentTools } from "@/lib/agent-tools";
@@ -89,6 +90,7 @@ export function ToolIcons({
   pendingToolId = null,
 }: ToolIconsProps) {
   const [confirmTarget, setConfirmTarget] = useState<ToolDef | null>(null);
+  const { t } = useTranslation();
   const { data: agentTools = [] } = useAgentTools();
   const toolPathMap = new Map(
     agentTools.filter((t) => t.present && t.path).map((t) => [t.id, t.path])
@@ -109,7 +111,7 @@ export function ToolIcons({
   return (
     <>
       <div className="pt-4 border-t border-border/60">
-        <div className="text-xs font-medium text-muted-foreground mb-3">编程工具</div>
+        <div className="text-xs font-medium text-muted-foreground mb-3">{t("tool_icons.programming_tools", "编程工具")}</div>
         <div className="flex flex-wrap gap-2">
           {activeToolIds.includes("agents") ? (
             /* 已在通用目录 — 静态徽章 + 始终显示打开目录按钮 */
@@ -125,7 +127,7 @@ export function ToolIcons({
                 <button
                   type="button"
                   onClick={() => openToolDir(agentsPath)}
-                  title={`打开目录: ${agentsPath}`}
+                  title={t("tool_icons.open_dir", { path: agentsPath })}
                   className="h-full px-1.5 py-1.5 rounded-r-lg border border-emerald-500/50 bg-emerald-500/10 text-emerald-600 hover:text-emerald-700 transition-colors"
                 >
                   <FolderOpen className="w-3 h-3" />
@@ -139,7 +141,7 @@ export function ToolIcons({
                 type="button"
                 onClick={() => !disabled && onToggle("agents", false)}
                 disabled={disabled || pendingToolId === "agents"}
-                title="点击同步到通用目录（~/.agents/skills），原位置替换为链接"
+                title={t("tool_icons.click_sync_to_universal", "点击同步到通用目录（~/.agents/skills），原位置替换为链接")}
                 className={`
                   flex items-center px-2 py-1.5 border transition-all cursor-pointer
                   ${agentsPath ? "rounded-l-lg rounded-r-none border-r-0" : "rounded-lg"}
@@ -157,7 +159,7 @@ export function ToolIcons({
                 <button
                   type="button"
                   onClick={() => openToolDir(agentsPath)}
-                  title={`打开目录: ${agentsPath}`}
+                  title={t("tool_icons.open_dir", { path: agentsPath })}
                   className="h-full px-1.5 py-1.5 rounded-r-lg border border-border/60 opacity-50 hover:opacity-80 transition-colors"
                 >
                   <FolderOpen className="w-3 h-3" />
@@ -182,11 +184,11 @@ export function ToolIcons({
                 title={
                   isLocalOnly
                     ? active
-                      ? `已在 ${tool.label}，点击取消`
-                      : `点击同步到 ${tool.label}（将移至通用目录）`
+                      ? t("tool_icons.active_local_click_cancel", { label: tool.label })
+                      : t("tool_icons.click_sync_to_tool_move", { label: tool.label })
                     : active
-                      ? `已同步到 ${tool.label}，点击取消`
-                      : `点击同步到 ${tool.label}`
+                      ? t("tool_icons.synced_click_cancel", { label: tool.label })
+                      : t("tool_icons.click_sync_to", { label: tool.label })
                 }
                 className={`
                   flex items-center px-2 py-1.5 border transition-all cursor-pointer
@@ -218,7 +220,7 @@ export function ToolIcons({
                 <button
                   type="button"
                   onClick={() => openToolDir(toolPath!)}
-                  title={`打开目录: ${toolPath}`}
+                  title={t("tool_icons.open_dir", { path: toolPath })}
                   className={`h-full px-1.5 py-1.5 rounded-r-lg border transition-colors
                     ${active ? "" : "border-border/60 opacity-50 hover:opacity-80"}`}
                   style={
@@ -246,9 +248,9 @@ export function ToolIcons({
       >
         <AlertDialogContent className="max-w-sm">
           <AlertDialogHeader>
-            <AlertDialogTitle>取消同步</AlertDialogTitle>
+            <AlertDialogTitle>{t("tool_icons.cancel_sync", "取消同步")}</AlertDialogTitle>
             <AlertDialogDescription>
-              将从 {confirmTarget?.label} 移除该 skill 的链接，skill 本身不会被删除。
+              {t("tool_icons.cancel_sync_description", { label: confirmTarget?.label ?? "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -256,7 +258,7 @@ export function ToolIcons({
               className="px-4 py-2 text-sm rounded-md border hover:bg-muted/50 transition-colors"
               onClick={() => setConfirmTarget(null)}
             >
-              取消
+              {t("common.cancel", "取消")}
             </button>
             <button
               className="px-4 py-2 text-sm rounded-md bg-red-500 text-white hover:bg-red-600 transition-colors"
@@ -267,7 +269,7 @@ export function ToolIcons({
                 }
               }}
             >
-              移除同步
+              {t("tool_icons.remove_sync", "移除同步")}
             </button>
           </AlertDialogFooter>
         </AlertDialogContent>

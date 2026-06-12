@@ -26,7 +26,7 @@
 
 ---
 
-## Critical 级别问题（1 个）
+## Critical 级别问题（1 个，已修复）
 
 ### 1. Memory Leak in LocalCliPage
 - **位置**: `src/components/LocalCliPage.tsx:73-124`
@@ -35,7 +35,7 @@
 
 ---
 
-## High 级别问题（23 个）
+## High 级别问题（23 个，已修复）
 
 ### 安全相关（4 个）
 1. Pipeline 分析器的已知安装器域名匹配过于宽松

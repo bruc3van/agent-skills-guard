@@ -70,7 +70,7 @@ export function ToolSyncDialog({
           <label className="flex items-center gap-3 px-3 py-2 rounded-lg bg-muted/50 opacity-70 cursor-not-allowed select-none">
             <input type="checkbox" checked readOnly className="accent-primary" />
             <span className="flex-1 text-sm font-medium">Universal (.agents)</span>
-            <span className="text-xs text-muted-foreground">唯一源</span>
+            <span className="text-xs text-muted-foreground">{t("tool_sync.only_source", "唯一源")}</span>
           </label>
 
           {nonAgentTools.map((tool) => (
@@ -98,7 +98,7 @@ export function ToolSyncDialog({
           ))}
 
           {nonAgentTools.length === 0 && (
-            <p className="text-sm text-muted-foreground text-center py-4">未检测到其他工具目录</p>
+            <p className="text-sm text-muted-foreground text-center py-4">{t("tool_sync.no_other_dirs", "未检测到其他工具目录")}</p>
           )}
         </div>
 

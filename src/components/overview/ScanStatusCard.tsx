@@ -1,3 +1,4 @@
+import React from "react";
 import { useTranslation } from "react-i18next";
 import { CheckCircle, Activity, Clock } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -14,7 +15,7 @@ interface ScanStatusCardProps {
   fileProgress?: { scanned: number; total: number } | null;
 }
 
-export function ScanStatusCard({
+export const ScanStatusCard = React.memo(function ScanStatusCard({
   lastScanTime,
   scannedCount,
   totalCount,
@@ -133,4 +134,4 @@ export function ScanStatusCard({
       </div>
     </div>
   );
-}
+});

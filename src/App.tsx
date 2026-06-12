@@ -408,68 +408,78 @@ function AppContent() {
 
         {/* Content Area - 更大的内边距，更宽敞的感觉 */}
         <main className="flex-1 overflow-hidden">
-          <ErrorBoundary>
             <Suspense fallback={<PageFallback />}>
               {currentTab === "overview" && (
-                <div className="h-full overflow-y-auto">
-                  <div className="p-8 animate-fade-in">
-                    <div className="max-w-6xl mx-auto">
-                      <OverviewPage />
+                <ErrorBoundary>
+                  <div className="h-full overflow-y-auto">
+                    <div className="p-8 animate-fade-in">
+                      <div className="max-w-6xl mx-auto">
+                        <OverviewPage />
+                      </div>
                     </div>
                   </div>
-                </div>
+                </ErrorBoundary>
               )}
               {currentTab === "installed" && (
-                <div className="h-full overflow-hidden">
-                  <InstalledSkillsPage />
-                </div>
+                <ErrorBoundary>
+                  <div className="h-full overflow-hidden">
+                    <InstalledSkillsPage />
+                  </div>
+                </ErrorBoundary>
               )}
               {currentTab === "marketplace" && (
-                <div className="h-full overflow-hidden">
-                  <MarketplacePage
-                    onNavigateToRepositories={() => requestTabChange("repositories")}
-                    onNavigateToOverview={() => requestTabChange("overview")}
-                    presetFilter={marketplacePreset ?? undefined}
-                    onPresetApplied={clearMarketplacePreset}
-                  />
-                </div>
+                <ErrorBoundary>
+                  <div className="h-full overflow-hidden">
+                    <MarketplacePage
+                      onNavigateToRepositories={() => requestTabChange("repositories")}
+                      onNavigateToOverview={() => requestTabChange("overview")}
+                      presetFilter={marketplacePreset ?? undefined}
+                      onPresetApplied={clearMarketplacePreset}
+                    />
+                  </div>
+                </ErrorBoundary>
               )}
               {currentTab === "repositories" && (
-                <div className="h-full overflow-y-auto">
-                  <div className="p-8 animate-fade-in">
-                    <div className="max-w-6xl mx-auto">
-                      <RepositoriesPage
-                        onNavigateToMarket={(options) => {
-                          if (!requestTabChange("marketplace")) return;
-                          setMarketplacePreset(
-                            options?.marketplaceName
-                              ? { marketplaceName: options.marketplaceName }
-                              : null
-                          );
-                        }}
-                      />
+                <ErrorBoundary>
+                  <div className="h-full overflow-y-auto">
+                    <div className="p-8 animate-fade-in">
+                      <div className="max-w-6xl mx-auto">
+                        <RepositoriesPage
+                          onNavigateToMarket={(options) => {
+                            if (!requestTabChange("marketplace")) return;
+                            setMarketplacePreset(
+                              options?.marketplaceName
+                                ? { marketplaceName: options.marketplaceName }
+                                : null
+                            );
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
+                </ErrorBoundary>
               )}
               {currentTab === "settings" && (
-                <div className="h-full overflow-y-auto">
-                  <div className="p-8 animate-fade-in">
-                    <div className="max-w-6xl mx-auto">
-                      <SettingsPage />
+                <ErrorBoundary>
+                  <div className="h-full overflow-y-auto">
+                    <div className="p-8 animate-fade-in">
+                      <div className="max-w-6xl mx-auto">
+                        <SettingsPage />
+                      </div>
                     </div>
                   </div>
-                </div>
+                </ErrorBoundary>
               )}
             </Suspense>
             {/* LocalCliPage 保持挂载，避免切换标签页时丢失状态和重复扫描 */}
-            <div
-              style={{ display: currentTab === "local-cli" ? "block" : "none" }}
-              className="h-full overflow-hidden"
-            >
-              <LocalCliPage />
-            </div>
-          </ErrorBoundary>
+            <ErrorBoundary>
+              <div
+                style={{ display: currentTab === "local-cli" ? "block" : "none" }}
+                className="h-full overflow-hidden"
+              >
+                <LocalCliPage />
+              </div>
+            </ErrorBoundary>
         </main>
       </div>
     </div>

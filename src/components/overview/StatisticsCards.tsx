@@ -1,3 +1,4 @@
+import React from "react";
 import { useTranslation } from "react-i18next";
 import { Package, FolderGit, Plug, Store } from "lucide-react";
 
@@ -36,7 +37,7 @@ const cards = [
   },
 ];
 
-export function StatisticsCards({
+export const StatisticsCards = React.memo(function StatisticsCards({
   installedCount,
   pluginCount,
   marketplaceCount,
@@ -69,4 +70,4 @@ export function StatisticsCards({
       })}
     </div>
   );
-}
+});

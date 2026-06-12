@@ -5,7 +5,7 @@
 
 use super::{RulePack, YamlRule};
 use anyhow::{Context, Result};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use std::collections::HashSet;
 
 /// 编译后的 YAML 规则（正则已编译）
@@ -24,7 +24,12 @@ fn compile_rule_regex(pattern: &str) -> Result<Regex> {
     } else {
         pattern.to_string()
     };
-    Regex::new(&compiled).with_context(|| format!("Invalid regex pattern: {pattern}"))
+    let mut builder = RegexBuilder::new(&compiled);
+    builder.size_limit(10_000_000); // 10MB limit to prevent ReDoS
+    if needs_multiline {
+        builder.multi_line(true);
+    }
+    builder.build().with_context(|| format!("Invalid regex pattern: {pattern}"))
 }
 
 /// 加载并编译规则包

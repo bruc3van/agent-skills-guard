@@ -93,10 +93,10 @@ export function InstallPathSelector({ onSelect, defaultPath }: InstallPathSelect
       {/* 显示已选择的自定义路径 */}
       {customPath && customPath !== userPath && !recentPaths.includes(customPath) && (
         <div className="border-t border-border pt-3 mt-3">
-          <label className="text-xs text-muted-foreground mb-2 block">自定义路径:</label>
+          <label className="text-xs text-muted-foreground mb-2 block">{t("install_path.custom_path_label", "自定义路径")}:</label>
           <PathOption
             icon={<FolderPlus className="w-4 h-4" />}
-            label="自定义"
+            label={t("install_path.custom", "自定义")}
             path={customPath}
             selected={selectedPath === customPath}
             onClick={() => handleSelect(customPath)}

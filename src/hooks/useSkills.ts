@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { appToast } from "../lib/toast";
+import { translateError } from "../lib/error-codes";
 
 export function useSkills() {
   return useQuery({
@@ -33,8 +35,11 @@ export function useInstallSkill() {
       api.installSkill(skillId, installPath, allowPartialScan),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["skills"] });
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
       queryClient.invalidateQueries({ queryKey: ["scanResults"] });
+    },
+    onError: (error: Error) => {
+      console.error('Install skill failed:', error);
+      appToast.error(translateError(error.message));
     },
   });
 }
@@ -46,8 +51,11 @@ export function useUninstallSkill() {
     mutationFn: (skillId: string) => api.uninstallSkill(skillId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["skills"] });
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
       queryClient.invalidateQueries({ queryKey: ["scanResults"] });
+    },
+    onError: (error: Error) => {
+      console.error('Uninstall skill failed:', error);
+      appToast.error(translateError(error.message));
     },
   });
 }
@@ -59,8 +67,11 @@ export function useUninstallSkillPath() {
     mutationFn: ({ skillId, path }) => api.uninstallSkillPath(skillId, path),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["skills"] });
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
       queryClient.invalidateQueries({ queryKey: ["scanResults"] });
+    },
+    onError: (error: Error) => {
+      console.error('Uninstall skill path failed:', error);
+      appToast.error(translateError(error.message));
     },
   });
 }
@@ -72,8 +83,11 @@ export function useDeleteSkill() {
     mutationFn: (skillId: string) => api.deleteSkill(skillId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["skills"] });
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
       queryClient.invalidateQueries({ queryKey: ["scanResults"] });
+    },
+    onError: (error: Error) => {
+      console.error('Delete skill failed:', error);
+      appToast.error(translateError(error.message));
     },
   });
 }

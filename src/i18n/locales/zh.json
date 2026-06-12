@@ -27,7 +27,27 @@
     "REPOSITORY_NOT_FOUND": "未找到对应的仓库记录",
     "INVALID_SKILL_DIR_NAME": "无效的技能目录名",
     "INVALID_SKILL_DIR_PATH": "技能目录路径无效",
-    "CACHE_DIR_UNAVAILABLE": "无法获取系统缓存目录"
+    "CACHE_DIR_UNAVAILABLE": "无法获取系统缓存目录",
+    "GENERIC_ERROR": "操作失败",
+    "SKILL_DIR_NOT_FOUND": "技能目录不存在",
+    "DIR_NOT_FOUND": "目录不存在",
+    "PLUGIN_NOT_FOUND": "未找到该插件",
+    "PLUGIN_NOT_INSTALLED": "插件未安装",
+    "PLUGIN_INSTALL_PATH_MISSING": "插件安装路径不可用",
+    "PLUGIN_DIR_NOT_FOUND": "插件目录不存在",
+    "INVALID_CACHE_PATH": "缓存路径无效",
+    "PATH_RESOLVE_FAILED": "路径解析失败",
+    "PATH_NOT_ALLOWED": "路径不在允许的目录中",
+    "DIR_OPEN_FAILED": "打开目录失败",
+    "HOME_DIR_UNAVAILABLE": "无法获取用户主目录",
+    "DIR_NOT_WRITABLE": "选择的目录不可写，请检查权限",
+    "TOOL_NOT_FOUND": "工具未找到",
+    "TOOL_UPDATE_UNSUPPORTED": "包管理器不支持自动更新",
+    "TOOL_UNINSTALL_UNSUPPORTED": "包管理器不支持自动卸载",
+    "TOOL_DIR_UNAVAILABLE": "无法获取工具安装目录",
+    "TOOL_DIR_NOT_FOUND": "安装目录不存在",
+    "TASK_JOIN_ERROR": "内部任务执行错误",
+    "CLI_COMMAND_FAILED": "命令执行失败"
   },
   "header": {
     "title": "智能体技能管家",
@@ -134,7 +154,15 @@
   },
   "common": {
     "delete": "删除",
+    "cancel": "取消",
+    "confirm": "确认",
     "pageLoading": "加载中..."
+  },
+  "error_boundary": {
+    "title": "出现了一些问题",
+    "message": "页面遇到了意外错误，请尝试刷新或重启应用。",
+    "details": "错误详情",
+    "retry": "重试"
   },
   "scan": {
     "initializing": "初始化技能扫描器...",
@@ -813,5 +841,40 @@
       "uninstallFailed": "{{id}} 卸载失败: {{error}}",
       "unknownError": "未知错误"
     }
+  },
+  "tool_sync": {
+    "only_source": "唯一源",
+    "no_other_dirs": "未检测到其他工具目录"
+  },
+  "tool_icons": {
+    "programming_tools": "编程工具",
+    "open_dir": "打开目录: {{path}}",
+    "click_sync_to_universal": "点击同步到通用目录（~/.agents/skills），原位置替换为链接",
+    "active_local_click_cancel": "已在 {{tool}}，点击取消",
+    "click_sync_to_tool_move": "点击同步到 {{tool}}（从通用目录移动）",
+    "synced_click_cancel": "已同步到 {{tool}}，点击取消",
+    "click_sync_to": "点击同步到 {{tool}}",
+    "cancel_sync": "取消同步",
+    "cancel_sync_description": "将从 {{label}} 移除该 skill 的链接，skill 本身不会被删除。",
+    "remove_sync": "移除同步"
+  },
+  "install_path": {
+    "custom_path_label": "自定义路径:",
+    "custom": "自定义"
+  },
+  "installed_skills": {
+    "all_tools": "全部工具",
+    "batch_sync": "批量同步",
+    "batch_sync_title_attr": "批量同步所有受管 skill 到工具",
+    "batch_sync_all_title": "批量同步所有已安装 Skill",
+    "batch_sync_all_desc": "将为所有已安装 skill（含本地 skill）在选中工具的目录下创建/更新链接。本地 skill 会先移至通用目录。",
+    "batch_sync_complete": "批量同步完成",
+    "batch_sync_failed": "批量同步失败: {{error}}",
+    "local": "本地",
+    "promoted_to_universal": "已提升到通用目录",
+    "sync_removed": "已移除同步",
+    "sync_success": "同步成功",
+    "operation_failed": "操作失败: {{error}}",
+    "project_install_paths": "项目安装路径 ({{count}})"
   }
 }

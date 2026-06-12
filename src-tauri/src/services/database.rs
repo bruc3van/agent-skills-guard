@@ -3,7 +3,7 @@ use crate::models::{Plugin, Repository, Skill};
 use anyhow::{Context, Result};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 /// 反序列化 security_issues JSON，兼容旧格式（Vec<String>）和新格式（Vec<SecurityIssue>）
 fn deserialize_security_issues(json_str: &str) -> Option<Vec<SecurityIssue>> {
@@ -126,8 +126,32 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
     })
 }
 
+/// Wrapper to make `Connection` Sync-safe when guarded by `RwLock`.
+///
+/// Safety: `Connection` is `Send` but not `Sync` due to internal `RefCell`.
+/// We rely on `RwLock` to enforce read/write exclusion at runtime.
+struct SyncConnection(Connection);
+
+// SAFETY: All access to the inner `Connection` goes through `RwLock`, which
+// ensures no concurrent mutable access. The `RefCell` inside `Connection`
+// is only accessed while holding a read or write guard.
+unsafe impl Sync for SyncConnection {}
+
+impl std::ops::Deref for SyncConnection {
+    type Target = Connection;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for SyncConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 pub struct Database {
-    conn: Mutex<Connection>,
+    conn: RwLock<SyncConnection>,
 }
 
 pub struct LocalCliToolRow {
@@ -145,18 +169,26 @@ pub struct LocalCliToolRow {
 }
 
 impl Database {
-    /// 获取数据库连接锁，自动恢复 Mutex 中毒状态
+    /// 获取数据库写锁，自动恢复 RwLock 中毒状态
     /// 线程 panic 持锁时，SQLite 连接可能处于不一致事务状态，
     /// 需要先回滚未提交的事务再继续使用。
-    fn lock_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn.lock().unwrap_or_else(|poisoned| {
-            log::error!("Database mutex was poisoned, attempting safe recovery");
+    fn lock_conn(&self) -> std::sync::RwLockWriteGuard<'_, SyncConnection> {
+        self.conn.write().unwrap_or_else(|poisoned| {
+            log::error!("Database rwlock was poisoned, attempting safe recovery");
             let guard = poisoned.into_inner();
             // 回滚可能残留的未提交事务，防止数据库处于不一致状态
             if let Err(e) = guard.execute_batch("ROLLBACK") {
-                log::error!("Failed to rollback after mutex recovery: {}", e);
+                log::error!("Failed to rollback after rwlock recovery: {}", e);
             }
             guard
+        })
+    }
+
+    /// 获取数据库读锁（用于只读操作）
+    fn lock_conn_read(&self) -> std::sync::RwLockReadGuard<'_, SyncConnection> {
+        self.conn.read().unwrap_or_else(|poisoned| {
+            log::error!("Database rwlock was poisoned (read), attempting safe recovery");
+            poisoned.into_inner()
         })
     }
 
@@ -173,7 +205,7 @@ impl Database {
             .context("Failed to enable foreign keys")?;
 
         let db = Self {
-            conn: Mutex::new(conn),
+            conn: RwLock::new(SyncConnection(conn)),
         };
 
         db.initialize_schema()?;
@@ -184,18 +216,26 @@ impl Database {
     pub fn reset_all_data(&self) -> Result<()> {
         let conn = self.lock_conn();
 
-        conn.execute_batch(
-            r#"
-            PRAGMA foreign_keys=OFF;
-            BEGIN IMMEDIATE;
-            DELETE FROM installations;
-            DELETE FROM plugins;
-            DELETE FROM skills;
-            DELETE FROM repositories;
-            COMMIT;
-            PRAGMA foreign_keys=ON;
-            "#,
-        )?;
+        // Step 1: Disable FK
+        conn.execute_batch("PRAGMA foreign_keys=OFF;")
+            .context("Failed to disable foreign keys")?;
+
+        // Step 2: Execute deletes in a transaction
+        let result = conn.execute_batch(
+            "BEGIN IMMEDIATE;
+             DELETE FROM installations;
+             DELETE FROM plugins;
+             DELETE FROM skills;
+             DELETE FROM repositories;
+             COMMIT;",
+        );
+
+        // Step 3: Always restore FK, even on error
+        if let Err(e) = conn.execute_batch("PRAGMA foreign_keys=ON;") {
+            log::error!("Failed to restore foreign_keys pragma: {}", e);
+        }
+
+        result.context("Failed to reset all data")?;
 
         // 若启用了 WAL，尽量将 WAL 截断，避免残留旧页面
         let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
@@ -210,112 +250,128 @@ impl Database {
     fn initialize_schema(&self) -> Result<()> {
         let conn = self.lock_conn();
 
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS repositories (
-                id TEXT PRIMARY KEY,
-                url TEXT NOT NULL UNIQUE,
-                name TEXT NOT NULL,
-                description TEXT,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                scan_subdirs INTEGER NOT NULL DEFAULT 1,
-                added_at TEXT NOT NULL,
-                last_scanned TEXT
-            )",
-            [],
-        )?;
+        conn.execute_batch("BEGIN IMMEDIATE;")
+            .context("Failed to begin schema transaction")?;
 
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS skills (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                repository_url TEXT NOT NULL,
-                repository_owner TEXT,
-                file_path TEXT NOT NULL,
-                version TEXT,
-                author TEXT,
-                installed INTEGER NOT NULL DEFAULT 0,
-                installed_at TEXT,
-                local_path TEXT,
-                checksum TEXT,
-                security_score INTEGER,
-                security_issues TEXT,
-                security_report TEXT
-            )",
-            [],
-        )?;
+        // 所有 CREATE TABLE 和迁移在同一个事务中执行，保证原子性
+        let result = (|| -> Result<()> {
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS repositories (
+                    id TEXT PRIMARY KEY,
+                    url TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    scan_subdirs INTEGER NOT NULL DEFAULT 1,
+                    added_at TEXT NOT NULL,
+                    last_scanned TEXT
+                )",
+                [],
+            )?;
 
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS plugins (
-                id TEXT PRIMARY KEY,
-                claude_id TEXT,
-                name TEXT NOT NULL,
-                description TEXT,
-                version TEXT,
-                installed_version TEXT,
-                author TEXT,
-                repository_url TEXT NOT NULL,
-                repository_owner TEXT,
-                marketplace_name TEXT NOT NULL,
-                source TEXT NOT NULL,
-                discovery_source TEXT,
-                marketplace_add_command TEXT,
-                plugin_install_command TEXT,
-                installed INTEGER NOT NULL DEFAULT 0,
-                installed_at TEXT,
-                claude_scope TEXT,
-                claude_enabled INTEGER,
-                claude_install_path TEXT,
-                claude_last_updated TEXT,
-                security_score INTEGER,
-                security_issues TEXT,
-                security_level TEXT,
-                security_report TEXT,
-                scanned_at TEXT,
-                staging_path TEXT,
-                install_log TEXT,
-                install_status TEXT
-            )",
-            [],
-        )?;
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS skills (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    repository_url TEXT NOT NULL,
+                    repository_owner TEXT,
+                    file_path TEXT NOT NULL,
+                    version TEXT,
+                    author TEXT,
+                    installed INTEGER NOT NULL DEFAULT 0,
+                    installed_at TEXT,
+                    local_path TEXT,
+                    checksum TEXT,
+                    security_score INTEGER,
+                    security_issues TEXT,
+                    security_report TEXT
+                )",
+                [],
+            )?;
 
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS installations (
-                skill_id TEXT PRIMARY KEY,
-                installed_at TEXT NOT NULL,
-                version TEXT NOT NULL,
-                local_path TEXT NOT NULL,
-                checksum TEXT NOT NULL,
-                FOREIGN KEY(skill_id) REFERENCES skills(id)
-            )",
-            [],
-        )?;
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS plugins (
+                    id TEXT PRIMARY KEY,
+                    claude_id TEXT,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    version TEXT,
+                    installed_version TEXT,
+                    author TEXT,
+                    repository_url TEXT NOT NULL,
+                    repository_owner TEXT,
+                    marketplace_name TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    discovery_source TEXT,
+                    marketplace_add_command TEXT,
+                    plugin_install_command TEXT,
+                    installed INTEGER NOT NULL DEFAULT 0,
+                    installed_at TEXT,
+                    claude_scope TEXT,
+                    claude_enabled INTEGER,
+                    claude_install_path TEXT,
+                    claude_last_updated TEXT,
+                    security_score INTEGER,
+                    security_issues TEXT,
+                    security_level TEXT,
+                    security_report TEXT,
+                    scanned_at TEXT,
+                    staging_path TEXT,
+                    install_log TEXT,
+                    install_status TEXT
+                )",
+                [],
+            )?;
 
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS app_migrations (
-                key TEXT PRIMARY KEY,
-                completed_at TEXT NOT NULL
-            )",
-            [],
-        )?;
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS installations (
+                    skill_id TEXT PRIMARY KEY,
+                    installed_at TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    local_path TEXT NOT NULL,
+                    checksum TEXT NOT NULL,
+                    FOREIGN KEY(skill_id) REFERENCES skills(id)
+                )",
+                [],
+            )?;
 
-        // 释放锁以便调用迁移方法
-        drop(conn);
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS app_migrations (
+                    key TEXT PRIMARY KEY,
+                    completed_at TEXT NOT NULL
+                )",
+                [],
+            )?;
 
-        // 执行数据库迁移
-        self.migrate_add_repository_owner()?;
-        self.migrate_add_cache_fields()?;
-        self.migrate_add_security_enhancement_fields()?;
-        self.migrate_add_local_paths()?;
-        self.migrate_add_installed_commit_sha()?;
-        self.migrate_add_plugin_claude_fields()?;
-        self.migrate_add_plugin_install_commands()?;
-        self.migrate_add_agent_tool_fields()?;
-        self.migrate_add_local_cli_tools()?;
-        self.migrate_local_cli_tools_to_path_key()?;
-        self.migrate_add_staging_path()?;
+            // 执行数据库迁移（在同一个事务中）
+            Self::migrate_add_repository_owner(&conn)?;
+            Self::migrate_add_cache_fields(&conn)?;
+            Self::migrate_add_security_enhancement_fields(&conn)?;
+            Self::migrate_add_local_paths(&conn)?;
+            Self::migrate_add_installed_commit_sha(&conn)?;
+            Self::migrate_add_plugin_claude_fields(&conn)?;
+            Self::migrate_add_plugin_install_commands(&conn)?;
+            Self::migrate_add_agent_tool_fields(&conn)?;
+            Self::migrate_add_local_cli_tools(&conn)?;
+            Self::migrate_local_cli_tools_to_path_key(&conn)?;
+            Self::migrate_add_staging_path(&conn)?;
 
-        Ok(())
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                conn.execute_batch("COMMIT;")
+                    .context("Failed to commit schema transaction")?;
+                drop(conn);
+                Ok(())
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
     }
 
     /// 保存 plugin
@@ -378,9 +434,7 @@ impl Database {
     }
 
     /// 数据库迁移：添加 repository_owner 列
-    fn migrate_add_repository_owner(&self) -> Result<()> {
-        let conn = self.lock_conn();
-
+    fn migrate_add_repository_owner(conn: &Connection) -> Result<()> {
         // 尝试添加列（如果列已存在会失败，这是正常的）
         let _ = conn.execute("ALTER TABLE skills ADD COLUMN repository_owner TEXT", []);
 
@@ -438,7 +492,7 @@ impl Database {
 
     /// 获取所有仓库
     pub fn get_repositories(&self) -> Result<Vec<Repository>> {
-        let conn = self.lock_conn();
+        let conn = self.lock_conn_read();
         let mut stmt = conn.prepare(
             "SELECT id, url, name, description, enabled, scan_subdirs, added_at, last_scanned, cache_path, cached_at, cached_commit_sha
              FROM repositories
@@ -475,7 +529,7 @@ impl Database {
 
     /// 快速检查 URL 是否已添加（使用 EXISTS，不加载全表）
     pub fn repository_url_exists(&self, url: &str) -> Result<bool> {
-        let conn = self.lock_conn();
+        let conn = self.lock_conn_read();
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM repositories WHERE url = ?1)",
             params![url],
@@ -594,7 +648,7 @@ impl Database {
     }
 
     pub fn is_app_migration_completed(&self, key: &str) -> Result<bool> {
-        let conn = self.lock_conn();
+        let conn = self.lock_conn_read();
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM app_migrations WHERE key = ?1",
             params![key],
@@ -614,7 +668,7 @@ impl Database {
 
     /// 获取所有 skills
     pub fn get_skills(&self) -> Result<Vec<Skill>> {
-        let conn = self.lock_conn();
+        let conn = self.lock_conn_read();
         let mut stmt = conn.prepare(
             "SELECT id, name, description, repository_url, repository_owner, file_path, version, author,
                     installed, installed_at, local_path, local_paths, checksum, security_score, security_issues, security_level, security_report, scanned_at, installed_commit_sha,
@@ -684,7 +738,7 @@ impl Database {
 
     /// 获取所有 plugins
     pub fn get_plugins(&self) -> Result<Vec<Plugin>> {
-        let conn = self.lock_conn();
+        let conn = self.lock_conn_read();
         let mut stmt = conn.prepare(
             "SELECT id, claude_id, name, description, version, installed_version, author, repository_url, repository_owner,
                     marketplace_name, source, discovery_source, marketplace_add_command, plugin_install_command,
@@ -825,8 +879,7 @@ impl Database {
     }
 
     /// 数据库迁移：添加缓存相关字段
-    fn migrate_add_cache_fields(&self) -> Result<()> {
-        let conn = self.lock_conn();
+    fn migrate_add_cache_fields(conn: &Connection) -> Result<()> {
 
         // 添加 cache_path 列
         let _ = conn.execute("ALTER TABLE repositories ADD COLUMN cache_path TEXT", []);
@@ -844,8 +897,7 @@ impl Database {
     }
 
     /// 数据库迁移：添加安全扫描增强字段
-    fn migrate_add_security_enhancement_fields(&self) -> Result<()> {
-        let conn = self.lock_conn();
+    fn migrate_add_security_enhancement_fields(conn: &Connection) -> Result<()> {
 
         // 添加 security_level 列
         let _ = conn.execute("ALTER TABLE skills ADD COLUMN security_level TEXT", []);
@@ -863,8 +915,7 @@ impl Database {
     }
 
     /// 数据库迁移：添加 local_paths 列,支持多个安装路径
-    fn migrate_add_local_paths(&self) -> Result<()> {
-        let conn = self.lock_conn();
+    fn migrate_add_local_paths(conn: &Connection) -> Result<()> {
 
         // 添加 local_paths 列（JSON 数组格式）
         let _ = conn.execute("ALTER TABLE skills ADD COLUMN local_paths TEXT", []);
@@ -940,8 +991,7 @@ impl Database {
     }
 
     /// 数据库迁移：添加 installed_commit_sha 列
-    fn migrate_add_installed_commit_sha(&self) -> Result<()> {
-        let conn = self.lock_conn();
+    fn migrate_add_installed_commit_sha(conn: &Connection) -> Result<()> {
 
         // 添加 installed_commit_sha 列
         let _ = conn.execute(
@@ -953,8 +1003,7 @@ impl Database {
     }
 
     /// 数据库迁移：为 plugins 增加 Claude CLI 同步字段
-    fn migrate_add_plugin_claude_fields(&self) -> Result<()> {
-        let conn = self.lock_conn();
+    fn migrate_add_plugin_claude_fields(conn: &Connection) -> Result<()> {
 
         let _ = conn.execute("ALTER TABLE plugins ADD COLUMN claude_id TEXT", []);
         let _ = conn.execute("ALTER TABLE plugins ADD COLUMN installed_version TEXT", []);
@@ -989,8 +1038,7 @@ impl Database {
     }
 
     /// 数据库迁移：为 plugins 增加 marketplace/plugin 安装指令字段
-    fn migrate_add_plugin_install_commands(&self) -> Result<()> {
-        let conn = self.lock_conn();
+    fn migrate_add_plugin_install_commands(conn: &Connection) -> Result<()> {
 
         let _ = conn.execute(
             "ALTER TABLE plugins ADD COLUMN marketplace_add_command TEXT",
@@ -1005,8 +1053,7 @@ impl Database {
     }
 
     /// 数据库迁移：添加多工具支持字段
-    fn migrate_add_agent_tool_fields(&self) -> Result<()> {
-        let conn = self.lock_conn();
+    fn migrate_add_agent_tool_fields(conn: &Connection) -> Result<()> {
         let _ = conn.execute("ALTER TABLE skills ADD COLUMN source_path TEXT", []);
         let _ = conn.execute("ALTER TABLE skills ADD COLUMN linked_tools TEXT", []);
         let _ = conn.execute(
@@ -1016,8 +1063,7 @@ impl Database {
         Ok(())
     }
 
-    fn migrate_add_local_cli_tools(&self) -> Result<()> {
-        let conn = self.lock_conn();
+    fn migrate_add_local_cli_tools(conn: &Connection) -> Result<()> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS local_cli_tools (
                 id TEXT PRIMARY KEY,
@@ -1049,8 +1095,7 @@ impl Database {
         Ok(())
     }
 
-    fn migrate_local_cli_tools_to_path_key(&self) -> Result<()> {
-        let conn = self.lock_conn();
+    fn migrate_local_cli_tools_to_path_key(conn: &Connection) -> Result<()> {
         // Check if migration already applied: id column is no longer the primary key
         let needs_migration: bool = conn
             .query_row(
@@ -1104,8 +1149,7 @@ impl Database {
     }
 
     /// 数据库迁移：添加 staging_path 列（prepare 阶段临时缓存路径）
-    fn migrate_add_staging_path(&self) -> Result<()> {
-        let conn = self.lock_conn();
+    fn migrate_add_staging_path(conn: &Connection) -> Result<()> {
         let _ = conn.execute("ALTER TABLE skills ADD COLUMN staging_path TEXT", []);
         Ok(())
     }
@@ -1192,7 +1236,7 @@ impl Database {
     }
 
     pub fn get_local_cli_tool(&self, path: &str) -> Result<Option<LocalCliToolRow>> {
-        let conn = self.lock_conn();
+        let conn = self.lock_conn_read();
         let row = conn
             .query_row(
                 "SELECT id, detected_path, manager, current_version, latest_version,
@@ -1220,7 +1264,7 @@ impl Database {
     }
 
     pub fn get_all_local_cli_tools(&self) -> Result<Vec<LocalCliToolRow>> {
-        let conn = self.lock_conn();
+        let conn = self.lock_conn_read();
         let mut stmt = conn.prepare(
             "SELECT id, detected_path, manager, current_version, latest_version,
                     update_available, last_checked, update_status, update_log, package_name, description
@@ -1248,7 +1292,7 @@ impl Database {
 
     /// 获取单个仓库信息
     pub fn get_repository(&self, repo_id: &str) -> Result<Option<Repository>> {
-        let conn = self.lock_conn();
+        let conn = self.lock_conn_read();
 
         let mut stmt = conn.prepare(
             "SELECT id, url, name, description, enabled, scan_subdirs,
@@ -1287,7 +1331,7 @@ impl Database {
 
     /// 获取所有未扫描的仓库ID列表
     pub fn get_unscanned_repositories(&self) -> Result<Vec<String>> {
-        let conn = self.lock_conn();
+        let conn = self.lock_conn_read();
         let mut stmt =
             conn.prepare("SELECT id FROM repositories WHERE last_scanned IS NULL AND enabled = 1")?;
 

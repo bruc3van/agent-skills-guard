@@ -1,3 +1,4 @@
+import React from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, AlertCircle, Shield } from "lucide-react";
 
@@ -31,7 +32,7 @@ const levelConfig = {
   },
 };
 
-export function IssuesSummaryCard({
+export const IssuesSummaryCard = React.memo(function IssuesSummaryCard({
   issuesByLevel,
   filterLevel,
   onFilterChange,
@@ -71,4 +72,4 @@ export function IssuesSummaryCard({
       })}
     </div>
   );
-}
+});

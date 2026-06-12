@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -66,7 +66,7 @@ const getScoreColor = (score: number) => {
   return "text-red-600";
 };
 
-export function IssuesList({ issues, onOpenDirectory }: IssuesListProps) {
+export const IssuesList = React.memo(function IssuesList({ issues, onOpenDirectory }: IssuesListProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
@@ -310,4 +310,4 @@ export function IssuesList({ issues, onOpenDirectory }: IssuesListProps) {
       />
     </div>
   );
-}
+});

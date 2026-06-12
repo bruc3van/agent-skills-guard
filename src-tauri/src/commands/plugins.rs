@@ -340,19 +340,19 @@ pub async fn scan_installed_plugin(
         .map_err(|e| e.to_string())?
         .into_iter()
         .find(|p| p.id == plugin_id)
-        .ok_or_else(|| "Plugin not found".to_string())?;
+        .ok_or_else(|| "[PLUGIN_NOT_FOUND] Plugin not found".to_string())?;
 
     if !plugin.installed {
-        return Err("Plugin is not installed".to_string());
+        return Err("[PLUGIN_NOT_INSTALLED] Plugin is not installed".to_string());
     }
 
     let Some(install_path) = plugin.claude_install_path.clone() else {
-        return Err("Plugin install path is not available".to_string());
+        return Err("[PLUGIN_INSTALL_PATH_MISSING] Plugin install path is not available".to_string());
     };
 
     let path = PathBuf::from(&install_path);
     if !path.exists() || !path.is_dir() {
-        return Err(format!("Plugin directory does not exist: {}", install_path));
+        return Err(format!("[PLUGIN_DIR_NOT_FOUND] Plugin directory does not exist: {}", install_path));
     }
 
     let scanner = SecurityScanner::new();

@@ -647,7 +647,7 @@ rules:
   confidence: High
   hard_trigger: false
   patterns:
-  - (?i)\bschtasks(\.exe)?\b[^\r\n]*(/create\b[^\r\n]*(/sc\s+(onlogon|onstart)|/rl\s+highest|/tr\s+[^\r\n]*\b(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32)\b|/tr\s+[^\r\n]*(\\AppData\\|\\ProgramData\\))|(/sc\s+(onlogon|onstart)|/rl\s+highest|/tr\s+[^\r\n]*\b(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32)\b|/tr\s+[^\r\n]*(\\AppData\\|\\ProgramData\\))[^\r\n]*/create\b)
+  - (?i)\bschtasks(\.exe)?\b[^\r\n]*/create\b[^\r\n]*(/sc\s+(onlogon|onstart)|/rl\s+highest|/tr\s+[^\r\n]*\b(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32)\b|/tr\s+[^\r\n]*(\\AppData\\|\\ProgramData\\))
   description: schtasks 创建计划任务
   remediation: 审查 schtasks 创建计划任务行为
   metadata:

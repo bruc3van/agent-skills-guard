@@ -2100,6 +2100,7 @@ impl SkillManager {
                                     existing_skill.local_path,
                                     path
                                 );
+                                // Checksum unchanged (matched by checksum), skip full security rescan
                                 existing_skill.local_path = Some(local_path_str.clone());
                                 existing_skill.local_paths = Some(vec![local_path_str.clone()]);
                                 existing_skill.source_path = Some(local_path_str.clone());
@@ -2110,26 +2111,7 @@ impl SkillManager {
                                 existing_skill.description = skill_description;
                                 existing_skill.file_path = local_path_str.clone();
 
-                                let path_str = match path.to_str() {
-                                    Some(s) => s,
-                                    None => {
-                                        log::warn!("跳过非 UTF-8 路径: {:?}", path);
-                                        continue;
-                                    }
-                                };
-                                let locale = rust_i18n::locale();
-                                let report = self.scanner.scan_directory_with_options(
-                                    path_str,
-                                    &existing_skill.id,
-                                    &locale,
-                                    ScanOptions {
-                                        skip_readme: true,
-                                        ..Default::default()
-                                    },
-                                    None,
-                                )?;
-                                Self::apply_scan_report(&mut existing_skill, &report);
-
+                                // Checksum matched → content unchanged, reuse existing security report
                                 self.db.save_skill(&existing_skill)?;
                                 scanned_skills.push(existing_skill);
                                 continue;

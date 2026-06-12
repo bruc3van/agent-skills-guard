@@ -579,7 +579,7 @@ impl SecurityScanner {
     }
 
     fn subprocess_call_uses_shell_true(content: &str, line_number: usize) -> bool {
-        Self::lines_window(content, line_number, 12)
+        Self::lines_window(content, line_number, 30)
             .to_ascii_lowercase()
             .contains("shell=true")
     }

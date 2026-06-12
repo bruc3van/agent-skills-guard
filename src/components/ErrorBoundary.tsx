@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import i18next from "i18next";
 
 interface Props {
   children: ReactNode;
@@ -29,13 +30,25 @@ export class ErrorBoundary extends Component<Props, State> {
         return this.props.fallback(error, this.reset);
       }
       return (
-        <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
-          <p className="text-red-400 font-mono text-sm">{error.message}</p>
+        <div className="flex flex-col items-center justify-center p-8 text-center" style={{ minHeight: '200px' }}>
+          <div className="text-4xl mb-4">&#x26A0;&#xFE0F;</div>
+          <h3 className="text-lg font-semibold text-red-400 mb-2">
+            {i18next.t('error_boundary.title', 'Something went wrong')}
+          </h3>
+          <p className="text-sm text-gray-400 mb-4 max-w-md">
+            {i18next.t('error_boundary.message', 'An unexpected error occurred. Please try refreshing or restarting the app.')}
+          </p>
+          <details className="text-xs text-gray-500 mb-4 max-w-lg">
+            <summary>{i18next.t('error_boundary.details', 'Error details')}</summary>
+            <pre className="mt-2 p-2 bg-gray-800 rounded text-left overflow-auto">
+              {error.message}
+            </pre>
+          </details>
           <button
             onClick={this.reset}
-            className="px-4 py-2 text-sm bg-neutral-800 hover:bg-neutral-700 rounded border border-neutral-600"
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
           >
-            Retry
+            {i18next.t('error_boundary.retry', 'Retry')}
           </button>
         </div>
       );

@@ -185,10 +185,10 @@ pub async fn scan_installed_skill(
         .map_err(|e| e.to_string())?
         .into_iter()
         .find(|s| s.id == skill_id)
-        .ok_or_else(|| "Skill not found".to_string())?;
+        .ok_or_else(|| "[SKILL_NOT_FOUND] Skill not found".to_string())?;
 
     if !skill.installed || skill.local_path.is_none() {
-        return Err("Skill is not installed".to_string());
+        return Err("[SKILL_NOT_INSTALLED] Skill is not installed".to_string());
     }
 
     let local_path = skill.local_path.clone().unwrap_or_default();
@@ -204,7 +204,7 @@ pub async fn scan_installed_skill(
         if let Err(e) = state.db.save_skill(&skill) {
             log::warn!("Failed to update stale skill '{}': {}", skill.name, e);
         }
-        return Err(format!("Skill directory does not exist: {}", local_path));
+        return Err(format!("[SKILL_DIR_NOT_FOUND] Skill directory does not exist: {}", local_path));
     }
 
     let scanner = SecurityScanner::new();
@@ -277,7 +277,7 @@ pub async fn count_scan_files(
 ) -> Result<usize, String> {
     let path = PathBuf::from(&dir_path);
     if !path.exists() || !path.is_dir() {
-        return Err(format!("Directory does not exist: {}", dir_path));
+        return Err(format!("[DIR_NOT_FOUND] Directory does not exist: {}", dir_path));
     }
 
     let scanner = SecurityScanner::new();

@@ -27,7 +27,27 @@
     "REPOSITORY_NOT_FOUND": "Repository record not found",
     "INVALID_SKILL_DIR_NAME": "Invalid skill directory name",
     "INVALID_SKILL_DIR_PATH": "Invalid skill directory path",
-    "CACHE_DIR_UNAVAILABLE": "Unable to get system cache directory"
+    "CACHE_DIR_UNAVAILABLE": "Unable to get system cache directory",
+    "GENERIC_ERROR": "Operation failed",
+    "SKILL_DIR_NOT_FOUND": "Skill directory does not exist",
+    "DIR_NOT_FOUND": "Directory does not exist",
+    "PLUGIN_NOT_FOUND": "Plugin not found",
+    "PLUGIN_NOT_INSTALLED": "Plugin is not installed",
+    "PLUGIN_INSTALL_PATH_MISSING": "Plugin install path is not available",
+    "PLUGIN_DIR_NOT_FOUND": "Plugin directory does not exist",
+    "INVALID_CACHE_PATH": "Invalid cache path",
+    "PATH_RESOLVE_FAILED": "Failed to resolve path",
+    "PATH_NOT_ALLOWED": "Path is not within an allowed directory",
+    "DIR_OPEN_FAILED": "Failed to open directory",
+    "HOME_DIR_UNAVAILABLE": "Unable to get home directory",
+    "DIR_NOT_WRITABLE": "Directory is not writable, please check permissions",
+    "TOOL_NOT_FOUND": "Tool not found",
+    "TOOL_UPDATE_UNSUPPORTED": "Package manager does not support auto update",
+    "TOOL_UNINSTALL_UNSUPPORTED": "Package manager does not support auto uninstall",
+    "TOOL_DIR_UNAVAILABLE": "Unable to get tool install directory",
+    "TOOL_DIR_NOT_FOUND": "Install directory does not exist",
+    "TASK_JOIN_ERROR": "Internal task execution error",
+    "CLI_COMMAND_FAILED": "Command execution failed"
   },
   "header": {
     "title": "AGENT SKILLS GUARD",
@@ -134,7 +154,15 @@
   },
   "common": {
     "delete": "DELETE",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
     "pageLoading": "Loading..."
+  },
+  "error_boundary": {
+    "title": "Something went wrong",
+    "message": "An unexpected error occurred. Please try refreshing or restarting the app.",
+    "details": "Error details",
+    "retry": "Retry"
   },
   "scan": {
     "initializing": "INITIALIZING_SKILL_SCANNER...",
@@ -813,5 +841,40 @@
       "uninstallFailed": "{{id}} uninstall failed: {{error}}",
       "unknownError": "Unknown error"
     }
+  },
+  "tool_sync": {
+    "only_source": "Only source",
+    "no_other_dirs": "No other tool directories detected"
+  },
+  "tool_icons": {
+    "programming_tools": "Programming Tools",
+    "open_dir": "Open directory: {{path}}",
+    "click_sync_to_universal": "Click to sync to universal directory (~/.agents/skills), original location replaced with link",
+    "active_local_click_cancel": "In {{tool}}, click to cancel",
+    "click_sync_to_tool_move": "Click to sync to {{tool}} (move from universal directory)",
+    "synced_click_cancel": "Synced to {{tool}}, click to cancel",
+    "click_sync_to": "Click to sync to {{tool}}",
+    "cancel_sync": "Cancel Sync",
+    "cancel_sync_description": "Will remove the skill link from {{label}}, the skill itself will not be deleted.",
+    "remove_sync": "Remove Sync"
+  },
+  "install_path": {
+    "custom_path_label": "Custom path:",
+    "custom": "Custom"
+  },
+  "installed_skills": {
+    "all_tools": "All Tools",
+    "batch_sync": "Batch Sync",
+    "batch_sync_title_attr": "Batch sync all managed skills to tools",
+    "batch_sync_all_title": "Batch Sync All Installed Skills",
+    "batch_sync_all_desc": "Will create/update tool links for all installed skills (including local skills). Local skills will be moved to the universal directory first.",
+    "batch_sync_complete": "Batch sync completed",
+    "batch_sync_failed": "Batch sync failed: {{error}}",
+    "local": "Local",
+    "promoted_to_universal": "Promoted to universal directory",
+    "sync_removed": "Sync removed",
+    "sync_success": "Sync successful",
+    "operation_failed": "Operation failed: {{error}}",
+    "project_install_paths": "Project install paths ({{count}})"
   }
 }

@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
+import { appToast } from "../lib/toast";
+import { translateError } from "../lib/error-codes";
 import type { Plugin, PluginUninstallResult } from "../types";
 
 type UsePluginsOptions = {
@@ -65,6 +67,10 @@ export function useUninstallPlugin() {
       }
       queryClient.invalidateQueries({ queryKey: ["plugins"], refetchType: "active" });
     },
+    onError: (error: Error) => {
+      console.error('Uninstall plugin failed:', error);
+      appToast.error(translateError(error.message));
+    },
   });
 }
 
@@ -83,6 +89,10 @@ export function useRemoveMarketplace() {
       queryClient.invalidateQueries({ queryKey: ["plugins"] });
       queryClient.invalidateQueries({ queryKey: ["repositories"] });
       queryClient.invalidateQueries({ queryKey: ["claudeMarketplaces"] });
+    },
+    onError: (error: Error) => {
+      console.error('Remove marketplace failed:', error);
+      appToast.error(translateError(error.message));
     },
   });
 }

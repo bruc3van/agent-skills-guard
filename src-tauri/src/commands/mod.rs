@@ -127,7 +127,7 @@ pub async fn delete_repository(state: State<'_, AppState>, repo_id: String) -> R
         .db
         .get_repository(&repo_id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "仓库不存在".to_string())?;
+        .ok_or_else(|| "[REPOSITORY_NOT_FOUND] 仓库不存在".to_string())?;
 
     let repository_url = repo.url.clone();
     let cache_path = repo.cache_path.clone();
@@ -220,13 +220,13 @@ pub async fn scan_repository(
         .db
         .get_repository(&repo_id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "仓库不存在".to_string())?;
+        .ok_or_else(|| "[REPOSITORY_NOT_FOUND] 仓库不存在".to_string())?;
 
     let (owner, repo_name) = Repository::from_github_url(&repo.url).map_err(|e| e.to_string())?;
 
     // 确定缓存基础目录
     let cache_base_dir = dirs::cache_dir()
-        .ok_or("无法获取缓存目录".to_string())?
+        .ok_or("[CACHE_DIR_UNAVAILABLE] 无法获取缓存目录".to_string())?
         .join("agent-skills-guard")
         .join("repositories");
 
@@ -638,7 +638,7 @@ pub async fn confirm_skill_installation(
             .map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(format!("Task join error: {}", e)))
+    .unwrap_or_else(|e| Err(format!("[TASK_JOIN_ERROR] Task join error: {}", e)))
 }
 
 /// 取消安装技能：删除已下载的文件
@@ -698,14 +698,14 @@ pub async fn clear_repository_cache(
         .db
         .get_repository(&repo_id)
         .map_err(|e| e.to_string())?
-        .ok_or("仓库不存在")?;
+        .ok_or("[REPOSITORY_NOT_FOUND] 仓库不存在")?;
 
     if let Some(cache_path) = &repo.cache_path {
         let cache_path_buf = std::path::PathBuf::from(cache_path);
 
         // 验证缓存路径是否在预期的缓存目录中
         let expected_cache_base = dirs::cache_dir()
-            .ok_or("无法获取缓存目录".to_string())?
+            .ok_or("[CACHE_DIR_UNAVAILABLE] 无法获取缓存目录".to_string())?
             .join("agent-skills-guard")
             .join("repositories");
 
@@ -713,7 +713,7 @@ pub async fn clear_repository_cache(
         if let Some(parent) = cache_path_buf.parent() {
             // 安全检查：确保路径在预期的缓存目录中
             if !parent.starts_with(&expected_cache_base) {
-                return Err("缓存路径无效".to_string());
+                return Err("[INVALID_CACHE_PATH] 缓存路径无效".to_string());
             }
 
             // 先清除数据库中的缓存信息
@@ -767,7 +767,7 @@ pub async fn clear_all_repository_caches(
 
     // 获取缓存基础目录
     let cache_base_dir = dirs::cache_dir()
-        .ok_or("无法获取缓存目录".to_string())?
+        .ok_or("[CACHE_DIR_UNAVAILABLE] 无法获取缓存目录".to_string())?
         .join("agent-skills-guard")
         .join("repositories");
 
@@ -917,7 +917,7 @@ pub async fn open_skill_directory(
     // 验证路径是否存在且为目录
     if !path.exists() || !path.is_dir() {
         return Err(format!(
-            "Path does not exist or is not a directory: {}",
+            "[DIR_NOT_FOUND] Path does not exist or is not a directory: {}",
             local_path
         ));
     }
@@ -925,7 +925,7 @@ pub async fn open_skill_directory(
     // 规范化路径，防止路径遍历
     let canonical = path
         .canonicalize()
-        .map_err(|e| format!("Failed to resolve path: {}", e))?;
+        .map_err(|e| format!("[PATH_RESOLVE_FAILED] Failed to resolve path: {}", e))?;
 
     // 验证路径在允许的范围内（技能安装目录或缓存目录）
     let allowed = {
@@ -975,7 +975,7 @@ pub async fn open_skill_directory(
     };
 
     if !allowed {
-        return Err("Path is not within an allowed directory".to_string());
+        return Err("[PATH_NOT_ALLOWED] Path is not within an allowed directory".to_string());
     }
 
     let canonical_str = canonical.to_string_lossy().to_string();
@@ -985,7 +985,7 @@ pub async fn open_skill_directory(
         Command::new("explorer")
             .arg(&canonical_str)
             .spawn()
-            .map_err(|e| format!("Failed to open directory: {}", e))?;
+            .map_err(|e| format!("[DIR_OPEN_FAILED] Failed to open directory: {}", e))?;
     }
 
     #[cfg(target_os = "macos")]
@@ -993,7 +993,7 @@ pub async fn open_skill_directory(
         Command::new("open")
             .arg(&canonical_str)
             .spawn()
-            .map_err(|e| format!("Failed to open directory: {}", e))?;
+            .map_err(|e| format!("[DIR_OPEN_FAILED] Failed to open directory: {}", e))?;
     }
 
     #[cfg(target_os = "linux")]
@@ -1001,7 +1001,7 @@ pub async fn open_skill_directory(
         Command::new("xdg-open")
             .arg(&canonical_str)
             .spawn()
-            .map_err(|e| format!("Failed to open directory: {}", e))?;
+            .map_err(|e| format!("[DIR_OPEN_FAILED] Failed to open directory: {}", e))?;
     }
 
     Ok(())
@@ -1012,7 +1012,7 @@ pub async fn open_skill_directory(
 pub async fn get_default_install_path() -> Result<String, String> {
     let user_path = AgentTool::Agents
         .default_skills_dir()
-        .ok_or("无法获取用户主目录")?;
+        .ok_or("[HOME_DIR_UNAVAILABLE] 无法获取用户主目录")?;
 
     Ok(user_path.to_string_lossy().to_string())
 }
@@ -1039,7 +1039,7 @@ pub async fn select_custom_install_path(app: tauri::AppHandle) -> Result<Option<
                 let _ = std::fs::remove_file(&test_file);
                 Ok(Some(path.to_string_lossy().to_string()))
             }
-            Err(_) => Err("选择的目录不可写，请检查权限".to_string()),
+            Err(_) => Err("[DIR_NOT_WRITABLE] 选择的目录不可写，请检查权限".to_string()),
         }
     } else {
         Ok(None)
@@ -1414,7 +1414,7 @@ pub async fn confirm_skill_update(
             .map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(format!("Task join error: {}", e)))
+    .unwrap_or_else(|e| Err(format!("[TASK_JOIN_ERROR] Task join error: {}", e)))
 }
 
 /// 取消技能更新

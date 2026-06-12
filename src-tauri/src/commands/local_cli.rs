@@ -721,7 +721,7 @@ pub async fn update_local_cli_tool(
         .db
         .get_local_cli_tool(&tool_path)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("工具 {} 未找到", tool_path))?;
+        .ok_or_else(|| format!("[TOOL_NOT_FOUND] 工具 {} 未找到", tool_path))?;
 
     let display_id = row.id;
     let detected_path = row.detected_path;
@@ -738,7 +738,7 @@ pub async fn update_local_cli_tool(
     tool.description = desc.clone();
 
     let (bin, args) = build_pty_update_args(&tool)
-        .ok_or_else(|| format!("工具 {} 的包管理器不支持自动更新", display_id))?;
+        .ok_or_else(|| format!("[TOOL_UPDATE_UNSUPPORTED] 工具 {} 的包管理器不支持自动更新", display_id))?;
 
     state
         .db
@@ -862,7 +862,7 @@ pub async fn uninstall_local_cli_tool(
         .db
         .get_local_cli_tool(&tool_path)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("工具 {} 未找到", tool_path))?;
+        .ok_or_else(|| format!("[TOOL_NOT_FOUND] 工具 {} 未找到", tool_path))?;
 
     let display_id = row.id;
     let detected_path = row.detected_path;
@@ -872,7 +872,7 @@ pub async fn uninstall_local_cli_tool(
     tool.package_name = row.package_name;
 
     let (bin, args) = build_pty_uninstall_args(&tool)
-        .ok_or_else(|| format!("工具 {} 的包管理器不支持自动卸载", display_id))?;
+        .ok_or_else(|| format!("[TOOL_UNINSTALL_UNSUPPORTED] 工具 {} 的包管理器不支持自动卸载", display_id))?;
 
     state
         .db
@@ -941,18 +941,18 @@ pub async fn open_local_cli_folder(
         .db
         .get_local_cli_tool(&tool_path)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("工具 {} 未找到", tool_path))?;
+        .ok_or_else(|| format!("[TOOL_NOT_FOUND] 工具 {} 未找到", tool_path))?;
 
     let detected_path = PathBuf::from(row.detected_path);
     let folder = detected_path
         .parent()
-        .ok_or_else(|| format!("无法获取工具 {} 的安装目录", tool_path))?;
+        .ok_or_else(|| format!("[TOOL_DIR_UNAVAILABLE] 无法获取工具 {} 的安装目录", tool_path))?;
     if !folder.exists() || !folder.is_dir() {
-        return Err(format!("安装目录不存在: {}", folder.display()));
+        return Err(format!("[TOOL_DIR_NOT_FOUND] 安装目录不存在: {}", folder.display()));
     }
     let canonical = folder
         .canonicalize()
-        .map_err(|e| format!("Failed to resolve path: {}", e))?;
+        .map_err(|e| format!("[PATH_RESOLVE_FAILED] Failed to resolve path: {}", e))?;
     let canonical_str = canonical.to_string_lossy().to_string();
 
     #[cfg(target_os = "windows")]
@@ -960,7 +960,7 @@ pub async fn open_local_cli_folder(
         std::process::Command::new("explorer")
             .arg(&canonical_str)
             .spawn()
-            .map_err(|e| format!("Failed to open directory: {}", e))?;
+            .map_err(|e| format!("[DIR_OPEN_FAILED] Failed to open directory: {}", e))?;
     }
 
     #[cfg(target_os = "macos")]
@@ -968,7 +968,7 @@ pub async fn open_local_cli_folder(
         std::process::Command::new("open")
             .arg(&canonical_str)
             .spawn()
-            .map_err(|e| format!("Failed to open directory: {}", e))?;
+            .map_err(|e| format!("[DIR_OPEN_FAILED] Failed to open directory: {}", e))?;
     }
 
     #[cfg(target_os = "linux")]
@@ -976,7 +976,7 @@ pub async fn open_local_cli_folder(
         std::process::Command::new("xdg-open")
             .arg(&canonical_str)
             .spawn()
-            .map_err(|e| format!("Failed to open directory: {}", e))?;
+            .map_err(|e| format!("[DIR_OPEN_FAILED] Failed to open directory: {}", e))?;
     }
 
     Ok(())

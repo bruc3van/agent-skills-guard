@@ -543,17 +543,31 @@ fn make_finding(
 
 /// 检查 URL 中是否包含已知安装器域名
 ///
-/// 改进：只检查 URL 模式中的域名，而不是整个文件内容
-/// 避免注释中提到域名导致整个文件的恶意检测被跳过
+/// 改进：从 URL 中提取 hostname，检查 hostname 是否精确匹配或为其子域名，
+/// 避免子串匹配导致 `https://evil.com/steal-bun.sh/payload` 误匹配 `bun.sh`
 fn is_known_installer(content: &str, policy: &ScanPolicy) -> bool {
-    RE_URL_EXTRACT.find_iter(content).any(|m| {
-        let url = m.as_str().to_lowercase();
-        policy
-            .pipeline
-            .known_installer_domains
-            .iter()
-            .any(|domain| url.contains(&domain.to_lowercase()))
-    })
+    let domains = &policy.pipeline.known_installer_domains;
+    if domains.is_empty() {
+        return false;
+    }
+
+    for url_match in RE_URL_EXTRACT.find_iter(content) {
+        let url_str = url_match.as_str().to_lowercase();
+        // Extract hostname from URL: find "://" then take up to first "/" or end
+        let hostname = if let Some(rest) = url_str.split("://").nth(1) {
+            rest.split('/').next().unwrap_or("").split(':').next().unwrap_or("")
+        } else {
+            continue;
+        };
+
+        for domain in domains {
+            let domain_lower = domain.to_lowercase();
+            if hostname == domain_lower || hostname.ends_with(&format!(".{}", domain_lower)) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 
@@ -645,8 +659,8 @@ fn check_fetch_execute(content: &str, file_path: &str, policy: &ScanPolicy) -> O
     let lines: Vec<&str> = content.lines().collect();
     for (i, line) in lines.iter().enumerate() {
         if RE_FETCH.is_match(line) && RE_FETCH_TO_FILE.is_match(line) {
-            // 在后续 10 行内查找执行命令
-            let search_end = (i + 10).min(lines.len());
+            // 在后续 20 行内查找执行命令
+            let search_end = (i + 20).min(lines.len());
             for j in (i + 1)..search_end {
                 if RE_EXEC_COMMAND.is_match(lines[j])
                     || RE_PIPE_EXEC.is_match(lines[j])
@@ -692,12 +706,12 @@ fn check_download_chmod_exec(
         if RE_FETCH.is_match(line)
             && (RE_FETCH_TO_FILE.is_match(line) || RE_FETCH_LINE.is_match(line))
         {
-            // 在后续 10 行内查找 chmod +x
-            let search_end = (i + 10).min(lines.len());
+            // 在后续 20 行内查找 chmod +x
+            let search_end = (i + 20).min(lines.len());
             for j in (i + 1)..search_end {
                 if RE_CHMOD_X.is_match(lines[j]) {
-                    // 在 chmod 后 5 行内查找执行
-                    let exec_end = (j + 5).min(lines.len());
+                    // 在 chmod 后 10 行内查找执行
+                    let exec_end = (j + 10).min(lines.len());
                     for k in (j + 1)..exec_end {
                         if RE_EXEC_COMMAND.is_match(lines[k])
                             || RE_PIPE_EXEC.is_match(lines[k])
@@ -792,8 +806,8 @@ fn check_sensitive_exfil(content: &str, file_path: &str) -> Option<Finding> {
 
     for (i, line) in lines.iter().enumerate() {
         if RE_SENSITIVE_FILE.is_match(line) {
-            // 检查后续 15 行是否有 base64 + 网络发送链路
-            let search_end = (i + 15).min(lines.len());
+            // 检查后续 30 行是否有 base64 + 网络发送链路
+            let search_end = (i + 30).min(lines.len());
             let mut has_base64 = false;
             let mut has_net_send = false;
             let mut net_line = None;
@@ -858,7 +872,7 @@ fn check_sensitive_exfil(content: &str, file_path: &str) -> Option<Finding> {
     // 检测 find ... -name "*.key" -exec curl 模式
     for (i, line) in lines.iter().enumerate() {
         if RE_SENSITIVE_FILE_PATH.is_match(line) && line.to_lowercase().contains("find") {
-            let search_end = (i + 5).min(lines.len());
+            let search_end = (i + 15).min(lines.len());
             for j in (i + 1)..search_end {
                 if (RE_NET_SEND.is_match(lines[j]) || RE_NET_EXFIL.is_match(lines[j]))
                     && lines[j].to_lowercase().contains("curl")
@@ -955,8 +969,8 @@ fn check_env_harvest(content: &str, file_path: &str) -> Option<Finding> {
 
     for (i, line) in lines.iter().enumerate() {
         if RE_SENSITIVE_ENV.is_match(line) || RE_ENV_PRINT.is_match(line) {
-            // 检查后续 5 行是否有网络发送
-            let search_end = (i + 5).min(lines.len());
+            // 检查后续 15 行是否有网络发送
+            let search_end = (i + 15).min(lines.len());
             for j in (i + 1)..search_end {
                 if RE_NET_SEND.is_match(lines[j]) || RE_NET_EXFIL.is_match(lines[j]) {
                     let snippet = Some(format!("{}\n  ...\n{}", line.trim(), lines[j].trim()));
@@ -1029,7 +1043,7 @@ fn check_base64_exec(content: &str, file_path: &str) -> Option<Finding> {
             }
 
             // 多行：base64 -d > file 然后 bash file
-            let search_end = (i + 5).min(lines.len());
+            let search_end = (i + 15).min(lines.len());
             for j in (i + 1)..search_end {
                 if RE_EXEC_COMMAND.is_match(lines[j]) {
                     let snippet = Some(format!("{}\n  ...\n{}", line.trim(), lines[j].trim()));
