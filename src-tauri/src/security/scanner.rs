@@ -21,6 +21,11 @@ const MAX_SCAN_DEPTH: usize = 20;
 /// 单文件最大读取字节数 (2 MiB)
 const MAX_BYTES_PER_FILE: u64 = 2 * 1024 * 1024;
 
+/// 检测 subprocess 是否使用 `shell=True` 时，从调用行向下扫描的最大行数。
+/// 覆盖典型多行调用（如 `subprocess.run(\n cmd,\n shell=True\n)`），同时避免
+/// 过宽窗口把不相邻的另一个 subprocess 调用的 shell 标志错误关联进来（历史误报源）。
+const SUBPROCESS_SHELL_SCAN_LINES: usize = 6;
+
 /// 常见大目录（依赖/构建产物），默认不深入扫描（与 crate::security::SKIP_DIR_NAMES 共用）
 use crate::security::SKIP_DIR_NAMES;
 
@@ -74,6 +79,9 @@ static STRING_CONCAT_SEPARATOR: Lazy<Regex> = lazy_regex!(
 
 /// 字符串续行检测：匹配行尾的 `' +` / `" +` 模式
 static STRING_PLUS_CONTINUATION: Lazy<Regex> = lazy_regex!(r#"(?:["']\s*\+\s*$)"#);
+
+/// subprocess shell=True 检测：容忍等号两侧空格（匹配前文本已 lowercase）
+static SUBPROCESS_SHELL_TRUE_RE: Lazy<Regex> = lazy_regex!(r"shell\s*=\s*true");
 
 #[derive(Debug, Clone)]
 pub struct ScanOptions {
@@ -279,8 +287,10 @@ impl SecurityScanner {
     }
 
     fn finalize_issues(issues: &mut Vec<SecurityIssue>) {
-        Self::annotate_issue_cooccurrence(issues);
+        // 先去重再标注共现：否则被 dedupe 删除的 rule_id 可能残留在保留项的
+        // same_path_other_rule_ids 中，向用户展示实际不存在的“同路径其他规则”。
         Self::dedupe_issues(issues);
+        Self::annotate_issue_cooccurrence(issues);
     }
 
     fn finding_should_block(finding: &crate::models::security::Finding) -> bool {
@@ -405,6 +415,18 @@ impl SecurityScanner {
             .unwrap_or(false)
     }
 
+    /// 判断目录名是否属于应跳过的大目录（依赖/构建产物/VCS 缓存）。
+    /// 供 count_scan_files 与 scan_directory_with_options 共用，保证两者跳过行为一致。
+    fn is_skip_dir(name: &str) -> bool {
+        SKIP_DIR_NAMES.contains(&name)
+    }
+
+    /// 判断文件名是否为 README（含本地化变体如 `README.zh.md`，不区分大小写）。
+    fn is_readme_filename(name: &str) -> bool {
+        let lower = name.to_ascii_lowercase();
+        lower == "readme.md" || (lower.starts_with("readme.") && lower.ends_with(".md"))
+    }
+
     fn is_markdown_file(file_path: &str) -> bool {
         matches!(
             Self::normalized_extension(file_path).as_deref(),
@@ -500,9 +522,8 @@ impl SecurityScanner {
     }
 
     fn subprocess_call_uses_shell_true(content: &str, line_number: usize) -> bool {
-        Self::lines_window(content, line_number, 30)
-            .to_ascii_lowercase()
-            .contains("shell=true")
+        let window = Self::lines_window(content, line_number, SUBPROCESS_SHELL_SCAN_LINES);
+        SUBPROCESS_SHELL_TRUE_RE.is_match(&window.to_ascii_lowercase())
     }
 
     fn should_suppress_match(
@@ -672,6 +693,27 @@ impl SecurityScanner {
         scan_lines
     }
 
+    /// PROMPT_INJECTION 在文档路径中的降级表（更激进：Critical/High → Medium）
+    fn downgrade_prompt_injection_severity(severity: IssueSeverity) -> IssueSeverity {
+        match severity {
+            IssueSeverity::Critical | IssueSeverity::High => IssueSeverity::Medium,
+            IssueSeverity::Medium => IssueSeverity::Low,
+            IssueSeverity::Low => IssueSeverity::Low,
+            IssueSeverity::Info => IssueSeverity::Info,
+        }
+    }
+
+    /// 通用规则在文档路径中的降级表（降一级）
+    fn downgrade_generic_severity(severity: IssueSeverity) -> IssueSeverity {
+        match severity {
+            IssueSeverity::Critical => IssueSeverity::High,
+            IssueSeverity::High => IssueSeverity::Medium,
+            IssueSeverity::Medium => IssueSeverity::Low,
+            IssueSeverity::Low => IssueSeverity::Low,
+            IssueSeverity::Info => IssueSeverity::Info,
+        }
+    }
+
     /// 对文档路径中的 findings 进行降级
     fn downgrade_doc_findings(
         matches: &mut Vec<MatchResult>,
@@ -697,25 +739,14 @@ impl SecurityScanner {
         for m in matches.iter_mut() {
             if m.rule_id.starts_with("PROMPT_INJECTION_") && m.hard_trigger {
                 m.hard_trigger = false;
-                m.severity = match m.severity {
-                    IssueSeverity::Critical | IssueSeverity::High => IssueSeverity::Medium,
-                    IssueSeverity::Medium => IssueSeverity::Low,
-                    IssueSeverity::Low => IssueSeverity::Low,
-                    IssueSeverity::Info => IssueSeverity::Info,
-                };
+                m.severity = Self::downgrade_prompt_injection_severity(m.severity);
                 m.weight = (m.weight / 2).max(1);
                 continue;
             }
 
             // 对非 hard_trigger 规则降级严重度
             if !m.hard_trigger {
-                m.severity = match m.severity {
-                    IssueSeverity::Critical => IssueSeverity::High,
-                    IssueSeverity::High => IssueSeverity::Medium,
-                    IssueSeverity::Medium => IssueSeverity::Low,
-                    IssueSeverity::Low => IssueSeverity::Low,
-                    IssueSeverity::Info => IssueSeverity::Info,
-                };
+                m.severity = Self::downgrade_generic_severity(m.severity);
                 // 降低权重
                 m.weight = (m.weight / 2).max(1);
             }
@@ -1135,7 +1166,7 @@ impl SecurityScanner {
 
             if entry.file_type().is_dir() {
                 if let Some(name) = entry.file_name().to_str() {
-                    if SKIP_DIR_NAMES.contains(&name) {
+                    if Self::is_skip_dir(name) {
                         iter.skip_current_dir();
                     }
                 }
@@ -1148,11 +1179,7 @@ impl SecurityScanner {
 
             if options.skip_readme {
                 if let Some(file_name) = entry.file_name().to_str() {
-                    let lower = file_name.to_ascii_lowercase();
-                    let is_readme_md = lower == "readme.md";
-                    let is_localized_readme_md =
-                        lower.starts_with("readme.") && lower.ends_with(".md");
-                    if is_readme_md || is_localized_readme_md {
+                    if Self::is_readme_filename(file_name) {
                         continue;
                     }
                 }
@@ -1273,7 +1300,7 @@ impl SecurityScanner {
             // 跳过常见大目录
             if entry.file_type().is_dir() {
                 if let Some(name) = entry.file_name().to_str() {
-                    if SKIP_DIR_NAMES.contains(&name) {
+                    if Self::is_skip_dir(name) {
                         log::debug!("Skipping directory: {:?}", entry.path());
                         iter.skip_current_dir();
                     }
@@ -1361,11 +1388,7 @@ impl SecurityScanner {
 
             if options.skip_readme {
                 if let Some(file_name) = entry.file_name().to_str() {
-                    let lower = file_name.to_ascii_lowercase();
-                    let is_readme_md = lower == "readme.md";
-                    let is_localized_readme_md =
-                        lower.starts_with("readme.") && lower.ends_with(".md");
-                    if is_readme_md || is_localized_readme_md {
+                    if Self::is_readme_filename(file_name) {
                         continue;
                     }
                 }
@@ -1671,8 +1694,7 @@ impl SecurityScanner {
         blocked: bool,
         policy: Option<&crate::security::policy::ScanPolicy>,
     ) -> i32 {
-        let score_kinds: Option<HashSet<String>> =
-            policy.map(|p| p.score_kinds.iter().map(|k| k.clone()).collect());
+        let score_kinds = policy.map(|p| &p.score_kinds);
 
         let mut match_weights: HashMap<String, i32> = HashMap::new();
         for matched in matches {
@@ -1685,7 +1707,7 @@ impl SecurityScanner {
         let mut rule_hits: HashMap<String, (i32, HashSet<String>)> = HashMap::new();
         for issue in issues {
             // 按 score_kinds 过滤
-            if let Some(ref kinds) = score_kinds {
+            if let Some(kinds) = score_kinds {
                 if !kinds.is_empty() {
                     let kind = issue.finding_kind.as_deref().unwrap_or("Security");
                     if !kinds.contains(kind) {
@@ -1871,8 +1893,8 @@ rm -rf /
             !report.hard_trigger_issues.is_empty(),
             "Should have hard_trigger issues"
         );
-        // In production: i18n message format "RM_RF_ROOT (File: test.md, Line: X): description"
-        // In tests: may return key name if i18n not fully initialized
+        // 测试中 t! 正常返回译文（rust_i18n 在 lib.rs 编译期初始化，翻译表烘焙进二进制）；
+        // 第二条 || 防御 i18n key 改名/配置漂移场景，正常环境不命中，请勿删除。
         assert!(
             report.hard_trigger_issues[0].contains("RM_RF_ROOT")
                 || report.hard_trigger_issues[0].contains("hard_trigger_issue"),
@@ -3399,6 +3421,47 @@ subprocess.run(
     }
 
     #[test]
+    fn test_two_nearby_subprocess_calls_do_not_cross_trigger() {
+        let scanner = SecurityScanner::new();
+        // 两个 subprocess 调用相隔 >6 行（新窗口）但 <30 行（旧窗口）：
+        //   line 1: subprocess.run(['ls', '-la'])   —— 固定列表参数，shell=False，安全
+        //   line 8: subprocess.run(evil, shell=True) —— 危险（由 SUBPROCESS_SHELL 报告）
+        // 旧逻辑（30 行窗口）会把 line 8 的 shell=True 错误关联到 line 1，
+        // 把 line 1 的安全调用误报为 SUBPROCESS_CALL。新窗口（6 行）只看调用自身附近，正确抑制 line 1。
+        let content = "\
+subprocess.run(['ls', '-la'])
+# pad
+# pad
+# pad
+# pad
+# pad
+# pad
+subprocess.run(evil, shell=True)
+";
+        let report = scanner
+            .scan_file(content, "scripts/two_calls.py", "en")
+            .unwrap();
+
+        // line 1 的列表参数调用不应被误报为 SUBPROCESS_CALL
+        let false_positive = report.issues.iter().any(|i| {
+            i.rule_id.as_deref() == Some("SUBPROCESS_CALL")
+                && i
+                    .code_snippet
+                    .as_deref()
+                    .map_or(false, |s| s.contains("['ls'"))
+        });
+        assert!(
+            !false_positive,
+            "List-arg subprocess call must not be cross-reported as SUBPROCESS_CALL due to a nearby shell=True, got: {:?}",
+            report
+                .issues
+                .iter()
+                .map(|i| (i.rule_id.as_deref(), i.code_snippet.as_deref()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn test_yaml_rules_suppress_if_matched() {
         let scanner = SecurityScanner::new();
         // CURL_PIPE_SH_MENTION 的 suppress_if_matched 包含 CURL_PIPE_SH
@@ -3498,13 +3561,14 @@ subprocess.run(
             .unwrap();
 
         assert!(
-            report
-                .issues
-                .iter()
-                .any(|i| i.rule_id.as_deref() == Some("FILE_MAGIC_MISMATCH")
-                    && i.file_path.as_deref() == Some("assets\\image.png")
-                    || i.rule_id.as_deref() == Some("FILE_MAGIC_MISMATCH")
-                        && i.file_path.as_deref() == Some("assets/image.png")),
+            report.issues.iter().any(|i| {
+                i.rule_id.as_deref() == Some("FILE_MAGIC_MISMATCH")
+                    && i
+                        .file_path
+                        .as_deref()
+                        .map(|p| p.replace('\\', "/") == "assets/image.png")
+                        .unwrap_or(false)
+            }),
             "Raster asset magic mismatch should be reported, got: {:?}",
             report.issues
         );

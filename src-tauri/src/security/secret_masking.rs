@@ -17,22 +17,43 @@ static STRIPE_TEST_KEY_RE: Lazy<Regex> = lazy_regex!(r"pk_test_[a-zA-Z0-9]{24,}"
 // OpenAI key pattern
 static OPENAI_KEY_RE: Lazy<Regex> = lazy_regex!(r"sk-[a-zA-Z0-9]{20,}T3BlbkFJ[a-zA-Z0-9]{20,}");
 
+/// 保留前 `prefix_len` 与后 `suffix_len` 字节，中间用 `*` 填充。
+///
+/// 护栏：若输入短于 `prefix_len + suffix_len`（例如正则最小长度被改动），
+/// 整体替换为 `[REDACTED]`，避免字节切片越界 panic。
+fn mask_keep_ends(s: &str, prefix_len: usize, suffix_len: usize) -> String {
+    if s.len() < prefix_len + suffix_len {
+        return "[REDACTED]".to_string();
+    }
+    let masked_len = s.len() - prefix_len - suffix_len;
+    format!(
+        "{}{}{}",
+        &s[..prefix_len],
+        "*".repeat(masked_len),
+        &s[s.len() - suffix_len..]
+    )
+}
+
+/// 保留前 `prefix_len` 字节，其余替换为 `[REDACTED]`。
+///
+/// 护栏：若输入短于 `prefix_len`，整体替换为 `[REDACTED]`。
+fn mask_prefix_redacted(s: &str, prefix_len: usize) -> String {
+    if s.len() < prefix_len {
+        return "[REDACTED]".to_string();
+    }
+    format!("{}[REDACTED]", &s[..prefix_len])
+}
+
 /// 对代码片段中的 secret 进行脱敏处理，返回新的 String。
 pub fn mask_secrets(snippet: &str) -> String {
     // 1. AWS Key: 保留前缀 + 后 4 位
     let result = AWS_KEY_RE.replace_all(snippet, |caps: &regex::Captures| {
-        let full = &caps[0];
-        let suffix = &full[full.len() - 4..];
-        let masked_len = full.len() - 4 - 4;
-        format!("{}{}{}", &full[..4], "*".repeat(masked_len), suffix)
+        mask_keep_ends(&caps[0], 4, 4)
     });
 
     // 2. GitHub Token: 保留前 8 字符 + 后 4 位
     let result = GITHUB_TOKEN_RE.replace_all(&result, |caps: &regex::Captures| {
-        let full = &caps[0];
-        let suffix = &full[full.len() - 4..];
-        let masked_len = full.len() - 8 - 4;
-        format!("{}{}{}", &full[..8], "*".repeat(masked_len), suffix)
+        mask_keep_ends(&caps[0], 8, 4)
     });
 
     // 3. 私钥: 替换为 [REDACTED]
@@ -40,8 +61,7 @@ pub fn mask_secrets(snippet: &str) -> String {
 
     // 4. JWT Token: 保留前 10 字符 + [REDACTED]
     let result = JWT_RE.replace_all(&result, |caps: &regex::Captures| {
-        let full = &caps[0];
-        format!("{}[REDACTED]", &full[..10])
+        mask_prefix_redacted(&caps[0], 10)
     });
 
     // 5. DB 连接串: 保留协议 + ://[REDACTED]
@@ -62,24 +82,17 @@ pub fn mask_secrets(snippet: &str) -> String {
 
     // 7. Stripe live key: 保留前 8 字符 + 后 4 位
     let result = STRIPE_LIVE_KEY_RE.replace_all(&result, |caps: &regex::Captures| {
-        let full = &caps[0];
-        let suffix = &full[full.len() - 4..];
-        let masked_len = full.len() - 8 - 4;
-        format!("{}{}{}", &full[..8], "*".repeat(masked_len), suffix)
+        mask_keep_ends(&caps[0], 8, 4)
     });
 
     // 8. Stripe test key: 保留前 8 字符 + 后 4 位
     let result = STRIPE_TEST_KEY_RE.replace_all(&result, |caps: &regex::Captures| {
-        let full = &caps[0];
-        let suffix = &full[full.len() - 4..];
-        let masked_len = full.len() - 8 - 4;
-        format!("{}{}{}", &full[..8], "*".repeat(masked_len), suffix)
+        mask_keep_ends(&caps[0], 8, 4)
     });
 
     // 9. OpenAI key: 保留前 8 字符 + [REDACTED]
     let result = OPENAI_KEY_RE.replace_all(&result, |caps: &regex::Captures| {
-        let full = &caps[0];
-        format!("{}[REDACTED]", &full[..8])
+        mask_prefix_redacted(&caps[0], 8)
     });
 
     result.into_owned()

@@ -436,23 +436,30 @@ impl ScanPolicy {
     /// 检查路径是否为文档路径（使用目录段匹配，避免子串误匹配）
     ///
     /// 匹配规则：
-    /// 1. 路径段完全等于 indicator（如 `docs/file.md`）
-    /// 2. 路径段以 `indicator-` 开头（如 `docs-internal/file.md`）
+    /// 1. 路径段完全等于 indicator（如 `docs/file.md`、`sub/docs/x.md`、`a/docs`）
+    /// 2. 路径段以 `indicator-` 开头（如 `docs-internal/file.md`、`test-fixtures/data.sh`）
+    ///
+    /// 注：纯单段路径（如 `"docs"`）不视为文档路径，以保持与历史行为一致。
     pub fn is_doc_path(&self, path: &str) -> bool {
         let lower = path.replace('\\', "/").to_lowercase();
+        let segments: Vec<&str> = lower.split('/').collect();
+        // 仅当路径含分隔符时，“段恰好等于 indicator”才匹配（排除纯单段路径）
+        let multi_segment = segments.len() >= 2;
+
         self.rule_scoping
             .doc_path_indicators
             .iter()
             .any(|indicator| {
                 let ind = indicator.to_lowercase();
-                // 路径以 indicator/ 开头（如 "docs/file.md"）
-                lower.starts_with(&format!("{}/", ind))
-                // 路径中包含 /indicator/（如 "sub/docs/file.md"）
-                || lower.contains(&format!("/{}/", ind))
-                // 路径以 /indicator 结尾
-                || lower.ends_with(&format!("/{}", ind))
-                // 路径段以 indicator- 开头（如 "docs-internal/file.md"、"test-fixtures/data.sh"）
-                || lower.split('/').any(|seg| seg.starts_with(&format!("{}-", ind)))
+                let ind_len = ind.len();
+                // 段以 "indicator-" 开头：字节级比较，避免 format!() 分配
+                let has_dash_prefix = segments.iter().any(|seg| {
+                    seg.starts_with(ind.as_str()) && seg.as_bytes().get(ind_len) == Some(&b'-')
+                });
+                // 某段恰好等于 indicator（覆盖 docs/...、.../docs、.../docs/... 三种位置）
+                let has_exact_segment =
+                    multi_segment && segments.iter().any(|seg| *seg == ind);
+                has_dash_prefix || has_exact_segment
             })
     }
 
