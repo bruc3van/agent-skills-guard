@@ -92,20 +92,41 @@ const CISCO_PARITY_RULES_YAML: &str =
     include_str!("../../../resources/security/packs/core/signatures/cisco_parity_signatures.yaml");
 
 fn load_merged_builtin_rules() -> Vec<CompiledYamlRule> {
-    let mut rules =
-        load_rule_pack(CORE_RULES_YAML).expect("Failed to compile built-in YAML rule pack");
-    let cisco = load_rule_pack(CISCO_PARITY_RULES_YAML)
-        .expect("Failed to compile Cisco parity YAML rule pack");
+    let rules = match load_rule_pack(CORE_RULES_YAML) {
+        Ok(rules) => rules,
+        Err(err) => {
+            eprintln!("Failed to compile built-in YAML rule pack: {err:#}");
+            return Vec::new();
+        }
+    };
+    let cisco = match load_rule_pack(CISCO_PARITY_RULES_YAML) {
+        Ok(rules) => rules,
+        Err(err) => {
+            eprintln!("Failed to compile Cisco parity YAML rule pack: {err:#}");
+            return rules;
+        }
+    };
+    match merge_rule_packs(rules.clone(), cisco) {
+        Ok(merged) => merged,
+        Err(err) => {
+            eprintln!("Failed to merge Cisco parity YAML rule pack: {err:#}");
+            rules
+        }
+    }
+}
+
+fn merge_rule_packs(
+    mut rules: Vec<CompiledYamlRule>,
+    additional: Vec<CompiledYamlRule>,
+) -> Result<Vec<CompiledYamlRule>> {
     let mut seen: HashSet<String> = rules.iter().map(|r| r.id.clone()).collect();
-    for rule in cisco {
-        assert!(
-            seen.insert(rule.id.clone()),
-            "Duplicate rule ID across rule packs: {}",
-            rule.id
-        );
+    for rule in additional {
+        if !seen.insert(rule.id.clone()) {
+            anyhow::bail!("Duplicate rule ID across rule packs: {}", rule.id);
+        }
         rules.push(rule);
     }
-    rules
+    Ok(rules)
 }
 
 /// 内置编译后的规则包（core + Cisco parity）
@@ -165,6 +186,38 @@ rules:
             .unwrap_err()
             .to_string()
             .contains("Duplicate rule ID"));
+    }
+
+    #[test]
+    fn test_merge_rule_packs_rejects_duplicate_ids_without_panic() {
+        let first = load_rule_pack(
+            r#"
+name: first
+rules:
+  - id: DUP
+    category: Destructive
+    severity: Critical
+    patterns: ["first"]
+    description: "First"
+"#,
+        )
+        .unwrap();
+        let second = load_rule_pack(
+            r#"
+name: second
+rules:
+  - id: DUP
+    category: Network
+    severity: Low
+    patterns: ["second"]
+    description: "Second"
+"#,
+        )
+        .unwrap();
+
+        let result = merge_rule_packs(first, second);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Duplicate rule ID"));
     }
 
     #[test]

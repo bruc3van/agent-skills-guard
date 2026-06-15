@@ -45,6 +45,12 @@ pub enum ContentType {
     Html,
     /// SVG (含脚本)
     Svg,
+    /// PNG 图片
+    Png,
+    /// JPEG 图片
+    Jpeg,
+    /// GIF 图片
+    Gif,
     /// 纯文本
     Text,
     /// 未知类型
@@ -68,6 +74,9 @@ impl ContentType {
             ContentType::JavaScript => "JavaScript",
             ContentType::Html => "HTML",
             ContentType::Svg => "SVG",
+            ContentType::Png => "PNG image",
+            ContentType::Jpeg => "JPEG image",
+            ContentType::Gif => "GIF image",
             ContentType::Text => "text file",
             ContentType::Unknown => "unknown",
         }
@@ -130,6 +139,21 @@ pub fn detect_content_type(data: &[u8]) -> ContentType {
     // gzip: \x1f\x8b
     if data.len() >= 2 && data[0] == 0x1F && data[1] == 0x8B {
         return ContentType::Gzip;
+    }
+
+    // PNG: \x89PNG\r\n\x1a\n
+    if data.len() >= 8 && &data[..8] == b"\x89PNG\r\n\x1a\n" {
+        return ContentType::Png;
+    }
+
+    // JPEG: \xff\xd8\xff
+    if data.len() >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+        return ContentType::Jpeg;
+    }
+
+    // GIF: GIF87a / GIF89a
+    if data.len() >= 6 && (&data[..6] == b"GIF87a" || &data[..6] == b"GIF89a") {
+        return ContentType::Gif;
     }
 
     // tar: "ustar" at offset 257
@@ -268,7 +292,8 @@ fn mismatch_severity(ext: &str, detected: ContentType) -> Option<IssueSeverity> 
         "py" | "pyw" | "pyi" | "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "md" | "json"
         | "yaml" | "yml" | "toml" | "cfg" | "ini" | "conf" | "xml" | "txt" | "csv" => {
             match detected {
-                Pe | Elf | MachO | Zip | Pdf | Office | OfficeXml | Gzip | Tar => {
+                Pe | Elf | MachO | Zip | Pdf | Office | OfficeXml | Gzip | Tar | Png | Jpeg
+                | Gif => {
                     Some(IssueSeverity::Critical)
                 }
                 Html | Svg => Some(IssueSeverity::High),
@@ -472,6 +497,15 @@ mod tests {
         let finding = check_magic("secret.md", data).expect("should detect mismatch");
         assert_eq!(finding.severity, IssueSeverity::Critical);
         assert!(finding.description.contains("ZIP archive"));
+        assert!(finding.description.contains("Markdown document"));
+    }
+
+    #[test]
+    fn test_png_disguised_as_md_critical() {
+        let data = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR";
+        let finding = check_magic("notes.md", data).expect("should detect mismatch");
+        assert_eq!(finding.severity, IssueSeverity::Critical);
+        assert!(finding.description.contains("PNG image"));
         assert!(finding.description.contains("Markdown document"));
     }
 

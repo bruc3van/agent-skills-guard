@@ -123,10 +123,23 @@ fn normalize_tool_name(tool: &str) -> String {
 /// 检查 allowed_tools 中是否声明了某种能力
 fn has_tool(tools: &[String], capability: &str) -> bool {
     let cap_norm = normalize_tool_name(capability);
-    tools.iter().any(|t| {
-        let t_norm = normalize_tool_name(t);
-        t_norm == cap_norm || t_norm.contains(&cap_norm) || cap_norm.contains(&t_norm)
-    })
+    tools.iter().any(|t| tool_matches_capability(&normalize_tool_name(t), &cap_norm))
+}
+
+fn tool_matches_capability(tool: &str, capability: &str) -> bool {
+    if tool == capability {
+        return true;
+    }
+
+    matches!(
+        (tool, capability),
+        ("shell", "bash")
+            | ("terminal", "bash")
+            | ("filewrite", "write")
+            | ("filesystemwrite", "write")
+            | ("fileread", "read")
+            | ("filesystemread", "read")
+    )
 }
 
 // ── 代码内容匹配 ──
@@ -628,6 +641,14 @@ mod tests {
             findings.is_empty(),
             "No manifest should produce no findings"
         );
+    }
+
+    #[test]
+    fn test_has_tool_does_not_use_substring_matches() {
+        let tools = vec!["Readonly".to_string(), "WriteOnce".to_string()];
+
+        assert!(!has_tool(&tools, "Read"));
+        assert!(!has_tool(&tools, "Write"));
     }
 
     #[test]

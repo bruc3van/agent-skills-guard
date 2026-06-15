@@ -270,13 +270,14 @@ impl SkillContext {
         if !trimmed.starts_with("---") {
             return (None, content.to_string());
         }
+        let leading_len = content.len() - trimmed.len();
         let after_first = &trimmed[3..];
         let second = match after_first.find("\n---") {
             Some(pos) => pos,
             None => return (None, content.to_string()),
         };
         let yaml_str = &after_first[..second];
-        let body_start = 3 + second + 4; // "---\n" = 4 bytes
+        let body_start = leading_len + 3 + second + 4; // "---\n" = 4 bytes
         let body = if body_start < content.len() {
             content[body_start..].trim_start_matches('\n').to_string()
         } else {
@@ -651,6 +652,15 @@ mod tests {
         assert_eq!(m.name, "my-skill");
         assert_eq!(m.description, "A test skill");
         assert_eq!(m.allowed_tools, vec!["bash", "read"]);
+        assert_eq!(body, "This is the body.");
+    }
+
+    #[test]
+    fn test_parse_frontmatter_with_leading_whitespace_keeps_body() {
+        let content = "  \n---\nname: my-skill\ndescription: A test skill\n---\n\nThis is the body.";
+        let (manifest, body) = SkillContext::parse_frontmatter(content);
+
+        manifest.expect("should parse manifest");
         assert_eq!(body, "This is the body.");
     }
 
