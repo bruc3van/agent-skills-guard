@@ -433,6 +433,7 @@ pub fn run() {
             commands::uninstall_skill_path,
             commands::delete_skill,
             commands::scan_local_skills,
+            commands::refresh_skill_links,
             commands::clear_repository_cache,
             commands::clear_all_repository_caches,
             commands::refresh_repository_cache,

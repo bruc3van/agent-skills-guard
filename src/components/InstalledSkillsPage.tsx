@@ -373,7 +373,10 @@ export function InstalledSkillsPage() {
     try {
       // 第一步：刷新本地技能
       setIsScanning(true);
+      // scanLocalSkills 发现并导入未追踪技能；随后强制按磁盘状态重建 linked_tools，
+      // 确保 Claude Code / Codex 等软链图标即使在不重启的情况下也能正确点亮。
       const localSkills = await api.scanLocalSkills();
+      await api.refreshSkillLinks();
       await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
       await queryClient.refetchQueries({ queryKey: ["skills"] });
       await queryClient.refetchQueries({ queryKey: AGENT_TOOLS_KEY });
@@ -906,7 +909,9 @@ export function InstalledSkillsPage() {
 
   const toolFilterOptions: CyberSelectOption[] = useMemo(() => {
     if (activeTab !== "all" && activeTab !== "skills") return [];
-    const options: CyberSelectOption[] = [{ value: "all", label: t("installed_skills.all_tools", "全部工具") }];
+    const options: CyberSelectOption[] = [
+      { value: "all", label: t("installed_skills.all_tools", "全部工具") },
+    ];
     for (const tool of agentTools) {
       if (tool.present || tool.skill_count > 0) {
         options.push({ value: tool.id, label: tool.label });
@@ -1187,9 +1192,7 @@ export function InstalledSkillsPage() {
             setPendingUpdate({ skill, report, conflicts });
           } catch (error: any) {
             setPreparingUpdateSkillId(null);
-            appToast.error(
-              `${t("skills.toast.updateFailed")}: ${error?.message || String(error)}`
-            );
+            appToast.error(`${t("skills.toast.updateFailed")}: ${error?.message || String(error)}`);
           }
         }}
         onToggleTool={async (toolId: string, active: boolean) => {
@@ -1208,7 +1211,9 @@ export function InstalledSkillsPage() {
               }
               appToast.success(t("installed_skills.promoted_to_universal", "已提升到通用目录"));
             } catch (e: any) {
-              appToast.error(t("installed_skills.operation_failed", { error: String(e.message || e) }));
+              appToast.error(
+                t("installed_skills.operation_failed", { error: String(e.message || e) })
+              );
             } finally {
               setPendingToggleTarget(null);
             }
@@ -1223,9 +1228,15 @@ export function InstalledSkillsPage() {
             for (const sid of allSkillIds) {
               await syncSkillMutation.mutateAsync({ skillId: sid, tools: newTools });
             }
-            appToast.success(active ? t("installed_skills.sync_removed", "已移除同步") : t("installed_skills.sync_success", "同步成功"));
+            appToast.success(
+              active
+                ? t("installed_skills.sync_removed", "已移除同步")
+                : t("installed_skills.sync_success", "同步成功")
+            );
           } catch (e: any) {
-            appToast.error(t("installed_skills.operation_failed", { error: String(e.message || e) }));
+            appToast.error(
+              t("installed_skills.operation_failed", { error: String(e.message || e) })
+            );
           } finally {
             setPendingToggleTarget(null);
           }
@@ -1356,7 +1367,10 @@ export function InstalledSkillsPage() {
                     onClick={() => setBatchSyncOpen(true)}
                     disabled={syncAllMutation.isPending}
                     className="apple-button-secondary h-10 px-4 flex items-center gap-2 disabled:opacity-50 text-sm"
-                    title={t("installed_skills.batch_sync_title_attr", "批量同步所有受管 skill 到工具")}
+                    title={t(
+                      "installed_skills.batch_sync_title_attr",
+                      "批量同步所有受管 skill 到工具"
+                    )}
                   >
                     {syncAllMutation.isPending ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -1929,7 +1943,10 @@ export function InstalledSkillsPage() {
         open={batchSyncOpen}
         onOpenChange={setBatchSyncOpen}
         title={t("installed_skills.batch_sync_all_title", "批量同步所有已安装 Skill")}
-        description={t("installed_skills.batch_sync_all_desc", "将为所有已安装 skill（含本地 skill）在选中工具的目录下创建/更新链接。本地 skill 会先移至通用目录。")}
+        description={t(
+          "installed_skills.batch_sync_all_desc",
+          "将为所有已安装 skill（含本地 skill）在选中工具的目录下创建/更新链接。本地 skill 会先移至通用目录。"
+        )}
         initialSelected={[]}
         loading={syncAllMutation.isPending}
         onConfirm={async (tools) => {
@@ -1938,7 +1955,9 @@ export function InstalledSkillsPage() {
             setBatchSyncOpen(false);
             appToast.success(t("installed_skills.batch_sync_complete", "批量同步完成"));
           } catch (e: any) {
-            appToast.error(t("installed_skills.batch_sync_failed", { error: String(e.message || e) }));
+            appToast.error(
+              t("installed_skills.batch_sync_failed", { error: String(e.message || e) })
+            );
           }
         }}
       />

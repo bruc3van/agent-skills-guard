@@ -54,11 +54,13 @@ export const api = {
     installPath?: string,
     allowPartialScan = false
   ): Promise<void> {
-    return safeInvoke(invoke<void>("install_skill", {
-      skillId,
-      installPath: installPath || null,
-      allowPartialScan,
-    }));
+    return safeInvoke(
+      invoke<void>("install_skill", {
+        skillId,
+        installPath: installPath || null,
+        allowPartialScan,
+      })
+    );
   },
 
   async prepareSkillInstallation(
@@ -66,11 +68,13 @@ export const api = {
     locale: string,
     allowPartialScan = false
   ): Promise<SecurityReport> {
-    return safeInvoke(invoke<SecurityReport>("prepare_skill_installation", {
-      skillId,
-      locale,
-      allowPartialScan,
-    }));
+    return safeInvoke(
+      invoke<SecurityReport>("prepare_skill_installation", {
+        skillId,
+        locale,
+        allowPartialScan,
+      })
+    );
   },
 
   async confirmSkillInstallation(
@@ -79,12 +83,14 @@ export const api = {
     allowPartialScan = false,
     targetTools?: string[]
   ): Promise<void> {
-    return safeInvoke(invoke<void>("confirm_skill_installation", {
-      skillId,
-      installPath: installPath || null,
-      allowPartialScan,
-      targetTools: targetTools ?? null,
-    }));
+    return safeInvoke(
+      invoke<void>("confirm_skill_installation", {
+        skillId,
+        installPath: installPath || null,
+        allowPartialScan,
+        targetTools: targetTools ?? null,
+      })
+    );
   },
 
   async cancelSkillInstallation(skillId: string): Promise<void> {
@@ -107,10 +113,12 @@ export const api = {
     locale: string,
     scanParallelism?: number
   ): Promise<SkillScanResult[]> {
-    return safeInvoke(invoke<SkillScanResult[]>("scan_all_installed_skills", {
-      locale,
-      scanParallelism: scanParallelism ?? null,
-    }));
+    return safeInvoke(
+      invoke<SkillScanResult[]>("scan_all_installed_skills", {
+        locale,
+        scanParallelism: scanParallelism ?? null,
+      })
+    );
   },
 
   async uninstallSkill(skillId: string): Promise<void> {
@@ -128,6 +136,11 @@ export const api = {
   // Scan local skills directory
   async scanLocalSkills(): Promise<Skill[]> {
     return safeInvoke(invoke<Skill[]>("scan_local_skills"));
+  },
+
+  // 强制按磁盘实际状态刷新已安装技能的工具链接（软链检测）
+  async refreshSkillLinks(): Promise<Skill[]> {
+    return safeInvoke(invoke<Skill[]>("refresh_skill_links"));
   },
 
   // 缓存管理
@@ -172,7 +185,11 @@ export const api = {
   async importFeaturedRepositories(
     categoryIds?: string[]
   ): Promise<ImportFeaturedRepositoriesResult> {
-    return safeInvoke(invoke<ImportFeaturedRepositoriesResult>("import_featured_repositories", { categoryIds: categoryIds || null }));
+    return safeInvoke(
+      invoke<ImportFeaturedRepositoriesResult>("import_featured_repositories", {
+        categoryIds: categoryIds || null,
+      })
+    );
   },
 
   async isRepositoryAdded(url: string): Promise<boolean> {
@@ -185,7 +202,9 @@ export const api = {
   },
 
   async prepareSkillUpdate(skillId: string, locale: string): Promise<[SecurityReport, string[]]> {
-    return safeInvoke(invoke<[SecurityReport, string[]]>("prepare_skill_update", { skillId, locale }));
+    return safeInvoke(
+      invoke<[SecurityReport, string[]]>("prepare_skill_update", { skillId, locale })
+    );
   },
 
   async confirmSkillUpdate(
@@ -193,7 +212,9 @@ export const api = {
     forceOverwrite: boolean,
     allowPartialScan = false
   ): Promise<void> {
-    return safeInvoke(invoke<void>("confirm_skill_update", { skillId, forceOverwrite, allowPartialScan }));
+    return safeInvoke(
+      invoke<void>("confirm_skill_update", { skillId, forceOverwrite, allowPartialScan })
+    );
   },
 
   async cancelSkillUpdate(skillId: string): Promise<void> {
@@ -222,10 +243,12 @@ export const api = {
     pluginId: string,
     claudeCommand?: string
   ): Promise<PluginInstallResult> {
-    return safeInvoke(invoke<PluginInstallResult>("confirm_plugin_installation", {
-      pluginId,
-      claudeCommand: claudeCommand || null,
-    }));
+    return safeInvoke(
+      invoke<PluginInstallResult>("confirm_plugin_installation", {
+        pluginId,
+        claudeCommand: claudeCommand || null,
+      })
+    );
   },
 
   async cancelPluginInstallation(pluginId: string): Promise<void> {
@@ -233,10 +256,12 @@ export const api = {
   },
 
   async uninstallPlugin(pluginId: string, claudeCommand?: string): Promise<PluginUninstallResult> {
-    return safeInvoke(invoke<PluginUninstallResult>("uninstall_plugin", {
-      pluginId,
-      claudeCommand: claudeCommand || null,
-    }));
+    return safeInvoke(
+      invoke<PluginUninstallResult>("uninstall_plugin", {
+        pluginId,
+        claudeCommand: claudeCommand || null,
+      })
+    );
   },
 
   async removeMarketplace(
@@ -244,15 +269,21 @@ export const api = {
     marketplaceRepo: string,
     claudeCommand?: string
   ): Promise<MarketplaceRemoveResult> {
-    return safeInvoke(invoke<MarketplaceRemoveResult>("remove_marketplace", {
-      marketplaceName,
-      marketplaceRepo,
-      claudeCommand: claudeCommand || null,
-    }));
+    return safeInvoke(
+      invoke<MarketplaceRemoveResult>("remove_marketplace", {
+        marketplaceName,
+        marketplaceRepo,
+        claudeCommand: claudeCommand || null,
+      })
+    );
   },
 
   async getClaudeMarketplaces(claudeCommand?: string): Promise<ClaudeMarketplace[]> {
-    return safeInvoke(invoke<ClaudeMarketplace[]>("get_claude_marketplaces", { claudeCommand: claudeCommand || null }));
+    return safeInvoke(
+      invoke<ClaudeMarketplace[]>("get_claude_marketplaces", {
+        claudeCommand: claudeCommand || null,
+      })
+    );
   },
 
   async getPluginsCached(): Promise<Plugin[]> {
@@ -260,31 +291,50 @@ export const api = {
   },
 
   async checkPluginsUpdates(claudeCommand?: string): Promise<Array<[string, string]>> {
-    return safeInvoke(invoke<Array<[string, string]>>("check_plugins_updates", { claudeCommand: claudeCommand || null }));
+    return safeInvoke(
+      invoke<Array<[string, string]>>("check_plugins_updates", {
+        claudeCommand: claudeCommand || null,
+      })
+    );
   },
 
   async updatePlugin(pluginId: string, claudeCommand?: string): Promise<PluginUpdateResult> {
-    return safeInvoke(invoke<PluginUpdateResult>("update_plugin", { pluginId, claudeCommand: claudeCommand || null }));
+    return safeInvoke(
+      invoke<PluginUpdateResult>("update_plugin", {
+        pluginId,
+        claudeCommand: claudeCommand || null,
+      })
+    );
   },
 
   async checkMarketplacesUpdates(claudeCommand?: string): Promise<Array<[string, string]>> {
-    return safeInvoke(invoke<Array<[string, string]>>("check_marketplaces_updates", { claudeCommand: claudeCommand || null }));
+    return safeInvoke(
+      invoke<Array<[string, string]>>("check_marketplaces_updates", {
+        claudeCommand: claudeCommand || null,
+      })
+    );
   },
 
   async updateMarketplace(
     marketplaceName: string,
     claudeCommand?: string
   ): Promise<MarketplaceUpdateResult> {
-    return safeInvoke(invoke<MarketplaceUpdateResult>("update_marketplace", {
-      marketplaceName,
-      claudeCommand: claudeCommand || null,
-    }));
+    return safeInvoke(
+      invoke<MarketplaceUpdateResult>("update_marketplace", {
+        marketplaceName,
+        claudeCommand: claudeCommand || null,
+      })
+    );
   },
 
   async getSkillPluginUpgradeCandidates(
     claudeCommand?: string
   ): Promise<SkillPluginUpgradeCandidate[]> {
-    return safeInvoke(invoke<SkillPluginUpgradeCandidate[]>("get_skill_plugin_upgrade_candidates", { claudeCommand: claudeCommand || null }));
+    return safeInvoke(
+      invoke<SkillPluginUpgradeCandidate[]>("get_skill_plugin_upgrade_candidates", {
+        claudeCommand: claudeCommand || null,
+      })
+    );
   },
 
   async scanAllInstalledPlugins(
@@ -292,11 +342,13 @@ export const api = {
     claudeCommand?: string,
     scanParallelism?: number
   ): Promise<string[]> {
-    return safeInvoke(invoke<string[]>("scan_all_installed_plugins", {
-      locale,
-      claudeCommand: claudeCommand || null,
-      scanParallelism: scanParallelism ?? null,
-    }));
+    return safeInvoke(
+      invoke<string[]>("scan_all_installed_plugins", {
+        locale,
+        claudeCommand: claudeCommand || null,
+        scanParallelism: scanParallelism ?? null,
+      })
+    );
   },
 
   async scanInstalledSkill(
@@ -304,7 +356,9 @@ export const api = {
     locale: string,
     scanId?: string
   ): Promise<SkillScanResult> {
-    return safeInvoke(invoke<SkillScanResult>("scan_installed_skill", { skillId, locale, scanId: scanId || null }));
+    return safeInvoke(
+      invoke<SkillScanResult>("scan_installed_skill", { skillId, locale, scanId: scanId || null })
+    );
   },
 
   async scanInstalledPlugin(
@@ -314,13 +368,15 @@ export const api = {
     scanId?: string,
     skipSync?: boolean
   ): Promise<string> {
-    return safeInvoke(invoke<string>("scan_installed_plugin", {
-      pluginId,
-      locale,
-      claudeCommand: claudeCommand || null,
-      scanId: scanId || null,
-      skipSync: skipSync ?? null,
-    }));
+    return safeInvoke(
+      invoke<string>("scan_installed_plugin", {
+        pluginId,
+        locale,
+        claudeCommand: claudeCommand || null,
+        scanId: scanId || null,
+        skipSync: skipSync ?? null,
+      })
+    );
   },
 
   async countScanFiles(dirPath: string, skipReadme = true): Promise<number> {
@@ -371,6 +427,8 @@ export const api = {
   },
 
   async fetchLocalCliDescriptions(toolPaths: string[]): Promise<Array<[string, string]>> {
-    return safeInvoke(invoke<Array<[string, string]>>("fetch_local_cli_descriptions", { toolPaths }));
+    return safeInvoke(
+      invoke<Array<[string, string]>>("fetch_local_cli_descriptions", { toolPaths })
+    );
   },
 };

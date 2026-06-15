@@ -688,6 +688,14 @@ pub async fn scan_local_skills(state: State<'_, AppState>) -> Result<Vec<Skill>,
     manager.scan_local_skills().map_err(|e| e.to_string())
 }
 
+/// 强制按磁盘实际状态刷新已安装技能的工具链接，并返回刷新后的已安装列表。
+/// 供应用内更新安装后、手动重新扫描等场景显式调用，确保 Claude Code / Codex 等软链图标正确点亮。
+#[tauri::command]
+pub async fn refresh_skill_links(state: State<'_, AppState>) -> Result<Vec<Skill>, String> {
+    let manager = state.skill_manager.lock().await;
+    manager.refresh_skill_links().map_err(|e| e.to_string())
+}
+
 /// 清理指定仓库的缓存
 #[tauri::command]
 pub async fn clear_repository_cache(

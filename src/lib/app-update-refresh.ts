@@ -13,6 +13,7 @@ const SKILL_STATE_QUERY_KEYS: QueryKey[] = [
 
 type AppVersionSkillRefreshDeps = {
   storage?: Pick<Storage, "getItem" | "setItem">;
+  refreshSkillLinks?: () => Promise<Awaited<ReturnType<typeof api.refreshSkillLinks>>>;
   scanLocalSkills?: () => Promise<unknown>;
   getInstalledSkills?: () => Promise<Awaited<ReturnType<typeof api.getInstalledSkills>>>;
 };
@@ -35,17 +36,27 @@ async function refetchSkillStateQueries(queryClient: QueryClient): Promise<void>
 
 /**
  * 扫描磁盘上的本地技能/软链接，写入数据库后拉取已安装列表并刷新缓存。
- * 顺序很重要：scan 负责发现链接，getInstalledSkills 负责按当前磁盘状态刷新 linked_tools。
+ * 顺序很重要：先强制按磁盘状态重建 linked_tools（含 Claude Code / Codex 软链检测），
+ * 再 getInstalledSkills 写入缓存，避免陈旧 queryFn 结果覆盖刷新后的 linked_tools。
  */
 export async function refreshSkillStateFromDisk(
   queryClient: QueryClient,
   deps: AppVersionSkillRefreshDeps = {}
 ): Promise<void> {
+  // refresh_skill_links 会重新检测各工具 skill 目录下的软链并写回 DB，
+  // 比 scan_local_skills 更直接：scan 只在遍历到链接目录时关联工具，
+  // 而 refresh 会针对每条已安装记录补齐 linked_tools。
+  if (deps.refreshSkillLinks) {
+    await deps.refreshSkillLinks();
+  } else {
+    await api.refreshSkillLinks();
+  }
+  // scan 作为兜底：发现 DB 中尚未记录的本地技能（未通过本工具安装的）。
   await (deps.scanLocalSkills ?? api.scanLocalSkills)();
 
   await refetchSkillStateQueries(queryClient);
 
-  // 在 refetch 之后写入，避免陈旧 queryFn 结果覆盖扫描后的 linked_tools
+  // 在 refetch 之后写入，避免陈旧 queryFn 结果覆盖刷新后的 linked_tools
   const installed = await (deps.getInstalledSkills ?? api.getInstalledSkills)();
   queryClient.setQueryData(["skills", "installed"], installed);
 }

@@ -249,16 +249,16 @@ export function SettingsPage() {
 
     appToast.info(t("update.downloading"));
 
-    const ok = await updateContext.installUpdate();
+    // 新版本文件安装完成后、relaunch 前强制刷新工具链接状态。
+    // 这样无论新进程前端是否触发启动期 reconcile，DB 中的 linked_tools 都已是最新值，
+    // 前端再次拉取即可点亮 Claude Code / Codex 等软链图标。
+    const ok = await updateContext.installUpdate({
+      onBeforeRelaunch: async () => {
+        await refetchSkillStateAfterAppUpdate(queryClient);
+      },
+    });
     if (!ok) {
       appToast.error(t("update.failed"));
-      return;
-    }
-
-    // 自动 relaunch 成功时由新进程启动时的 reconcileSkillStateOnAppStartup 负责扫描链接。
-    // 仅当未能自动重启（restartRequired）时，在旧进程内做兜底同步。
-    if (updateContext.updatePhase === "restartRequired") {
-      await refetchSkillStateAfterAppUpdate(queryClient);
     }
   };
 

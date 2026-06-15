@@ -1648,6 +1648,32 @@ impl SkillManager {
         self.get_installed_skills_from_dirs(&default_tool_skill_dirs())
     }
 
+    /// 强制按磁盘实际状态刷新所有已安装技能的工具链接，并返回刷新后的已安装列表。
+    ///
+    /// 与 `get_installed_skills` 的区别：后者在每次读取时也会 reconcile，
+    /// 但应用内更新后旧进程已退出、新进程前端可能未触发启动期 reconcile；
+    /// 这个方法提供一个明确的「按当前磁盘状态重建 linked_tools」入口，
+    /// 供更新安装后、手动重新扫描等场景显式调用，保证 Claude Code / Codex 等软链能被点亮。
+    pub fn refresh_skill_links(&self) -> Result<Vec<Skill>> {
+        let tool_dirs = default_tool_dirs();
+        self.refresh_skill_links_from_dirs(&tool_dirs)
+    }
+
+    /// `refresh_skill_links` 的可测试变体，允许传入显式工具目录。
+    fn refresh_skill_links_from_dirs(&self, tool_dirs: &[(PathBuf, String)]) -> Result<Vec<Skill>> {
+        let refreshed = self.refresh_installed_tool_links_from_dirs(tool_dirs)?;
+        log::info!("Forcibly refreshed tool-link state for {} skills", refreshed);
+        self.get_installed_skills_from_dirs(
+            &tool_dirs
+                .iter()
+                .map(|(path, tool_id)| ToolSkillDir {
+                    tool_id: tool_id.clone(),
+                    path: path.clone(),
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
     fn get_installed_skills_from_dirs(
         &self,
         tool_skill_dirs: &[ToolSkillDir],
@@ -3449,6 +3475,51 @@ mod tests {
             .unwrap()
             .contains(&claude_skill.to_string_lossy().to_string()));
         assert_eq!(skills[0].linked_tools, vec!["claude-code".to_string()]);
+    }
+
+    #[test]
+    fn refresh_skill_links_detects_newly_created_tool_symlink_without_restart() {
+        // 模拟应用内更新后：技能已安装且 linked_tools 为空（图标未点亮），
+        // 此时磁盘上已存在 .claude/skills/example 软链。
+        // refresh_skill_links 必须能在不重启进程的情况下点亮 linked_tools。
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let agents_dir = temp.path().join(".agents").join("skills");
+        let claude_dir = temp.path().join(".claude").join("skills");
+        let source = agents_dir.join("example");
+        let claude_link = claude_dir.join("example");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "---\nname: example\n---\n").unwrap();
+        link_fs::create_dir_link(&source, &claude_link).unwrap();
+
+        // 写入一条已安装、但 linked_tools 尚为空的记录
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            crate::models::LOCAL_REPOSITORY_URL.to_string(),
+            source.to_string_lossy().to_string(),
+        );
+        skill.id = "skill-1".to_string();
+        skill.installed = true;
+        skill.is_local_only = true;
+        skill.source_path = Some(source.to_string_lossy().to_string());
+        skill.local_path = Some(source.to_string_lossy().to_string());
+        skill.local_paths = Some(vec![source.to_string_lossy().to_string()]);
+        skill.linked_tools = Vec::new();
+        db.save_skill(&skill).unwrap();
+
+        let tool_dirs = vec![
+            (agents_dir, "agents".to_string()),
+            (claude_dir, "claude-code".to_string()),
+        ];
+
+        let installed = manager.refresh_skill_links_from_dirs(&tool_dirs).unwrap();
+
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].linked_tools, vec!["claude-code".to_string()]);
+        // DB 也应被刷新
+        let from_db = db.get_skills().unwrap();
+        assert_eq!(from_db[0].linked_tools, vec!["claude-code".to_string()]);
     }
 
     #[test]

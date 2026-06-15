@@ -76,7 +76,7 @@ async function prefetchSkillQueries(queryClient: QueryClient, calls: string[]) {
 }
 
 describe("refetchSkillStateAfterAppUpdate", () => {
-  it("rescans, hydrates installed cache, then refetches related queries", async () => {
+  it("forces linked-tool refresh, rescans, hydrates installed cache, then refetches related queries", async () => {
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: {
@@ -89,11 +89,18 @@ describe("refetchSkillStateAfterAppUpdate", () => {
     await prefetchSkillQueries(queryClient, calls);
 
     let scanCount = 0;
+    let refreshCount = 0;
     calls.length = 0;
 
     await refetchSkillStateAfterAppUpdate(queryClient, {
+      refreshSkillLinks: async () => {
+        refreshCount += 1;
+        calls.push("refreshSkillLinks");
+        return [];
+      },
       scanLocalSkills: async () => {
         scanCount += 1;
+        calls.push("scanLocalSkills");
         return [];
       },
       getInstalledSkills: async () => {
@@ -103,10 +110,15 @@ describe("refetchSkillStateAfterAppUpdate", () => {
     });
 
     expect(scanCount).toBe(1);
+    expect(refreshCount).toBe(1);
+    // refresh_skill_links must run before scan so scan adopts with fresh link state
+    expect(calls.indexOf("refreshSkillLinks")).toBeLessThan(calls.indexOf("scanLocalSkills"));
     expect(queryClient.getQueryData(["skills", "installed"])).toMatchObject([
       { id: "fresh", linked_tools: ["claude-code"] },
     ]);
-    expect(calls.sort()).toEqual(["agentTools", "getInstalled", "installed", "scanResults", "skills"]);
+    expect(
+      calls.filter((c) => ["agentTools", "installed", "scanResults", "skills"].includes(c)).sort()
+    ).toEqual(["agentTools", "installed", "scanResults", "skills"]);
   });
 });
 
@@ -127,12 +139,19 @@ describe("reconcileSkillStateOnAppStartup", () => {
       [APP_VERSION_SKILL_REFRESH_KEY]: "1.2.5",
     });
     let scanCount = 0;
+    let refreshCount = 0;
     calls.length = 0;
 
     const didRefresh = await reconcileSkillStateOnAppStartup(queryClient, "1.2.5", {
       storage,
+      refreshSkillLinks: async () => {
+        refreshCount += 1;
+        calls.push("refreshSkillLinks");
+        return [];
+      },
       scanLocalSkills: async () => {
         scanCount += 1;
+        calls.push("scanLocalSkills");
         return [];
       },
       getInstalledSkills: async () => {
@@ -143,6 +162,7 @@ describe("reconcileSkillStateOnAppStartup", () => {
 
     expect(didRefresh).toBe(true);
     expect(scanCount).toBe(1);
+    expect(refreshCount).toBe(1);
     expect(storage.getItem(APP_VERSION_SKILL_REFRESH_KEY)).toBe("1.2.5");
     expect(queryClient.getQueryData(["skills", "installed"])).toMatchObject([
       { id: "fresh", linked_tools: ["claude-code"] },
