@@ -12,11 +12,6 @@
 
 [English](README_EN.md) | 简体中文
 
-<div align="center">
-
-![交流群](screen-shot/agentskillsgroup.jpg)
-
-</div>
 
 ### 🚀 更多开源项目
 

@@ -12,11 +12,6 @@
 
 English | [简体中文](README.md)
 
-<div align="center">
-
-![Community](screen-shot/agentskillsgroup.jpg)
-
-</div>
 
 ### 🚀 More Open Source Projects
 
