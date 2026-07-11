@@ -1504,6 +1504,14 @@ impl SkillManager {
             }
         }
 
+        // 只有所有路径都成功删除后才清空安装记录。
+        // 部分失败时保留原元数据，否则残留文件会失去追踪，用户也无法重试卸载。
+        if !errors.is_empty() {
+            log::warn!("Skill uninstall completed with errors: {}", skill.name);
+            self.invalidate_installed_cache();
+            anyhow::bail!("UNINSTALL_PARTIAL_FAILURE: {}", errors.join("; "))
+        }
+
         // 更新数据库
         skill.installed = false;
         skill.installed_at = None;
@@ -1515,15 +1523,9 @@ impl SkillManager {
 
         self.db.save_skill(&skill).context("更新数据库失败")?;
 
-        if errors.is_empty() {
-            log::info!("Skill uninstalled successfully: {}", skill.name);
-            self.invalidate_installed_cache();
-            Ok(())
-        } else {
-            log::warn!("Skill uninstall completed with errors: {}", skill.name);
-            self.invalidate_installed_cache();
-            anyhow::bail!("UNINSTALL_PARTIAL_FAILURE: {}", errors.join("; "))
-        }
+        log::info!("Skill uninstalled successfully: {}", skill.name);
+        self.invalidate_installed_cache();
+        Ok(())
     }
 
     /// 卸载特定路径的技能
@@ -4180,5 +4182,53 @@ mod tests {
             "original"
         );
         assert!(!final_dir.join("partial.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn uninstall_failure_preserves_installed_skill_metadata() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let protected_parent = temp.path().join("protected");
+        let skill_dir = protected_parent.join("example");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "test").unwrap();
+
+        let path = skill_dir.to_string_lossy().to_string();
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            crate::models::LOCAL_REPOSITORY_URL.to_string(),
+            path.clone(),
+        );
+        skill.id = "uninstall-failure".to_string();
+        skill.installed = true;
+        skill.local_path = Some(path.clone());
+        skill.local_paths = Some(vec![path.clone()]);
+        skill.source_path = Some(path.clone());
+        db.save_skill(&skill).unwrap();
+
+        std::fs::set_permissions(&protected_parent, std::fs::Permissions::from_mode(0o500))
+            .unwrap();
+        let result = manager.uninstall_skill(&skill.id);
+        std::fs::set_permissions(&protected_parent, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("UNINSTALL_PARTIAL_FAILURE"));
+        let persisted = db
+            .get_skills()
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == skill.id)
+            .unwrap();
+        assert!(persisted.installed);
+        assert_eq!(persisted.local_path.as_deref(), Some(path.as_str()));
+        assert_eq!(persisted.local_paths.as_deref(), Some(&[path.clone()][..]));
+        assert_eq!(persisted.source_path.as_deref(), Some(path.as_str()));
     }
 }
