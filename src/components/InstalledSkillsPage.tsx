@@ -109,8 +109,10 @@ export function InstalledSkillsPage() {
       runtimePluginsQuery.isLoading &&
       runtimePluginsQuery.data === undefined &&
       cachedPluginsQuery.data === undefined);
-  const { data: claudeMarketplaces = [], isLoading: isMarketplacesLoading } =
-    useClaudeMarketplaces();
+  // Claude marketplace discovery is optional data backed by a CLI subprocess.
+  // Render the installed skills/plugins immediately instead of blocking the
+  // entire page when that subprocess is slow or waiting for the plugin lock.
+  const { data: claudeMarketplaces = [] } = useClaudeMarketplaces();
   const { data: featuredMarketplaces } = useQuery({
     queryKey: ["featured-marketplaces"],
     queryFn: api.getFeaturedMarketplaces,
@@ -731,7 +733,7 @@ export function InstalledSkillsPage() {
     return allPlugins.filter((plugin) => plugin.installed);
   }, [allPlugins]);
 
-  const isLoading = isSkillsLoading || isPluginsLoading || isMarketplacesLoading;
+  const isLoading = isSkillsLoading || isPluginsLoading;
   const updateCounts = useMemo(
     () => ({
       skills: availableUpdates.size,

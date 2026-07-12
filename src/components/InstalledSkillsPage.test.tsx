@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 
+let isClaudeMarketplacesLoading = false;
+
 vi.mock("../hooks/useSkills", () => ({
   useInstalledSkills: () => ({
     data: [
@@ -33,7 +35,7 @@ vi.mock("../hooks/useSkills", () => ({
 }));
 
 vi.mock("../hooks/usePlugins", () => ({
-  useClaudeMarketplaces: () => ({ data: [], isLoading: false }),
+  useClaudeMarketplaces: () => ({ data: [], isLoading: isClaudeMarketplacesLoading }),
   usePlugins: () => ({ data: [], isLoading: false }),
   useUninstallPlugin: () => ({
     mutateAsync: vi.fn(),
@@ -96,6 +98,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
 
 afterEach(() => {
   cleanup();
+  isClaudeMarketplacesLoading = false;
 });
 
 describe("InstalledSkillsPage", () => {
@@ -103,6 +106,15 @@ describe("InstalledSkillsPage", () => {
     const { InstalledSkillsPage } = await import("./InstalledSkillsPage");
     render(<InstalledSkillsPage />, { wrapper });
     expect(screen.getByText("Test Skill")).not.toBeNull();
+  });
+
+  it("does not block the page while Claude marketplaces are loading", async () => {
+    isClaudeMarketplacesLoading = true;
+    const { InstalledSkillsPage } = await import("./InstalledSkillsPage");
+    render(<InstalledSkillsPage />, { wrapper });
+
+    expect(screen.getByText("Test Skill")).not.toBeNull();
+    expect(screen.queryByText("skills.loading")).toBeNull();
   });
 
   it("switches between tabs", async () => {

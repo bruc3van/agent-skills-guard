@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.4] - 2026-07-12
+
+### 🐛 问题修复
+
+- **macOS 页面加载修复** — Claude Marketplace 数据改为后台加载，避免概览页与已安装页面持续停留在加载状态
+
 ## [1.3.3] - 2026-06-15
 
 ### 🔒 安全扫描改进

@@ -66,7 +66,10 @@ export function OverviewPage() {
 
   const { data: plugins = [], isLoading: isPluginsLoading } = usePlugins({ mode: "cached" });
 
-  const { data: marketplaces = [], isLoading: isMarketplacesLoading } = useClaudeMarketplaces();
+  // Marketplace discovery shells out to Claude CLI and can be delayed by another
+  // plugin-manager operation. It is supplementary overview data, so don't let it
+  // hold the whole page behind a spinner while the CLI request is still pending.
+  const { data: marketplaces = [] } = useClaudeMarketplaces();
 
   const { data: scanResults = [], isLoading: isScanResultsLoading } = useQuery<SkillScanResult[]>({
     queryKey: ["scanResults"],
@@ -496,7 +499,7 @@ export function OverviewPage() {
     }
   };
 
-  if (isScanResultsLoading || isPluginsLoading || isMarketplacesLoading) {
+  if (isScanResultsLoading || isPluginsLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
