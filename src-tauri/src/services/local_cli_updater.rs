@@ -3,12 +3,20 @@ use crate::services::Database;
 use anyhow::Result;
 use chrono::Utc;
 use std::cmp::Ordering;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
 const CACHE_TTL_SECS: i64 = 3600;
 const UPDATE_CHECK_CONCURRENCY: usize = 8;
+const CLAUDE_RELEASES_BASE_URL: &str = "https://downloads.claude.ai/claude-code-releases";
+
+fn supports_read_only_update_check(tool: &LocalCliTool) -> bool {
+    tool.manager != PackageManager::Unknown
+        && (tool.manager != PackageManager::Native
+            || matches!(tool.id.as_str(), "grok" | "claude"))
+}
 
 pub(crate) fn is_cache_fresh(last_checked: Option<&str>) -> bool {
     let Some(ts) = last_checked else {
@@ -31,7 +39,9 @@ pub(crate) fn is_outdated(current: Option<&str>, latest: Option<&str>) -> bool {
 
             compare_version_like(&current, &latest)
                 .map(|ordering| ordering == Ordering::Less)
-                .unwrap_or(true)
+                // An unknown version syntax is not evidence that an update exists.
+                // This is deliberately conservative for PEP 440/Homebrew/vendor versions.
+                .unwrap_or(false)
         }
         _ => false,
     }
@@ -43,13 +53,6 @@ fn normalize_version(v: &str) -> String {
         .strip_prefix('v')
         .or_else(|| v.strip_prefix('V'))
         .unwrap_or(v);
-    // Strip Homebrew revision suffix: "3.13.8_1" → "3.13.8"
-    if let Some(idx) = v.rfind('_') {
-        let suffix = &v[idx + 1..];
-        if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
-            return v[..idx].to_string();
-        }
-    }
     v.to_string()
 }
 
@@ -91,7 +94,7 @@ fn parse_version_key(version: &str) -> Option<VersionKey> {
         .unwrap_or((without_build, None));
 
     let mut parts = Vec::new();
-    for part in core.split('.') {
+    for part in core.replace('_', ".").split('.') {
         if part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()) {
             return None;
         }
@@ -130,112 +133,6 @@ fn compare_prerelease(current: &str, latest: &str) -> Ordering {
     Ordering::Equal
 }
 
-fn build_http_client() -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .user_agent("agent-skills-guard/1.0")
-        .build()?)
-}
-
-async fn http_get_json(client: &reqwest::Client, url: &str) -> Result<serde_json::Value> {
-    let resp = client.get(url).send().await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("{} → HTTP {}", url, resp.status());
-    }
-    Ok(resp.json().await?)
-}
-
-pub async fn fetch_npm_latest(name: &str) -> Result<String> {
-    let client = build_http_client()?;
-    fetch_npm_latest_with_client(&client, name).await
-}
-
-async fn fetch_npm_latest_with_client(client: &reqwest::Client, name: &str) -> Result<String> {
-    let body = http_get_json(
-        client,
-        &format!("https://registry.npmjs.org/{}/latest", name),
-    )
-    .await?;
-    body["version"]
-        .as_str()
-        .map(String::from)
-        .ok_or_else(|| anyhow::anyhow!("npm registry 响应无 version 字段"))
-}
-
-pub async fn fetch_pypi_latest(name: &str) -> Result<String> {
-    let client = build_http_client()?;
-    fetch_pypi_latest_with_client(&client, name).await
-}
-
-async fn fetch_pypi_latest_with_client(client: &reqwest::Client, name: &str) -> Result<String> {
-    let body = http_get_json(client, &format!("https://pypi.org/pypi/{}/json", name)).await?;
-    body["info"]["version"]
-        .as_str()
-        .map(String::from)
-        .ok_or_else(|| anyhow::anyhow!("PyPI 响应无 version 字段"))
-}
-
-pub async fn fetch_brew_latest(name: &str) -> Result<String> {
-    let client = build_http_client()?;
-    fetch_brew_latest_with_client(&client, name).await
-}
-
-async fn fetch_brew_latest_with_client(client: &reqwest::Client, name: &str) -> Result<String> {
-    let body = http_get_json(
-        client,
-        &format!("https://formulae.brew.sh/api/formula/{}.json", name),
-    )
-    .await?;
-    body["versions"]["stable"]
-        .as_str()
-        .map(String::from)
-        .ok_or_else(|| anyhow::anyhow!("Homebrew API 响应无 versions.stable 字段"))
-}
-
-pub async fn fetch_scoop_latest(name: &str) -> Result<String> {
-    let client = build_http_client()?;
-    fetch_scoop_latest_with_client(&client, name).await
-}
-
-async fn fetch_scoop_latest_with_client(client: &reqwest::Client, name: &str) -> Result<String> {
-    const BUCKETS: &[&str] = &["Main", "Extras", "Versions"];
-    for bucket in BUCKETS {
-        let url = format!(
-            "https://raw.githubusercontent.com/ScoopInstaller/{bucket}/master/bucket/{name}.json"
-        );
-        if let Ok(body) = http_get_json(client, &url).await {
-            if let Some(version) = body["version"].as_str() {
-                return Ok(version.to_string());
-            }
-        }
-    }
-    anyhow::bail!("Scoop 未在常用 bucket 中找到 {}", name)
-}
-
-pub async fn fetch_choco_latest(name: &str) -> Result<String> {
-    let client = build_http_client()?;
-    fetch_choco_latest_with_client(&client, name).await
-}
-
-async fn fetch_choco_latest_with_client(client: &reqwest::Client, name: &str) -> Result<String> {
-    let url = format!(
-        "https://community.chocolatey.org/api/v2/Packages()?$filter=Id%20eq%20%27{}%27&$orderby=Version%20desc&$top=1",
-        name
-    );
-    let resp = client.get(&url).send().await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("Chocolatey API → HTTP {}", resp.status());
-    }
-    let xml = resp.text().await?;
-    extract_choco_version(&xml).ok_or_else(|| anyhow::anyhow!("Chocolatey 响应未找到版本号"))
-}
-
-fn extract_choco_version(xml: &str) -> Option<String> {
-    let start = xml.find("<d:Version>")? + "<d:Version>".len();
-    let end = xml[start..].find("</d:Version>")?;
-    Some(xml[start..start + end].to_string())
-}
-
 pub struct LocalCliUpdater {
     db: Arc<Database>,
 }
@@ -246,12 +143,19 @@ impl LocalCliUpdater {
     }
 
     pub async fn check_updates(&self, tools: &mut Vec<LocalCliTool>) -> Result<()> {
-        let client = build_http_client()?;
         let semaphore = Arc::new(Semaphore::new(UPDATE_CHECK_CONCURRENCY));
         let mut tasks = Vec::new();
+        let mut eligible = 0usize;
+        let mut succeeded = 0usize;
+        let mut failures = Vec::new();
 
         for tool in tools.iter_mut() {
+            tool.update_check_error = None;
+            if !supports_read_only_update_check(tool) {
+                continue;
+            }
             if is_cache_fresh(tool.last_checked.as_deref()) {
+                eligible += 1;
                 tool.update_available = is_outdated(
                     tool.current_version.as_deref(),
                     tool.latest_version.as_deref(),
@@ -267,26 +171,19 @@ impl LocalCliUpdater {
                     tool.package_name.as_deref(),
                     tool.description.as_deref(),
                 );
+                succeeded += 1;
                 continue;
             }
 
-            let pkg_name = match tool.effective_package_name() {
-                Some(name) => name.to_string(),
-                None => continue,
-            };
-            let manager = tool.manager.clone();
-            if manager == PackageManager::Unknown {
-                continue;
-            }
-
-            let client = client.clone();
+            let pkg_name = tool.effective_package_name().to_string();
+            eligible += 1;
             let semaphore = Arc::clone(&semaphore);
-            let id = tool.id.clone();
+            let task_tool = tool.clone();
             let detected_path = tool.detected_path.clone();
             tasks.push(tokio::spawn(async move {
                 let _permit = semaphore.acquire_owned().await.ok();
-                let result = fetch_latest_for_manager(&client, &manager, &pkg_name).await;
-                (detected_path, id, result)
+                let result = fetch_latest_for_tool(&task_tool, &pkg_name).await;
+                (detected_path, task_tool.id, result)
             }));
         }
 
@@ -313,29 +210,316 @@ impl LocalCliUpdater {
                         tool.package_name.as_deref(),
                         tool.description.as_deref(),
                     );
+                    succeeded += 1;
                 }
-                Err(e) => log::warn!("检查 {} 更新失败: {}", id, e),
+                Err(e) => {
+                    let message = e.to_string();
+                    tool.update_check_error = Some(message.clone());
+                    failures.push(format!("{}: {}", id, message));
+                    log::warn!("检查 {} 更新失败: {}", id, message);
+                }
             }
+        }
+        if eligible > 0 && succeeded == 0 {
+            anyhow::bail!(
+                "所有 {} 个 CLI 更新检查均失败：{}",
+                eligible,
+                failures.join("；")
+            );
         }
         Ok(())
     }
 }
 
-async fn fetch_latest_for_manager(
-    client: &reqwest::Client,
-    manager: &PackageManager,
-    pkg_name: &str,
-) -> Result<String> {
-    match manager {
-        PackageManager::Npm | PackageManager::Pnpm => {
-            fetch_npm_latest_with_client(client, pkg_name).await
+async fn fetch_latest_for_tool(tool: &LocalCliTool, pkg_name: &str) -> Result<String> {
+    match tool.manager {
+        PackageManager::Npm => fetch_node_latest_with_manager(tool, "npm", pkg_name).await,
+        PackageManager::Pnpm => fetch_node_latest_with_manager(tool, "pnpm", pkg_name).await,
+        PackageManager::Pip => fetch_pip_latest_with_manager(tool, pkg_name).await,
+        PackageManager::Brew => fetch_brew_latest_with_manager(tool, pkg_name).await,
+        PackageManager::Scoop => fetch_scoop_latest_with_manager(tool, pkg_name).await,
+        PackageManager::Choco => fetch_choco_latest_with_manager(tool, pkg_name).await,
+        PackageManager::Native if tool.id == "grok" => fetch_grok_latest(tool).await,
+        PackageManager::Native if tool.id == "claude" => fetch_claude_latest().await,
+        PackageManager::Native => {
+            anyhow::bail!("native CLI does not support a read-only update check")
         }
-        PackageManager::Pip => fetch_pypi_latest_with_client(client, pkg_name).await,
-        PackageManager::Brew => fetch_brew_latest_with_client(client, pkg_name).await,
-        PackageManager::Scoop => fetch_scoop_latest_with_client(client, pkg_name).await,
-        PackageManager::Choco => fetch_choco_latest_with_client(client, pkg_name).await,
         PackageManager::Unknown => anyhow::bail!("unknown package manager"),
     }
+}
+
+async fn fetch_pip_latest_with_manager(tool: &LocalCliTool, pkg_name: &str) -> Result<String> {
+    let mut errors = Vec::new();
+    for (executable, args) in pip_check_commands(tool, pkg_name) {
+        let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        match run_command_output(&executable, &arg_refs, Duration::from_secs(20)).await {
+            Ok(output) => match parse_pip_latest(&String::from_utf8(output.stdout)?, pkg_name) {
+                Some(version) => return Ok(version),
+                None => errors.push(format!(
+                    "{} returned no latest version",
+                    executable.to_string_lossy()
+                )),
+            },
+            Err(error) => errors.push(format!("{}: {error}", executable.to_string_lossy())),
+        }
+    }
+
+    anyhow::bail!("pip update check failed: {}", errors.join("; "))
+}
+
+fn parse_pip_latest(stdout: &str, pkg_name: &str) -> Option<String> {
+    let prefix = format!("{} (", pkg_name.to_ascii_lowercase());
+    stdout
+        .lines()
+        .find_map(|line| {
+            let trimmed = line.trim();
+            let lower = trimmed.to_ascii_lowercase();
+            lower
+                .strip_prefix(&prefix)
+                .and_then(|rest| rest.strip_suffix(')'))
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn pip_check_commands(tool: &LocalCliTool, pkg_name: &str) -> Vec<(PathBuf, Vec<String>)> {
+    let index_args = || {
+        vec![
+            "index".to_string(),
+            "versions".to_string(),
+            pkg_name.to_string(),
+            "--disable-pip-version-check".to_string(),
+        ]
+    };
+    let mut commands = Vec::new();
+    if let Some(sibling) = sibling_manager_command(&tool.detected_path, "pip") {
+        commands.push((sibling, index_args()));
+    }
+
+    // Keep the configured package source by invoking the user's own pip/Python process.
+    commands.push((PathBuf::from("pip"), index_args()));
+    let mut module_args = vec!["-m".to_string(), "pip".to_string()];
+    module_args.extend(index_args());
+    commands.push((PathBuf::from("python"), module_args.clone()));
+    if cfg!(windows) {
+        commands.push((PathBuf::from("py"), module_args));
+    } else {
+        commands.push((PathBuf::from("python3"), module_args));
+    }
+    commands
+}
+
+async fn fetch_brew_latest_with_manager(tool: &LocalCliTool, pkg_name: &str) -> Result<String> {
+    let executable = manager_command_with_common_paths(
+        tool,
+        "brew",
+        &["/opt/homebrew/bin/brew", "/usr/local/bin/brew"],
+    );
+    let output = run_command_output(
+        &executable,
+        &["info", "--json=v2", pkg_name],
+        Duration::from_secs(20),
+    )
+    .await?;
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let formula = body["formulae"]
+        .as_array()
+        .and_then(|formulae| formulae.first())
+        .ok_or_else(|| anyhow::anyhow!("brew info did not return formula metadata"))?;
+    let stable = formula["versions"]["stable"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("brew info did not return a stable version"))?;
+    let revision = formula["revision"].as_u64().unwrap_or(0);
+    Ok(if revision > 0 {
+        format!("{stable}_{revision}")
+    } else {
+        stable.to_string()
+    })
+}
+
+async fn fetch_scoop_latest_with_manager(tool: &LocalCliTool, pkg_name: &str) -> Result<String> {
+    let executable = manager_command_with_common_paths(tool, "scoop", &[]);
+    let output =
+        run_command_output(&executable, &["info", pkg_name], Duration::from_secs(20)).await?;
+    parse_labeled_version(&String::from_utf8(output.stdout)?, "Version")
+        .ok_or_else(|| anyhow::anyhow!("scoop info did not return a version"))
+}
+
+async fn fetch_choco_latest_with_manager(tool: &LocalCliTool, pkg_name: &str) -> Result<String> {
+    let executable = manager_command_with_common_paths(tool, "choco", &[]);
+    let output = run_command_output(
+        &executable,
+        &["search", pkg_name, "--exact", "--limit-output"],
+        Duration::from_secs(20),
+    )
+    .await?;
+    let stdout = String::from_utf8(output.stdout)?;
+    stdout
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .split_once('|')
+                .map(|(_, version)| version.trim().to_string())
+        })
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("Chocolatey search did not return a version"))
+}
+
+fn parse_labeled_version(output: &str, label: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let (key, value) = line.trim().split_once(':')?;
+        key.trim()
+            .eq_ignore_ascii_case(label)
+            .then(|| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn manager_command_with_common_paths(
+    tool: &LocalCliTool,
+    manager: &str,
+    common_paths: &[&str],
+) -> PathBuf {
+    sibling_manager_command(&tool.detected_path, manager)
+        .or_else(|| {
+            common_paths
+                .iter()
+                .map(PathBuf::from)
+                .find(|path| path.is_file())
+        })
+        .unwrap_or_else(|| PathBuf::from(manager))
+}
+
+async fn fetch_node_latest_with_manager(
+    tool: &LocalCliTool,
+    manager: &str,
+    pkg_name: &str,
+) -> Result<String> {
+    let executable = sibling_manager_command(&tool.detected_path, manager)
+        .unwrap_or_else(|| PathBuf::from(manager));
+    let output = run_command_output(
+        &executable,
+        &["view", pkg_name, "version", "--json"],
+        Duration::from_secs(15),
+    )
+    .await?;
+    let stdout = String::from_utf8(output.stdout)?.trim().to_string();
+    if let Ok(version) = serde_json::from_str::<String>(&stdout) {
+        return Ok(version);
+    }
+    let version = stdout.trim_matches('"').trim();
+    if version.is_empty() {
+        anyhow::bail!("{} registry response did not contain a version", manager);
+    }
+    Ok(version.to_string())
+}
+
+async fn fetch_grok_latest(tool: &LocalCliTool) -> Result<String> {
+    let output = run_command_output(
+        Path::new(&tool.detected_path),
+        &["update", "--check", "--json"],
+        Duration::from_secs(15),
+    )
+    .await?;
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    body["latestVersion"]
+        .as_str()
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("Grok update check did not return latestVersion"))
+}
+
+async fn fetch_claude_latest() -> Result<String> {
+    let channel = claude_update_channel(dirs::home_dir().as_deref());
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent("agent-skills-guard/1.0")
+        .build()?;
+    let response = client
+        .get(format!("{CLAUDE_RELEASES_BASE_URL}/{channel}"))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Claude release channel {} returned HTTP {}",
+            channel,
+            response.status()
+        );
+    }
+    parse_claude_release_version(&response.text().await?)
+        .ok_or_else(|| anyhow::anyhow!("Claude release channel returned an invalid version"))
+}
+
+fn claude_update_channel(home: Option<&Path>) -> &'static str {
+    let Some(settings_path) = home.map(|home| home.join(".claude").join("settings.json")) else {
+        return "latest";
+    };
+    let Ok(settings) = std::fs::read_to_string(settings_path) else {
+        return "latest";
+    };
+    let Ok(settings) = serde_json::from_str::<serde_json::Value>(&settings) else {
+        return "latest";
+    };
+    match settings["autoUpdatesChannel"].as_str() {
+        Some("stable") => "stable",
+        _ => "latest",
+    }
+}
+
+fn parse_claude_release_version(body: &str) -> Option<String> {
+    let version = normalize_version(body);
+    parse_version_key(&version).map(|_| version)
+}
+
+fn sibling_manager_command(detected_path: &str, manager: &str) -> Option<PathBuf> {
+    let parent = Path::new(detected_path).parent()?;
+    let names = if cfg!(windows) {
+        vec![
+            format!("{manager}.cmd"),
+            format!("{manager}.exe"),
+            manager.to_string(),
+        ]
+    } else {
+        vec![manager.to_string()]
+    };
+    names
+        .into_iter()
+        .map(|name| parent.join(name))
+        .find(|path| path.is_file())
+}
+
+async fn run_command_output(
+    executable: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<std::process::Output> {
+    let extension = executable
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let mut command = if cfg!(windows) && matches!(extension.as_str(), "cmd" | "bat") {
+        let mut command = tokio::process::Command::new("cmd.exe");
+        command.arg("/d").arg("/c").arg(executable).args(args);
+        command
+    } else {
+        let mut command = tokio::process::Command::new(executable);
+        command.args(args);
+        command
+    };
+    command.kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.as_std_mut().creation_flags(0x08000000);
+    }
+    let output = tokio::time::timeout(timeout, command.output())
+        .await
+        .map_err(|_| anyhow::anyhow!("command timed out after {}s", timeout.as_secs()))??;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let summary = stderr.lines().take(3).collect::<Vec<_>>().join(" ");
+        anyhow::bail!("command failed: {}", summary);
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -371,13 +555,77 @@ mod tests {
     }
 
     #[test]
-    fn brew_revision_suffix_not_treated_as_outdated() {
+    fn brew_revision_suffix_participates_in_comparison() {
         assert!(!is_outdated(Some("3.13.8_1"), Some("3.13.8")));
-        assert!(!is_outdated(Some("3.13.8"), Some("3.13.8_1")));
+        assert!(is_outdated(Some("3.13.8"), Some("3.13.8_1")));
         assert!(!is_outdated(Some("3.13.8_2"), Some("3.13.8_1")));
         assert!(is_outdated(Some("3.13.7"), Some("3.13.8")));
-        // v 前缀 + revision 组合
         assert!(!is_outdated(Some("v3.13.8_1"), Some("3.13.8")));
+    }
+
+    #[test]
+    fn incomparable_vendor_versions_do_not_create_false_updates() {
+        assert!(!is_outdated(Some("2.0rc1"), Some("1.0rc1")));
+        assert!(!is_outdated(Some("vendor-current"), Some("vendor-latest")));
+    }
+
+    #[test]
+    fn pip_check_falls_back_from_path_to_python_module() {
+        let tool = LocalCliTool::new(
+            "demo",
+            "/home/user/.local/bin/demo",
+            PackageManager::Pip,
+        );
+
+        let commands = pip_check_commands(&tool, "demo-package");
+
+        assert_eq!(commands[0].0, PathBuf::from("pip"));
+        assert_eq!(commands[1].0, PathBuf::from("python"));
+        assert_eq!(commands[1].1[..2], ["-m", "pip"]);
+        assert!(commands[1].1.contains(&"demo-package".to_string()));
+    }
+
+    #[test]
+    fn parses_pip_index_latest_version_case_insensitively() {
+        assert_eq!(
+            parse_pip_latest("DEMO-PACKAGE (2.4.1)\nAvailable versions: 2.4.1", "demo-package")
+                .as_deref(),
+            Some("2.4.1")
+        );
+    }
+
+    #[test]
+    fn claude_release_version_requires_a_valid_version() {
+        assert_eq!(
+            parse_claude_release_version("2.1.224\n").as_deref(),
+            Some("2.1.224")
+        );
+        assert_eq!(parse_claude_release_version("<html>error</html>"), None);
+    }
+
+    #[test]
+    fn claude_update_check_honors_the_configured_release_channel() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings_dir = dir.path().join(".claude");
+        std::fs::create_dir_all(&settings_dir).unwrap();
+        std::fs::write(
+            settings_dir.join("settings.json"),
+            r#"{"autoUpdatesChannel":"stable"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(claude_update_channel(Some(dir.path())), "stable");
+        assert_eq!(claude_update_channel(None), "latest");
+    }
+
+    #[test]
+    fn native_claude_and_grok_support_read_only_update_checks() {
+        for id in ["claude", "grok"] {
+            let tool = LocalCliTool::new(id, "/usr/local/bin/tool", PackageManager::Native);
+            assert!(supports_read_only_update_check(&tool));
+        }
+        let codex = LocalCliTool::new("codex", "/usr/local/bin/codex", PackageManager::Native);
+        assert!(!supports_read_only_update_check(&codex));
     }
 
     #[tokio::test]

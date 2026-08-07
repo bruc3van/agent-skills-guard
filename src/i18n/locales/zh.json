@@ -182,6 +182,10 @@
     "install": "安装",
     "installToOther": "新增",
     "uninstall": "卸载",
+    "managers": {
+      "native": "原生安装",
+      "unknown": "未知来源"
+    },
     "uninstallAll": "全部",
     "uninstallPath": "卸载此路径",
     "installing": "安装中",
@@ -775,6 +779,8 @@
     "checking": "检查中...",
     "updatesFound": "发现 {{count}} 个可更新工具",
     "noUpdates": "所有 CLI 工具均已是最新版本",
+    "partialCheck": "检查未完全成功：发现 {{updates}} 个更新，{{failed}} 个工具检查失败",
+    "partialCheckNoUpdates": "未发现更新，但有 {{failed}} 个工具检查失败，结果不完整",
     "checkUpdatesFailed": "检查更新失败：{{error}}",
     "search": "搜索工具...",
     "updated": "已更新",
@@ -789,6 +795,7 @@
       "brew": "brew ({{count}})",
       "scoop": "scoop ({{count}})",
       "choco": "choco ({{count}})",
+      "native": "原生安装 ({{count}})",
       "unknown": "其他 ({{count}})"
     },
     "updatesFocus": {
@@ -818,7 +825,9 @@
       "noVersion": "未知版本",
       "lastChecked": "上次检查",
       "notChecked": "未检查",
-      "bundledTools": "个附带工具"
+      "bundledTools": "个附带工具",
+      "checkAndUpdate": "检查并更新",
+      "checkFailed": "更新检查失败：{{error}}"
     },
     "busy": {
       "updating": "正在更新 {{name}}...",

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupByManager, managerLabel } from "./local-cli";
+import { canNativeSelfUpdate, groupByManager, managerLabel } from "./local-cli";
 import { localCliQueryKey } from "../hooks/useLocalCli";
 import type { LocalCliTool } from "../types";
 
@@ -24,9 +24,21 @@ describe("managerLabel", () => {
     expect(managerLabel("npm")).toBe("npm");
     expect(managerLabel("pnpm")).toBe("pnpm");
     expect(managerLabel("pip")).toBe("pip");
+    expect(managerLabel("native")).toBe("Native");
+    expect(managerLabel("native", (key) => (key.endsWith("native") ? "原生安装" : key))).toBe(
+      "原生安装"
+    );
   });
   it("unknown 显示未知", () => {
     expect(managerLabel("unknown")).toBeTruthy();
+  });
+});
+
+describe("canNativeSelfUpdate", () => {
+  it("只开放已验证的原生自更新器", () => {
+    expect(canNativeSelfUpdate(make("claude", "native"))).toBe(true);
+    expect(canNativeSelfUpdate(make("codex", "native"))).toBe(true);
+    expect(canNativeSelfUpdate(make("gemini", "native"))).toBe(false);
   });
 });
 

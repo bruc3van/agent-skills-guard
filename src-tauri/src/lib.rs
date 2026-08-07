@@ -538,6 +538,7 @@ pub fn run() {
                 plugin_manager,
                 github,
                 cli_scan_cache: std::sync::RwLock::new(None),
+                local_cli_operation: tokio::sync::Mutex::new(()),
             });
 
             // 初始化系统托盘

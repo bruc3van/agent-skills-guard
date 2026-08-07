@@ -8,6 +8,7 @@ import type { LocalCliTool } from "../types";
 
 const toastMocks = vi.hoisted(() => ({
   success: vi.fn(),
+  warning: vi.fn(),
   error: vi.fn(),
 }));
 
@@ -18,10 +19,12 @@ let mockTools: LocalCliTool[] = [
     manager: "pip",
     current_version: "0.3.1",
     update_available: false,
+    package_name: "bruce-doc-converter",
   },
 ];
 
 const fetchLocalCliDescriptions = vi.fn();
+const updateLocalCliTool = vi.fn();
 const openLocalCliFolder = vi.fn();
 const uninstallLocalCliTool = vi.fn();
 const uninstallMutation = vi.fn();
@@ -56,6 +59,7 @@ vi.mock("../hooks/useLocalCli", () => ({
 vi.mock("../lib/api", () => ({
   api: {
     fetchLocalCliDescriptions,
+    updateLocalCliTool,
     openLocalCliFolder,
     uninstallLocalCliTool,
   },
@@ -63,6 +67,7 @@ vi.mock("../lib/api", () => ({
 vi.mock("../lib/toast", () => ({
   appToast: {
     success: toastMocks.success,
+    warning: toastMocks.warning,
     error: toastMocks.error,
   },
 }));
@@ -81,9 +86,11 @@ afterEach(() => {
       manager: "pip",
       current_version: "0.3.1",
       update_available: false,
+      package_name: "bruce-doc-converter",
     },
   ];
   fetchLocalCliDescriptions.mockReset();
+  updateLocalCliTool.mockReset();
   openLocalCliFolder.mockReset();
   uninstallLocalCliTool.mockReset();
   uninstallMutation.mockReset();
@@ -91,6 +98,7 @@ afterEach(() => {
   rescanLocalCliTools.mockReset();
   checkLocalCliUpdates.mockReset();
   toastMocks.success.mockReset();
+  toastMocks.warning.mockReset();
   toastMocks.error.mockReset();
   isRescanning = false;
   isChecking = false;
@@ -424,5 +432,69 @@ describe("LocalCliPage", () => {
     await user.click(screen.getByRole("button", { name: "localCli.checkUpdates" }));
 
     expect(toastMocks.success).toHaveBeenCalledWith("localCli.noUpdates");
+  });
+
+  it("部分工具检查失败时不误报全部最新", async () => {
+    checkLocalCliUpdates.mockImplementation((_vars, options) => {
+      options?.onSuccess?.([{ ...mockTools[0], update_check_error: "registry unavailable" }]);
+    });
+    const { LocalCliPage } = await import("./LocalCliPage");
+    render(<LocalCliPage />, { wrapper });
+
+    await userEvent.click(screen.getByRole("button", { name: "localCli.checkUpdates" }));
+
+    expect(toastMocks.warning).toHaveBeenCalledWith("localCli.partialCheckNoUpdates", {
+      duration: 5000,
+    });
+    expect(toastMocks.success).not.toHaveBeenCalledWith("localCli.noUpdates");
+  });
+
+  it("原生自管理 CLI 不提供包管理器卸载按钮", async () => {
+    mockTools = [
+      {
+        id: "claude",
+        detected_path: "/home/u/.local/bin/claude",
+        manager: "native",
+        current_version: "2.1.223",
+        update_available: false,
+        package_name: "claude",
+      },
+    ];
+    const { LocalCliPage } = await import("./LocalCliPage");
+    render(<LocalCliPage />, { wrapper });
+
+    expect(screen.getByText("localCli.tabs.native")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "localCli.uninstall: claude" })).toBeNull();
+    expect(screen.getByRole("button", { name: "localCli.card.checkAndUpdate" })).not.toBeNull();
+  });
+
+  it("在工具卡片展示具体的更新检查错误", async () => {
+    mockTools = [{ ...mockTools[0], update_check_error: "registry unavailable" }];
+    const { LocalCliPage } = await import("./LocalCliPage");
+    render(<LocalCliPage />, { wrapper });
+
+    const failure = screen.getByTitle("registry unavailable");
+    expect(failure.textContent).toContain("localCli.card.checkFailed");
+  });
+
+  it("批量更新期间禁用检查更新", async () => {
+    updateLocalCliTool.mockImplementation(() => new Promise(() => {}));
+    mockTools = [
+      {
+        ...mockTools[0],
+        latest_version: "0.4.0",
+        update_available: true,
+      },
+    ];
+    const { LocalCliPage } = await import("./LocalCliPage");
+    render(<LocalCliPage />, { wrapper });
+
+    await userEvent.click(screen.getByRole("button", { name: "localCli.updatesFocus.bulkUpdate" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "localCli.checkUpdates" }).hasAttribute("disabled")
+      ).toBe(true);
+    });
   });
 });

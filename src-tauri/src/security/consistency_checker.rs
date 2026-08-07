@@ -79,12 +79,18 @@ static RE_GLOB: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 static RE_NETWORK: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
         Regex::new(r"requests\.(get|post|put|delete)").expect("RE_NETWORK"),
-        Regex::new(r"urllib").expect("RE_NETWORK"),
+        // urllib 只认真正发起请求的子模块：urllib.parse 是纯本地 URL 编解码，不联网
+        Regex::new(r"urllib\.(request|error)").expect("RE_NETWORK"),
+        Regex::new(r"from\s+urllib\s+import\s+[^\n]*\b(request|error)\b").expect("RE_NETWORK"),
+        Regex::new(r"\burlopen\s*\(").expect("RE_NETWORK"),
         Regex::new(r"httpx").expect("RE_NETWORK"),
         Regex::new(r"aiohttp").expect("RE_NETWORK"),
         Regex::new(r"socket\.connect").expect("RE_NETWORK"),
     ]
 });
+
+/// 真正建立连接的 socket 调用（区别于 `socket.AF_INET` 这类常量引用）
+static RE_SOCKET_NET: Lazy<Regex> = lazy_regex!(r"socket\.(socket|connect|create_connection)\s*\(");
 
 static RE_HTTP_URL: Lazy<Regex> = lazy_regex!(r#"https?://[^\s"'`]+"#);
 
@@ -160,7 +166,9 @@ fn uses_network_excluding_localhost(content: &str) -> bool {
             return true;
         }
     }
-    content.contains("socket.") && !content.contains("127.0.0.1") && !content.contains("localhost")
+    RE_SOCKET_NET.is_match(content)
+        && !content.contains("127.0.0.1")
+        && !content.contains("localhost")
 }
 
 /// 创建一个 Finding 实例（consistency_checker 专用）
@@ -385,7 +393,12 @@ pub fn check_manifest_consistency(ctx: &SkillContext) -> Vec<Finding> {
             k_lower.contains("network") || k_lower.contains("internet")
         });
 
-        if !compat_has_network && !compat_key_has_network {
+        // compatibility 整体缺失 ≠ 声明「不联网」：多数 manifest 格式（如 skill.json）
+        // 根本不使用该字段，此时无从判断声明与否，报出只会是噪声。仅当作者确实填写了
+        // compatibility 却漏掉 network/internet 时才提示。
+        let compat_declared = !manifest.compatibility.is_empty();
+
+        if compat_declared && !compat_has_network && !compat_key_has_network {
             findings.push(make_finding(
                 "TOOL_ABUSE_UNDECLARED_NETWORK",
                 IssueSeverity::Medium,
@@ -820,6 +833,88 @@ mod tests {
         assert!(
             network_findings.is_empty(),
             "Network declared in compatibility → should not trigger TOOL_ABUSE_UNDECLARED_NETWORK"
+        );
+    }
+
+    #[test]
+    fn test_manifest_urllib_parse_only_is_not_network() {
+        // 回归：bruce-drawio —— urllib.parse 是纯本地 URL 编解码，配合 https 常量
+        // 不构成网络使用
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+
+        let skill_md = "---\nname: test-skill\ndescription: A valid description for testing\ncompatibility:\n  platform: linux\n---\n\nBody.";
+        std::fs::write(dir_path.join("skill.md"), skill_md).unwrap();
+        std::fs::write(
+            dir_path.join("build_url.py"),
+            "from urllib.parse import quote\nimport webbrowser\n\nBASE_URL = \"https://app.diagrams.net/\"\n\ndef build(xml):\n    return f\"{BASE_URL}#R{quote(xml)}\"\n",
+        )
+        .unwrap();
+
+        let policy = ScanPolicy::builtin_default().clone();
+        let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
+        let findings = check_manifest_consistency(&ctx);
+
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.rule_id == "TOOL_ABUSE_UNDECLARED_NETWORK"),
+            "urllib.parse does not perform network I/O → should not trigger TOOL_ABUSE_UNDECLARED_NETWORK, got: {:?}",
+            findings.iter().map(|f| &f.rule_id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_manifest_urllib_request_still_counts_as_network() {
+        // urllib.request 真正发起请求 → 仍需检出
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+
+        let skill_md = "---\nname: test-skill\ndescription: A valid description for testing\ncompatibility:\n  platform: linux\n---\n\nBody.";
+        std::fs::write(dir_path.join("skill.md"), skill_md).unwrap();
+        std::fs::write(
+            dir_path.join("fetch.py"),
+            "import urllib.request\n\nurllib.request.urlopen(\"https://example.com/api\")\n",
+        )
+        .unwrap();
+
+        let policy = ScanPolicy::builtin_default().clone();
+        let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
+        let findings = check_manifest_consistency(&ctx);
+
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.rule_id == "TOOL_ABUSE_UNDECLARED_NETWORK"),
+            "urllib.request must still count as network use, got: {:?}",
+            findings.iter().map(|f| &f.rule_id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_manifest_without_compatibility_field_does_not_trigger_network_finding() {
+        // compatibility 整体缺失 ≠ 声明「不联网」，不应据此告警
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+
+        let skill_md = "---\nname: test-skill\ndescription: A valid description for testing\n---\n\nBody.";
+        std::fs::write(dir_path.join("skill.md"), skill_md).unwrap();
+        std::fs::write(
+            dir_path.join("fetch.py"),
+            "import requests\nrequests.get('https://example.com')",
+        )
+        .unwrap();
+
+        let policy = ScanPolicy::builtin_default().clone();
+        let ctx = SkillContext::for_directory(dir_path.to_str().unwrap(), policy).unwrap();
+        let findings = check_manifest_consistency(&ctx);
+
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.rule_id == "TOOL_ABUSE_UNDECLARED_NETWORK"),
+            "Missing compatibility field should not be reported as undeclared network, got: {:?}",
+            findings.iter().map(|f| &f.rule_id).collect::<Vec<_>>()
         );
     }
 

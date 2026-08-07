@@ -6,7 +6,7 @@
 
 ### 让 Claude Code 技能管理像应用商店一样简单安全
 
-[![Version](https://img.shields.io/badge/version-1.3.4-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
+[![Version](https://img.shields.io/badge/version-1.3.6-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 
@@ -377,6 +377,19 @@
 - **真实高危规则**：hard_trigger 规则（密钥泄露、破坏性命令等）在文档路径中**不降级**，保持阻断
 
 **SKILL.md 特殊处理**：`SKILL.md` 作为 skill 主文件，不受文档路径降级影响，始终按完整规则执行扫描。
+
+### 已知安装器域名降级机制
+
+策略中的 `known_installer_domains` 列出可信的官方安装器域名（rustup、Homebrew、Astral 等）。命中时对「下载→管道→执行」类发现**降级为 Medium 并保留**，而非豁免——官方安装脚本仍是远程代码执行，风险始终可见，只是不再以 hard_trigger 拦截整个技能。
+
+生效范围与约束：
+
+- **仅限安装形态的规则** — `CURL_PIPE_SH`、`WGET_PIPE_SH`、`POWERSHELL_PIPE_IEX`、`POWERSHELL_IEX_DOWNLOAD` 及对应的链路/污点发现。`REVERSE_SHELL`、`BASE64_EXEC`、`CERTUTIL_DOWNLOAD` 等攻击手法不参与降级
+- **绑定到实际下载行** — 白名单只在发起下载的那一行里查找 URL，文件别处的注释或文档链接不会影响判定
+- **hostname 精确或子域匹配** — `https://evil.com/steal-bun.sh/payload` 不会冒充 `bun.sh`
+- **代码自动执行不降级** — 被 `execSync` / `os.system` / `subprocess` 包裹时保持原严重度
+
+**收录标准**：域名下的内容必须完全由可信方控制。允许任意用户发布内容的域一律不得收录，包括包 registry（`npmjs.com`、`pypi.org`）、第三方模块仓库（`deno.land/x`）、代码托管原始文件（`raw.githubusercontent.com`、`gist.github.com`）与共享托管域（`*.vercel.app`、`*.pages.dev`）。
 
 
 ### 免责声明

@@ -18,7 +18,7 @@ import {
   useUninstallLocalCliTool,
   LOCAL_CLI_QUERY_KEY,
 } from "../hooks/useLocalCli";
-import { managerLabel } from "../lib/local-cli";
+import { canNativeSelfUpdate, managerLabel } from "../lib/local-cli";
 import { useTranslation } from "react-i18next";
 import { PageBusyNotice } from "./ui/PageBusyNotice";
 import type { LocalCliTool } from "../types";
@@ -29,7 +29,7 @@ import { SkillUninstallConfirmDialog } from "./SkillUninstallConfirmDialog";
 
 type ManagerTab = "all" | string;
 
-const VISIBLE_MANAGERS = ["npm", "pnpm", "pip", "brew", "scoop", "choco", "unknown"];
+const VISIBLE_MANAGERS = ["npm", "pnpm", "pip", "brew", "scoop", "choco", "native", "unknown"];
 
 export function LocalCliPage() {
   const { t, i18n } = useTranslation();
@@ -197,21 +197,46 @@ export function LocalCliPage() {
     if (isUninstalling && uninstallingTool) {
       return t("localCli.busy.uninstalling", { name: uninstallingTool.id });
     }
+    if (bulkUpdateProgress) {
+      return t("localCli.updatesFocus.bulkUpdating", bulkUpdateProgress);
+    }
     if (fetchProgress) {
       return t("localCli.busy.fetchingDesc", { total: fetchProgress.total });
     }
     return null;
-  }, [isChecking, isUpdating, isUninstalling, fetchProgress, t, updatingTool, uninstallingTool]);
+  }, [
+    isChecking,
+    isUpdating,
+    isUninstalling,
+    bulkUpdateProgress,
+    fetchProgress,
+    t,
+    updatingTool,
+    uninstallingTool,
+  ]);
 
   const handleCheckUpdates = () => {
+    if (bulkUpdateProgress !== null || isUpdating || isUninstalling || isRescanning) return;
     checkUpdates(undefined, {
       onSuccess: (updatedTools) => {
         void refetch();
         const updates = updatedTools.filter((tool) => tool.update_available).length;
+        const failures = updatedTools.filter((tool) => tool.update_check_error);
         if (updates > 0) {
           setActiveTab("all");
           setShowUpdatesOnly(true);
-          appToast.success(t("localCli.updatesFound", { count: updates }));
+          if (failures.length > 0) {
+            appToast.warning(t("localCli.partialCheck", { updates, failed: failures.length }), {
+              duration: 5000,
+            });
+          } else {
+            appToast.success(t("localCli.updatesFound", { count: updates }));
+          }
+        } else if (failures.length > 0) {
+          setShowUpdatesOnly(false);
+          appToast.warning(t("localCli.partialCheckNoUpdates", { failed: failures.length }), {
+            duration: 5000,
+          });
         } else {
           setShowUpdatesOnly(false);
           appToast.success(t("localCli.noUpdates"));
@@ -344,7 +369,13 @@ export function LocalCliPage() {
                   </button>
                   <button
                     onClick={handleCheckUpdates}
-                    disabled={isChecking || isRescanning || isUpdating || isUninstalling}
+                    disabled={
+                      isChecking ||
+                      isRescanning ||
+                      isUpdating ||
+                      isUninstalling ||
+                      bulkUpdateProgress !== null
+                    }
                     className="apple-button-primary h-10 px-5 flex items-center gap-2 disabled:opacity-50"
                   >
                     {isChecking ? (
@@ -433,7 +464,7 @@ export function LocalCliPage() {
                             : "bg-card text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        {managerLabel(manager)} ({count})
+                        {managerLabel(manager, (key) => t(key))} ({count})
                       </button>
                     );
                   })}
@@ -578,7 +609,9 @@ export function LocalCliPage() {
             name: pendingUninstall?.id ?? "",
           }),
           impact: t("localCli.uninstallDialog.impact", {
-            manager: pendingUninstall ? managerLabel(pendingUninstall.manager) : "",
+            manager: pendingUninstall
+              ? managerLabel(pendingUninstall.manager, (key) => t(key))
+              : "",
             package: pendingUninstall?.package_name ?? pendingUninstall?.id ?? "",
           }),
           cancel: t("localCli.uninstallDialog.cancel"),
@@ -656,6 +689,7 @@ function CliToolCard({
 }) {
   const { t } = useTranslation();
   const hasUpdate = tool.update_available;
+  const canRunUpdate = hasUpdate || canNativeSelfUpdate(tool);
   const packageName = tool.package_name && tool.package_name !== tool.id ? tool.package_name : null;
   const lastChecked = formatLastChecked(tool.last_checked, t("localCli.card.notChecked"));
 
@@ -666,7 +700,7 @@ function CliToolCard({
           <div className="flex items-center gap-2.5 mb-1 flex-wrap">
             <h3 className="font-semibold text-foreground font-mono text-sm truncate">{tool.id}</h3>
             <span className="text-[10px] uppercase tracking-normal bg-secondary text-muted-foreground px-1.5 py-0.5 rounded-md font-medium">
-              {managerLabel(tool.manager)}
+              {managerLabel(tool.manager, (key) => t(key))}
             </span>
             {hasUpdate && (
               <span className="text-[10px] bg-amber-500/15 text-amber-600 border border-amber-500/40 px-2 py-0.5 rounded-full font-medium">
@@ -693,7 +727,7 @@ function CliToolCard({
         </div>
 
         <div className="flex gap-2 shrink-0">
-          {hasUpdate && (
+          {canRunUpdate && (
             <button
               onClick={() => onUpdate(tool)}
               disabled={isAnyOperationPending}
@@ -707,30 +741,32 @@ function CliToolCard({
               ) : (
                 <>
                   <Download className="w-3.5 h-3.5" />
-                  {t("localCli.update")}
+                  {hasUpdate ? t("localCli.update") : t("localCli.card.checkAndUpdate")}
                 </>
               )}
             </button>
           )}
-          <button
-            onClick={() => onRequestUninstall(tool)}
-            disabled={isAnyOperationPending}
-            aria-label={`${t("localCli.uninstall")}: ${tool.id}`}
-            title={`${t("localCli.uninstall")}: ${tool.id}`}
-            className="apple-button-destructive h-8 px-3 text-xs flex items-center gap-1.5"
-          >
-            {isUninstalling ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                {t("localCli.card.uninstalling")}
-              </>
-            ) : (
-              <>
-                <Trash2 className="w-3.5 h-3.5" />
-                {t("localCli.uninstall")}
-              </>
-            )}
-          </button>
+          {tool.manager !== "native" && tool.manager !== "unknown" && tool.package_name && (
+            <button
+              onClick={() => onRequestUninstall(tool)}
+              disabled={isAnyOperationPending}
+              aria-label={`${t("localCli.uninstall")}: ${tool.id}`}
+              title={`${t("localCli.uninstall")}: ${tool.id}`}
+              className="apple-button-destructive h-8 px-3 text-xs flex items-center gap-1.5"
+            >
+              {isUninstalling ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  {t("localCli.card.uninstalling")}
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {t("localCli.uninstall")}
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
@@ -748,6 +784,16 @@ function CliToolCard({
           <span>...</span>
         </div>
       ) : null}
+
+      {tool.update_check_error && (
+        <p
+          role="status"
+          title={tool.update_check_error}
+          className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-700 dark:text-amber-400 break-words"
+        >
+          {t("localCli.card.checkFailed", { error: tool.update_check_error })}
+        </p>
+      )}
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mb-3 text-xs">
         <div className="min-w-0">

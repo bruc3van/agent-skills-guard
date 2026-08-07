@@ -977,13 +977,31 @@ pub fn parse_version(output: &str) -> Option<String> {
 }
 
 pub fn detect_version(path: &Path) -> Option<String> {
-    match detect_manager_from_path(path) {
+    detect_version_for_manager(path, &detect_manager_from_path(path))
+}
+
+pub fn detect_version_for_manager(path: &Path, manager: &PackageManager) -> Option<String> {
+    match manager {
         PackageManager::Npm => detect_npm_version(path),
         PackageManager::Pnpm => detect_pnpm_version(path),
         PackageManager::Pip => detect_pip_version(path),
         PackageManager::Brew => detect_brew_version(path),
         PackageManager::Scoop => detect_scoop_version(path),
         PackageManager::Choco => detect_choco_version(path),
+        PackageManager::Native => {
+            let output = spawn_command_timeout(
+                &path.to_string_lossy(),
+                &["--version"],
+                Duration::from_secs(5),
+            )
+            .ok()?;
+            let text = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            parse_version(&text)
+        }
         PackageManager::Unknown => None,
     }
 }
@@ -995,6 +1013,94 @@ pub fn discover_local_cli_tools() -> Vec<LocalCliTool> {
     tools.extend(discover_pip_tools());
     tools.extend(discover_brew_tools());
     tools.extend(discover_scoop_choco_tools());
+    let native_tools = discover_known_native_cli_tools(&tools);
+    tools.extend(native_tools);
+    tools.sort_by(|a, b| a.id.cmp(&b.id));
+    tools
+}
+
+struct KnownNativeCli {
+    id: &'static str,
+    description: &'static str,
+    relative_paths: &'static [&'static str],
+}
+
+const KNOWN_NATIVE_CLIS: &[KnownNativeCli] = &[
+    KnownNativeCli {
+        id: "grok",
+        description: "Grok CLI",
+        relative_paths: &[".grok/bin/grok.exe", ".grok/bin/grok"],
+    },
+    KnownNativeCli {
+        id: "claude",
+        description: "Claude Code",
+        relative_paths: &[".local/bin/claude.exe", ".local/bin/claude"],
+    },
+    KnownNativeCli {
+        id: "gemini",
+        description: "Gemini CLI",
+        relative_paths: &[],
+    },
+    KnownNativeCli {
+        id: "opencode",
+        description: "OpenCode",
+        relative_paths: &[],
+    },
+    KnownNativeCli {
+        id: "codex",
+        description: "Codex CLI",
+        relative_paths: &[],
+    },
+];
+
+fn discover_known_native_cli_tools(existing: &[LocalCliTool]) -> Vec<LocalCliTool> {
+    let existing_ids = existing
+        .iter()
+        .map(|tool| tool.id.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let home = dirs::home_dir();
+    let mut tools = Vec::new();
+
+    for spec in KNOWN_NATIVE_CLIS {
+        if existing_ids.contains(spec.id) {
+            continue;
+        }
+
+        let mut candidates = Vec::new();
+        if let Some(home) = home.as_ref() {
+            candidates.extend(spec.relative_paths.iter().map(|path| home.join(path)));
+        }
+        if let Ok(path) = which::which(spec.id) {
+            candidates.push(path);
+        }
+        dedupe_paths(&mut candidates);
+
+        let Some(path) = candidates.into_iter().find(|path| {
+            if !path.is_file() || detect_manager_from_path(path) != PackageManager::Unknown {
+                return false;
+            }
+            let normalized = path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .to_ascii_lowercase();
+            !normalized.contains("/.vscode/extensions/")
+        }) else {
+            continue;
+        };
+
+        let mut tool = LocalCliTool::new(spec.id, &path.to_string_lossy(), PackageManager::Native);
+        tool.current_version = detect_version_for_manager(&path, &PackageManager::Native);
+        tool.package_name = Some(spec.id.to_string());
+        tool.description = Some(spec.description.to_string());
+        if spec.id == "grok" {
+            let agent = path.with_file_name(if cfg!(windows) { "agent.exe" } else { "agent" });
+            if agent.is_file() {
+                tool.bundled_tool_ids.push("agent".to_string());
+            }
+        }
+        tools.push(tool);
+    }
+
     tools
 }
 
@@ -1510,6 +1616,7 @@ fn resolve_package_name(path: &Path, manager: &PackageManager) -> Option<String>
         PackageManager::Brew => Some(tool_id_from_path(path)),
         PackageManager::Scoop => resolve_scoop_app_name(path),
         PackageManager::Choco => resolve_choco_package_name(path),
+        PackageManager::Native => None,
         PackageManager::Unknown => None,
     }
 }
@@ -1520,6 +1627,7 @@ fn resolve_description(path: &Path, manager: &PackageManager) -> Option<String> 
         PackageManager::Pnpm => resolve_pnpm_description(path),
         PackageManager::Pip => resolve_pip_description(path),
         PackageManager::Brew => resolve_brew_description(path),
+        PackageManager::Native => None,
         _ => None,
     }
 }
@@ -2179,6 +2287,17 @@ mod tests {
         assert_eq!(parse_version("1.2.3\n"), Some("1.2.3".to_string()));
         assert_eq!(parse_version("v2.0.0-beta.1"), Some("2.0.0".to_string()));
         assert_eq!(parse_version("usage: tool [options]"), None);
+    }
+
+    #[test]
+    fn parse_version_from_known_native_cli_outputs() {
+        for (output, expected) in [
+            ("2.1.223 (Claude Code)", "2.1.223"),
+            ("codex-cli 0.146.1", "0.146.1"),
+            ("grok 1.0.0 (3cd0d0cbce)", "1.0.0"),
+        ] {
+            assert_eq!(parse_version(output).as_deref(), Some(expected));
+        }
     }
 
     #[test]

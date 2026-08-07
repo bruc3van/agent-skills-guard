@@ -92,19 +92,24 @@ rule_scoping:
 
 # Pipeline 分析
 pipeline:
+  # 已知安装器域名：命中时把「下载→执行」类发现降级为 Medium，而非豁免。
+  #
+  # 收录标准：该域名下的内容必须完全由可信方控制。匹配为 hostname 精确或子域匹配，
+  # 因此写 "foo.com" 等于信任 "*.foo.com" 的一切。
+  #
+  # 不得收录允许任意用户发布内容的域：raw.githubusercontent.com、gist.github.com、
+  # *.vercel.app、包 registry（npmjs.com）、第三方模块仓库（deno.land/x）等。
+  # deno.land 与 npmjs.com 曾因此被移除。
   known_installer_domains:
     - "sh.rustup.rs"
     - "astral.sh"
     - "bun.sh"
-    - "deno.land"
     - "get.pnpm.io"
     - "nodejs.org"
-    - "npmjs.com"
     - "pip.pypa.io"
     - "brew.sh"
     - "curl.se"
     - "git-scm.com"
-    - "golang.org"
     - "go.dev"
     - "rustup.rs"
     - "install.python-poetry.org"

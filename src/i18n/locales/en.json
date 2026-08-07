@@ -182,6 +182,10 @@
     "install": "INSTALL",
     "installToOther": "ADD",
     "uninstall": "UNINSTALL",
+    "managers": {
+      "native": "Native",
+      "unknown": "Unknown"
+    },
     "uninstallAll": "ALL",
     "uninstallPath": "UNINSTALL_THIS_PATH",
     "installing": "INSTALLING",
@@ -775,6 +779,8 @@
     "checking": "CHECKING...",
     "updatesFound": "{{count}} CLI updates available",
     "noUpdates": "All CLI tools are up to date",
+    "partialCheck": "Update check incomplete: {{updates}} updates found, {{failed}} checks failed",
+    "partialCheckNoUpdates": "No updates found, but {{failed}} checks failed; results are incomplete",
     "checkUpdatesFailed": "CHECK_UPDATES_FAILED: {{error}}",
     "search": "SEARCH_TOOLS...",
     "updated": "UPDATED",
@@ -789,6 +795,7 @@
       "brew": "brew ({{count}})",
       "scoop": "scoop ({{count}})",
       "choco": "choco ({{count}})",
+      "native": "Native ({{count}})",
       "unknown": "Other ({{count}})"
     },
     "updatesFocus": {
@@ -818,7 +825,9 @@
       "noVersion": "Unknown",
       "lastChecked": "Checked",
       "notChecked": "Never",
-      "bundledTools": "bundled tools"
+      "bundledTools": "bundled tools",
+      "checkAndUpdate": "Check & update",
+      "checkFailed": "Update check failed: {{error}}"
     },
     "busy": {
       "updating": "Updating {{name}}...",

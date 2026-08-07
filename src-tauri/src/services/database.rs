@@ -2,6 +2,7 @@ use crate::models::security::{SecurityIssue, SecurityLevel, SecurityReport};
 use crate::models::{Plugin, Repository, Skill};
 use anyhow::{Context, Result};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -1236,6 +1237,35 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_stale_local_cli_tools(&self, detected_paths: &[String]) -> Result<usize> {
+        let keep = detected_paths
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let mut conn = self.lock_conn();
+        let existing = {
+            let mut stmt = conn.prepare("SELECT detected_path FROM local_cli_tools")?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        let transaction = conn.transaction()?;
+        let mut deleted = 0;
+        for path in existing {
+            // Manager discovery can be partial because of a transient command/configuration
+            // failure. Keep an unreported row while its recorded entry point still exists.
+            if !keep.contains(path.as_str()) && !std::path::Path::new(&path).exists() {
+                deleted += transaction.execute(
+                    "DELETE FROM local_cli_tools WHERE detected_path = ?1",
+                    params![path],
+                )?;
+            }
+        }
+        transaction.commit()?;
+        Ok(deleted)
+    }
+
     pub fn get_local_cli_tool(&self, path: &str) -> Result<Option<LocalCliToolRow>> {
         let conn = self.lock_conn_read();
         let row = conn
@@ -1635,5 +1665,49 @@ mod tests {
         assert_eq!(row.update_status, None);
         assert_eq!(row.update_log, None);
         assert!(row.update_available);
+    }
+
+    #[test]
+    fn stale_local_cli_rows_are_removed_after_a_fresh_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = super::Database::new(dir.path().join("test.db")).unwrap();
+        for (id, path) in [("keep", "/bin/keep"), ("stale", "/bin/stale")] {
+            db.upsert_local_cli_tool(id, path, "native", None, None, false, None, Some(id), None)
+                .unwrap();
+        }
+
+        let deleted = db
+            .delete_stale_local_cli_tools(&["/bin/keep".to_string()])
+            .unwrap();
+
+        assert_eq!(deleted, 1);
+        assert!(db.get_local_cli_tool("/bin/keep").unwrap().is_some());
+        assert!(db.get_local_cli_tool("/bin/stale").unwrap().is_none());
+    }
+
+    #[test]
+    fn partial_scan_keeps_unreported_cli_when_entry_point_still_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = super::Database::new(dir.path().join("test.db")).unwrap();
+        let existing_cli = dir.path().join("still-installed-cli");
+        std::fs::write(&existing_cli, b"shim").unwrap();
+        let existing_cli = existing_cli.to_string_lossy().to_string();
+        db.upsert_local_cli_tool(
+            "still-installed",
+            &existing_cli,
+            "npm",
+            None,
+            None,
+            false,
+            None,
+            Some("still-installed"),
+            None,
+        )
+        .unwrap();
+
+        let deleted = db.delete_stale_local_cli_tools(&[]).unwrap();
+
+        assert_eq!(deleted, 0);
+        assert!(db.get_local_cli_tool(&existing_cli).unwrap().is_some());
     }
 }

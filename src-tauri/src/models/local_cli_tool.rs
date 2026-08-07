@@ -10,6 +10,7 @@ pub enum PackageManager {
     Brew,
     Scoop,
     Choco,
+    Native,
     Unknown,
 }
 
@@ -22,6 +23,7 @@ impl PackageManager {
             Self::Brew => "brew",
             Self::Scoop => "scoop",
             Self::Choco => "choco",
+            Self::Native => "native",
             Self::Unknown => "unknown",
         }
     }
@@ -34,6 +36,7 @@ impl PackageManager {
             "brew" => Self::Brew,
             "scoop" => Self::Scoop,
             "choco" => Self::Choco,
+            "native" => Self::Native,
             _ => Self::Unknown,
         }
     }
@@ -80,7 +83,6 @@ pub fn detect_manager_from_path(path: &Path) -> PackageManager {
 
     if (s.contains("/scripts/") && (s.contains("python") || s.contains("/py")))
         || s.contains("/site-packages/")
-        || s.contains("/.local/bin/")
     {
         return PackageManager::Pip;
     }
@@ -99,6 +101,8 @@ pub struct LocalCliTool {
     pub last_checked: Option<String>,
     pub update_status: Option<String>,
     pub update_log: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_check_error: Option<String>,
     pub package_name: Option<String>,
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -117,14 +121,15 @@ impl LocalCliTool {
             last_checked: None,
             update_status: None,
             update_log: None,
+            update_check_error: None,
             package_name: None,
             description: None,
             bundled_tool_ids: Vec::new(),
         }
     }
 
-    pub fn effective_package_name(&self) -> Option<&str> {
-        self.package_name.as_deref().or(Some(self.id.as_str()))
+    pub fn effective_package_name(&self) -> &str {
+        self.package_name.as_deref().unwrap_or(self.id.as_str())
     }
 
     pub fn can_auto_update(&self) -> bool {
@@ -188,6 +193,12 @@ mod tests {
     #[test]
     fn detect_manager_unknown_for_system_path() {
         let path = std::path::Path::new("/usr/bin/git");
+        assert_eq!(detect_manager_from_path(path), PackageManager::Unknown);
+    }
+
+    #[test]
+    fn generic_local_bin_is_not_assumed_to_be_pip() {
+        let path = std::path::Path::new("/home/user/.local/bin/claude");
         assert_eq!(detect_manager_from_path(path), PackageManager::Unknown);
     }
 }

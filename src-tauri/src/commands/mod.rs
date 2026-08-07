@@ -67,6 +67,8 @@ pub struct AppState {
     pub plugin_manager: Arc<Mutex<PluginManager>>,
     pub github: Arc<GitHubService>,
     pub cli_scan_cache: RwLock<Option<CliScanCache>>,
+    /// Serializes scans, update checks, installs, and uninstalls for local CLI tools.
+    pub local_cli_operation: Mutex<()>,
 }
 
 pub struct CliScanCache {

@@ -6,7 +6,7 @@
 
 ### Making Claude Code Skills Management as Simple and Secure as an App Store
 
-[![Version](https://img.shields.io/badge/version-1.3.4-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
+[![Version](https://img.shields.io/badge/version-1.3.6-blue.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/bruc3van/agent-skills-guard/releases)
 
@@ -376,6 +376,19 @@ The scanner applies degradation handling to files located in document paths (`do
 - **Truly high-risk rules**: hard_trigger rules (secret leakage, destructive commands, etc.) are **not degraded** in document paths, maintaining blocking
 
 **SKILL.md Special Handling**: `SKILL.md` as the main skill file is not affected by document path degradation, always scanned with full rules.
+
+### Known Installer Domain Downgrade
+
+The policy's `known_installer_domains` lists trusted official installer domains (rustup, Homebrew, Astral, etc.). On a match, download-pipe-execute findings are **downgraded to Medium and kept**, not exempted — an official install script is still remote code execution, so the risk stays visible; it just no longer hard-blocks the entire skill.
+
+Scope and constraints:
+
+- **Installer-shaped rules only** — `CURL_PIPE_SH`, `WGET_PIPE_SH`, `POWERSHELL_PIPE_IEX`, `POWERSHELL_IEX_DOWNLOAD`, and their corresponding chain/taint findings. Attack techniques such as `REVERSE_SHELL`, `BASE64_EXEC`, and `CERTUTIL_DOWNLOAD` never participate
+- **Bound to the actual download line** — the allowlist only looks for URLs on the line that performs the download, so comments or doc links elsewhere in the file cannot influence the verdict
+- **Exact hostname or subdomain match** — `https://evil.com/steal-bun.sh/payload` cannot impersonate `bun.sh`
+- **No downgrade under automatic execution** — severity is preserved when the command is wrapped in `execSync` / `os.system` / `subprocess`
+
+**Inclusion criteria**: everything served from the domain must be controlled by a trusted party. Domains that let arbitrary users publish content are never eligible — package registries (`npmjs.com`, `pypi.org`), third-party module repositories (`deno.land/x`), raw code-hosting endpoints (`raw.githubusercontent.com`, `gist.github.com`), and shared hosting domains (`*.vercel.app`, `*.pages.dev`).
 
 ### Disclaimer
 

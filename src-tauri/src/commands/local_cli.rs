@@ -42,6 +42,10 @@ pub fn build_pty_update_args(tool: &LocalCliTool) -> Option<(String, Vec<String>
             resolve_package_manager_command(tool, &package_manager_names("choco")),
             vec!["upgrade".to_string(), pkg.to_string(), "-y".to_string()],
         ),
+        PackageManager::Native => match tool.id.as_str() {
+            "grok" | "claude" | "codex" => (tool.detected_path.clone(), vec!["update".to_string()]),
+            _ => return None,
+        },
         PackageManager::Unknown => return None,
     };
     Some((bin.to_string(), args))
@@ -118,6 +122,25 @@ fn successful_update_cache_values(
     (current, latest, update_available, Some(now))
 }
 
+fn update_command_succeeded(
+    exit_success: bool,
+    previous_version: Option<&str>,
+    latest_version: Option<&str>,
+    detected_version: Option<&str>,
+) -> bool {
+    if exit_success {
+        return true;
+    }
+    let Some(detected) = detected_version else {
+        return false;
+    };
+
+    let version_advanced = is_outdated(previous_version, Some(detected));
+    let reached_known_latest =
+        latest_version.is_some_and(|latest| !is_outdated(Some(detected), Some(latest)));
+    version_advanced && reached_known_latest
+}
+
 pub fn build_pty_uninstall_args(tool: &LocalCliTool) -> Option<(String, Vec<String>)> {
     let pkg = tool.package_name.as_deref()?;
     let (bin, args) = match tool.manager {
@@ -146,6 +169,7 @@ pub fn build_pty_uninstall_args(tool: &LocalCliTool) -> Option<(String, Vec<Stri
             resolve_package_manager_command(tool, &package_manager_names("choco")),
             vec!["uninstall".to_string(), pkg.to_string(), "-y".to_string()],
         ),
+        PackageManager::Native => return None,
         PackageManager::Unknown => return None,
     };
     Some((bin.to_string(), args))
@@ -637,6 +661,15 @@ fn merge_and_cache_tools(state: &AppState, tools: &mut Vec<LocalCliTool>) -> Res
         );
     }
 
+    let fresh_paths = tools
+        .iter()
+        .map(|tool| tool.detected_path.clone())
+        .collect::<Vec<_>>();
+    state
+        .db
+        .delete_stale_local_cli_tools(&fresh_paths)
+        .map_err(|e| e.to_string())?;
+
     // 写入内存缓存
     replace_cli_scan_cache(&state.cli_scan_cache, tools.clone());
 
@@ -674,6 +707,20 @@ pub async fn list_local_cli_tools(state: State<'_, AppState>) -> Result<Vec<Loca
         }
     }
 
+    let _operation = state.local_cli_operation.lock().await;
+    // Another request may have populated the cache while this one was waiting.
+    {
+        let cache = state
+            .cli_scan_cache
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(ref c) = *cache {
+            if c.scanned_at.elapsed() < CLI_SCAN_CACHE_TTL {
+                return Ok(c.tools.clone());
+            }
+        }
+    }
+
     // 缓存过期，执行全量扫描
     let mut tools = tokio::task::spawn_blocking(discover_local_cli_tools)
         .await
@@ -699,6 +746,7 @@ async fn force_scan_local_cli_tools(state: &AppState) -> Result<Vec<LocalCliTool
 pub async fn rescan_local_cli_tools(
     state: State<'_, AppState>,
 ) -> Result<Vec<LocalCliTool>, String> {
+    let _operation = state.local_cli_operation.lock().await;
     force_scan_local_cli_tools(&state).await
 }
 
@@ -706,6 +754,7 @@ pub async fn rescan_local_cli_tools(
 pub async fn check_local_cli_updates(
     state: State<'_, AppState>,
 ) -> Result<Vec<LocalCliTool>, String> {
+    let _operation = state.local_cli_operation.lock().await;
     let mut tools = force_scan_local_cli_tools(&state).await?;
     let updater = LocalCliUpdater::new(Arc::clone(&state.db));
     updater
@@ -721,6 +770,7 @@ pub async fn update_local_cli_tool(
     state: State<'_, AppState>,
     tool_path: String,
 ) -> Result<String, String> {
+    let _operation = state.local_cli_operation.lock().await;
     let row = state
         .db
         .get_local_cli_tool(&tool_path)
@@ -760,10 +810,16 @@ pub async fn update_local_cli_tool(
     match tokio::task::spawn_blocking(move || cli.run(&[command])).await {
         Ok(Ok(result)) => {
             let raw_log = sanitize_terminal_log(&result.raw_log);
-            let is_up_to_date = !result.exit_success && is_already_up_to_date(&raw_log);
-            let install_ok = !result.exit_success && is_install_success(&raw_log);
-            let brew_ok = !result.exit_success && is_brew_upgrade_complete(&raw_log);
-            if result.exit_success || is_up_to_date || install_ok || brew_ok {
+            let new_version = crate::services::local_cli_scanner::detect_version_for_manager(
+                std::path::Path::new(&detected_path_clone),
+                &tool.manager,
+            );
+            if update_command_succeeded(
+                result.exit_success,
+                tool.current_version.as_deref(),
+                tool.latest_version.as_deref(),
+                new_version.as_deref(),
+            ) {
                 let log = non_empty_log_or_default(
                     raw_log,
                     format!("{} 更新命令执行完成，但没有返回可显示日志", display_id),
@@ -772,9 +828,6 @@ pub async fn update_local_cli_tool(
                     .db
                     .set_local_cli_tool_update_status(&tool_path, "success", Some(&log))
                     .map_err(|e| e.to_string())?;
-                let new_version = crate::services::local_cli_scanner::detect_version(
-                    std::path::Path::new(&detected_path_clone),
-                );
                 let (current_version, latest_version, update_available, last_checked) =
                     successful_update_cache_values(&tool, new_version);
                 let _ = state.db.upsert_local_cli_tool(
@@ -810,44 +863,25 @@ pub async fn update_local_cli_tool(
                 .map_err(|e| e.to_string())?;
             Err(msg)
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => {
+            let msg = e.to_string();
+            let _ = state
+                .db
+                .set_local_cli_tool_update_status(&tool_path, "failed", Some(&msg));
+            Err(msg)
+        }
     }
 }
 
 fn build_cli_for_manager(bin: String, manager: &PackageManager) -> ClaudeCli {
     let mut cli = ClaudeCli::new(bin);
     match manager {
-        PackageManager::Npm | PackageManager::Pnpm => {
-            cli = cli.env_remove_prefix("npm_config_");
-        }
         PackageManager::Brew => {
             cli = cli.env_var("HOMEBREW_NO_EMOJI", "1");
         }
         _ => {}
     }
     cli
-}
-
-fn is_already_up_to_date(output: &str) -> bool {
-    let text = output.to_lowercase();
-    text.contains("already installed")
-        || text.contains("up to date")
-        || text.contains("already up-to-date")
-        || text.contains("already satisfied")
-        || text.contains("is already the latest version")
-        || text.contains("is the latest version")
-}
-
-fn is_install_success(output: &str) -> bool {
-    let text = output.to_lowercase();
-    (text.contains("added") || text.contains("changed") || text.contains("removed"))
-        && text.contains("package")
-        && text.contains("in ")
-}
-
-fn is_brew_upgrade_complete(output: &str) -> bool {
-    let text = output.to_lowercase();
-    text.contains("upgraded") && text.contains("outdated package")
 }
 
 fn update_timeout_secs(manager: &PackageManager) -> u64 {
@@ -862,6 +896,7 @@ pub async fn uninstall_local_cli_tool(
     state: State<'_, AppState>,
     tool_path: String,
 ) -> Result<String, String> {
+    let _operation = state.local_cli_operation.lock().await;
     let row = state
         .db
         .get_local_cli_tool(&tool_path)
@@ -932,7 +967,13 @@ pub async fn uninstall_local_cli_tool(
                 .map_err(|e| e.to_string())?;
             Err(msg)
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => {
+            let msg = e.to_string();
+            let _ = state
+                .db
+                .set_local_cli_tool_update_status(&tool_path, "failed", Some(&msg));
+            Err(msg)
+        }
     }
 }
 
@@ -1017,10 +1058,14 @@ pub async fn fetch_local_cli_descriptions(
     for (path, detected_path) in pending {
         let semaphore = Arc::clone(&semaphore);
         tasks.push(tokio::spawn(async move {
-            let _permit = semaphore.acquire_owned().await.ok()?;
+            let permit = semaphore.acquire_owned().await.ok()?;
             let desc = tokio::time::timeout(
                 DESCRIPTION_FETCH_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
+                    // Keep the permit inside the blocking job. Dropping the JoinHandle on
+                    // timeout does not cancel spawn_blocking, so releasing it in the async
+                    // wrapper would let more subprocesses start while this one still runs.
+                    let _permit = permit;
                     resolve_description_for_path(&detected_path)
                 }),
             )
@@ -1528,16 +1573,39 @@ mod tests {
     }
 
     #[test]
-    fn install_success_patterns() {
-        assert!(is_install_success("changed 1 package in 585ms"));
-        assert!(is_install_success(
-            "added 2 packages, removed 24 packages, and changed 295 packages in 7s"
+    fn native_self_updaters_are_never_uninstalled_as_packages() {
+        let mut grok = LocalCliTool::new(
+            "grok",
+            r"C:\Users\test\.grok\bin\grok.exe",
+            PackageManager::Native,
+        );
+        grok.package_name = Some("grok".to_string());
+
+        let (bin, args) = build_pty_update_args(&grok).unwrap();
+        assert_eq!(bin, grok.detected_path);
+        assert_eq!(args, vec!["update"]);
+        assert!(build_pty_uninstall_args(&grok).is_none());
+    }
+
+    #[test]
+    fn nonzero_update_is_only_success_when_version_reaches_latest() {
+        assert!(update_command_succeeded(
+            false,
+            Some("1.0.0"),
+            Some("1.2.0"),
+            Some("1.2.0")
         ));
-        assert!(is_install_success(
-            "removed 2 packages, and changed 28 packages in 1s"
+        assert!(!update_command_succeeded(
+            false,
+            Some("1.0.0"),
+            Some("1.2.0"),
+            Some("1.0.0")
         ));
-        assert!(is_install_success("added 1 package in 2s"));
-        assert!(!is_install_success("npm ERR! code E404"));
-        assert!(!is_install_success("up to date"));
+        assert!(!update_command_succeeded(
+            false,
+            Some("1.0.0"),
+            Some("1.2.0"),
+            None
+        ));
     }
 }

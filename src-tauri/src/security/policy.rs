@@ -6,8 +6,13 @@
 //! 策略文件通过 `include_str!` 编译时嵌入二进制，启动时解析。
 //! 不依赖运行时文件系统路径。
 
+use lazy_regex::{lazy_regex, Lazy};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+
+/// URL 提取：用于从内容中取出 http(s) 链接做安装器域名比对
+static RE_INSTALLER_URL: Lazy<Regex> = lazy_regex!(r#"https?://[^\s'"`]+"#);
 
 /// 扫描策略
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -296,20 +301,23 @@ fn default_skip_in_docs() -> HashSet<String> {
         .collect()
 }
 
+/// 已知安装器域名的兜底默认值。
+///
+/// **必须与 `resources/security/policies/default.yaml` 保持一致**（见该文件中的
+/// 收录标准）——yaml 是编译期嵌入的主来源，这里是 serde 的 default 兜底，两者漂移
+/// 会让「默认策略」与「配置策略」行为不同。`test_installer_allowlist_matches_yaml`
+/// 守护这一点。
 fn default_known_installer_domains() -> HashSet<String> {
     [
         "sh.rustup.rs",
         "astral.sh",
         "bun.sh",
-        "deno.land",
         "get.pnpm.io",
         "nodejs.org",
-        "npmjs.com",
         "pip.pypa.io",
         "brew.sh",
         "curl.se",
         "git-scm.com",
-        "golang.org",
         "go.dev",
         "rustup.rs",
         "install.python-poetry.org",
@@ -433,6 +441,43 @@ impl ScanPolicy {
             .map(|o| o.hard_trigger)
     }
 
+    /// 内容中是否出现指向已知安装器域名的 URL。
+    ///
+    /// 命中时调用方应把「下载→执行」类发现**降级**（而非豁免）：官方安装脚本仍是
+    /// 远程代码执行，只是供应链可信度较高，不该让整个 skill 被 hard_trigger 拦截。
+    ///
+    /// 采用 hostname 精确匹配或子域匹配，避免 `https://evil.com/steal-bun.sh/x`
+    /// 这类路径子串冒充白名单域名。
+    pub fn targets_known_installer(&self, content: &str) -> bool {
+        let domains = &self.pipeline.known_installer_domains;
+        if domains.is_empty() {
+            return false;
+        }
+
+        for url_match in RE_INSTALLER_URL.find_iter(content) {
+            let url_str = url_match.as_str().to_lowercase();
+            let Some(rest) = url_str.split("://").nth(1) else {
+                continue;
+            };
+            let hostname = rest
+                .split('/')
+                .next()
+                .unwrap_or("")
+                .split(':')
+                .next()
+                .unwrap_or("");
+
+            for domain in domains {
+                let domain_lower = domain.to_lowercase();
+                if hostname == domain_lower || hostname.ends_with(&format!(".{}", domain_lower)) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     /// 检查路径是否为文档路径（使用目录段匹配，避免子串误匹配）
     ///
     /// 匹配规则：
@@ -481,3 +526,50 @@ impl ScanPolicy {
     }
 }
 
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// yaml 是编译期嵌入的主来源，`default_known_installer_domains()` 是 serde 兜底。
+    /// 两者漂移会让「默认策略」与「显式配置策略」对同一 skill 给出不同结论。
+    #[test]
+    fn test_installer_allowlist_matches_yaml() {
+        let from_yaml = &ScanPolicy::builtin_default().pipeline.known_installer_domains;
+        let from_default = default_known_installer_domains();
+        assert_eq!(
+            from_yaml, &from_default,
+            "known_installer_domains in default.yaml and default_known_installer_domains() must stay in sync"
+        );
+    }
+
+    /// 允许任意用户发布内容的域不得出现在安装器白名单里——那等于把降级待遇
+    /// 发给任何能上传文件的人。
+    #[test]
+    fn test_installer_allowlist_excludes_user_content_hosts() {
+        let policy = ScanPolicy::builtin_default();
+        for host in [
+            "deno.land",
+            "npmjs.com",
+            "raw.githubusercontent.com",
+            "gist.github.com",
+            "pypi.org",
+            "vercel.app",
+            "pages.dev",
+            "s3.amazonaws.com",
+        ] {
+            assert!(
+                !policy
+                    .pipeline
+                    .known_installer_domains
+                    .contains(&host.to_string()),
+                "{host} allows arbitrary user-published content and must not be allowlisted"
+            );
+            assert!(
+                !policy.targets_known_installer(&format!("curl https://{host}/x/pkg/install.sh | sh")),
+                "content served from {host} must not be downgraded"
+            );
+        }
+    }
+}

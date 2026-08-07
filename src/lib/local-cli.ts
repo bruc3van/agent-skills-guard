@@ -11,7 +11,7 @@ export function groupByManager(tools: LocalCliTool[]): Record<string, LocalCliTo
   );
 }
 
-export function managerLabel(manager: string): string {
+export function managerLabel(manager: string, translate?: (key: string) => string): string {
   const labels: Record<string, string> = {
     npm: "npm",
     pnpm: "pnpm",
@@ -19,9 +19,17 @@ export function managerLabel(manager: string): string {
     brew: "Homebrew",
     scoop: "Scoop",
     choco: "Chocolatey",
-    unknown: "未知来源",
   };
+  if ((manager === "native" || manager === "unknown") && translate) {
+    return translate(`localCli.managers.${manager}`);
+  }
+  if (manager === "native") return "Native";
+  if (manager === "unknown") return "Unknown";
   return labels[manager] ?? manager;
+}
+
+export function canNativeSelfUpdate(tool: LocalCliTool): boolean {
+  return tool.manager === "native" && ["grok", "claude", "codex"].includes(tool.id);
 }
 
 export function canAutoUpdate(tool: LocalCliTool): boolean {
