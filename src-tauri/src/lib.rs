@@ -3,6 +3,7 @@ rust_i18n::i18n!("locales", fallback = "zh");
 
 pub mod commands;
 mod i18n;
+pub mod logging;
 pub mod models;
 pub mod security;
 pub mod services;
@@ -10,7 +11,7 @@ pub mod services;
 use commands::security::{get_scan_results, scan_all_installed_skills};
 use commands::AppState;
 use services::{Database, PluginManager, SkillManager};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder};
@@ -297,14 +298,166 @@ pub fn init() {
     #[cfg(target_os = "macos")]
     maybe_suppress_macos_os_activity_logs();
 
-    // 初始化日志
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    // 初始化日志（stderr + 滚动文件）并安装 panic 钩子。
+    // 必须最先执行：启动期的 panic 正是最需要留下现场的场景。
+    logging::init();
     ensure_cli_path();
+}
+
+/// 为损坏的数据库生成带时间戳的备份路径
+fn corrupt_backup_path(db_path: &Path) -> PathBuf {
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let file_name = db_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "agent-skills.db".to_string());
+    db_path.with_file_name(format!("{file_name}.corrupt-{stamp}"))
+}
+
+/// 在数据库文件路径后追加后缀，得到 WAL / SHM 边车文件路径。
+///
+/// 用 `OsString` 拼接而非 `format!("{}", path.display())`：`Display` 是给人看的
+/// 有损格式化，对非 UTF-8 路径不保证能还原出等价路径。
+fn sidecar_path(db_path: &Path, suffix: &str) -> PathBuf {
+    let mut raw = db_path.as_os_str().to_os_string();
+    raw.push(suffix);
+    PathBuf::from(raw)
+}
+
+/// 判断错误是否表明「数据库文件本身已损坏」，而非环境问题。
+///
+/// 只有这一类错误才适合走「备份 + 重建空库」——那意味着原文件已经无法读取，
+/// 保留它也没有意义。而 BUSY（被其他进程占用）、权限不足、磁盘满、
+/// CANTOPEN 等属于环境问题：原库很可能完好，重建会造成**真实的数据丢失**。
+fn is_database_corrupted(error: &anyhow::Error) -> bool {
+    for cause in error.chain() {
+        if let Some(sqlite_error) = cause.downcast_ref::<rusqlite::Error>() {
+            if let rusqlite::Error::SqliteFailure(ffi_error, _) = sqlite_error {
+                if matches!(
+                    ffi_error.code,
+                    rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+                ) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// 把损坏的数据库连同 WAL / SHM 边车文件一起移开，为重建腾出位置。
+///
+/// 返回备份路径；备份失败则返回 `None`，由调用方判定为不可恢复。
+fn move_aside_corrupt_database(db_path: &Path) -> Option<PathBuf> {
+    if !db_path.exists() {
+        return None;
+    }
+
+    let backup = corrupt_backup_path(db_path);
+    match std::fs::rename(db_path, &backup) {
+        Ok(()) => {
+            log::warn!("已将损坏的数据库备份到: {}", backup.display());
+        }
+        Err(e) => {
+            log::error!("备份损坏数据库失败 {}: {}", db_path.display(), e);
+            return None;
+        }
+    }
+
+    // WAL / SHM 属于旧数据库，留下会污染新建的库
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = sidecar_path(db_path, suffix);
+        if sidecar.exists() {
+            if let Err(e) = std::fs::remove_file(&sidecar) {
+                log::warn!("清理 {} 失败: {}", sidecar.display(), e);
+            }
+        }
+    }
+
+    Some(backup)
+}
+
+/// 打开数据库；**仅当文件本身已损坏**时，才备份原文件并重建一次。
+///
+/// 此前这里是 `Database::new(db_path).expect(...)`，数据库损坏、文件被锁定、
+/// 权限异常都会让进程在启动瞬间 panic 退出，正是「打开即闪退」的典型成因。
+///
+/// 重建是有代价的操作（用户丢失全部历史记录），因此触发条件必须收紧：
+/// 只认 SQLITE_CORRUPT / SQLITE_NOTADB。锁占用、权限、磁盘满等环境问题下
+/// 原库通常完好，此时如实报错让用户去解决，远好过悄悄清空数据。
+fn open_database_with_recovery(db_path: &Path) -> Result<(Database, Option<PathBuf>), String> {
+    let open_error = match Database::new(db_path.to_path_buf()) {
+        Ok(db) => return Ok((db, None)),
+        Err(e) => e,
+    };
+
+    if !is_database_corrupted(&open_error) {
+        log::error!("打开数据库失败（非文件损坏，保留原库）: {:#}", open_error);
+        return Err(format!(
+            "无法打开数据库：{open_error:#}\n\n\
+             数据库文件已保留。常见原因：另一个实例正在运行、文件被占用、\
+             权限不足或磁盘空间不足。"
+        ));
+    }
+
+    log::error!("数据库文件已损坏，尝试备份并重建: {:#}", open_error);
+
+    let Some(backup) = move_aside_corrupt_database(db_path) else {
+        return Err(format!(
+            "数据库文件已损坏且无法备份原文件：{open_error:#}"
+        ));
+    };
+
+    Database::new(db_path.to_path_buf())
+        .map(|db| {
+            log::warn!("已使用空数据库重建，历史数据保留在备份文件中");
+            (db, Some(backup))
+        })
+        .map_err(|e| format!("重建数据库仍然失败: {e:#}"))
+}
+
+/// 组装带日志路径的用户可读错误文案
+fn fatal_startup_detail(message: &str) -> String {
+    match logging::log_file_path() {
+        Some(path) => format!("{message}\n\n日志文件：{}", path.display()),
+        None => message.to_string(),
+    }
+}
+
+/// 启动失败时弹出原生对话框，让用户知道发生了什么并能找到日志。
+/// 需要已有 `AppHandle`，因此只能在 `setup` 之后调用。
+fn show_fatal_startup_dialog(app: &tauri::AppHandle, message: &str) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+    app.dialog()
+        .message(fatal_startup_detail(message))
+        .kind(MessageDialogKind::Error)
+        .title("Agent Skills Guard 启动失败")
+        .blocking_show();
+}
+
+/// 数据库损坏并被重建后告知用户。
+///
+/// 这不是致命错误（应用可以正常使用），但用户的技能 / 仓库记录全部清空了 ——
+/// 只写一条 `log::warn` 等于让用户在毫不知情的情况下面对一个空应用。
+fn show_database_rebuilt_dialog(app: &tauri::AppHandle, backup: &Path) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+    app.dialog()
+        .message(format!(
+            "检测到数据库文件已损坏，已自动重建。\n\n\
+             此前的技能与仓库记录需要重新扫描或添加。\n\
+             原始文件已备份至：\n{}",
+            backup.display()
+        ))
+        .kind(MessageDialogKind::Warning)
+        .title("数据库已重建")
+        .blocking_show();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -312,18 +465,41 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            // 获取应用数据目录
-            let app_dir = app
-                .path()
-                .app_data_dir()
-                .expect("Failed to get app data directory");
+            // 应用数据目录：拿不到或建不出来都是不可恢复的，但要给出可读提示
+            // 并留下日志，而不是 panic 后静默消失。
+            let app_dir = match app.path().app_data_dir() {
+                Ok(dir) => dir,
+                Err(e) => {
+                    let msg = format!("无法定位应用数据目录: {e}");
+                    show_fatal_startup_dialog(app.handle(), &msg);
+                    return Err(msg.into());
+                }
+            };
 
-            std::fs::create_dir_all(&app_dir).expect("Failed to create app data directory");
+            if let Err(e) = std::fs::create_dir_all(&app_dir) {
+                let msg = format!("无法创建应用数据目录 {}: {e}", app_dir.display());
+                show_fatal_startup_dialog(app.handle(), &msg);
+                return Err(msg.into());
+            }
 
             let db_path = app_dir.join("agent-skills.db");
 
-            // 初始化数据库
-            let db = Database::new(db_path).expect("Failed to initialize database");
+            // 初始化数据库（损坏时自动备份并重建）
+            let (db, corrupt_backup) = match open_database_with_recovery(&db_path) {
+                Ok(result) => result,
+                Err(e) => {
+                    let msg = format!("数据库初始化失败: {e}");
+                    show_fatal_startup_dialog(app.handle(), &msg);
+                    return Err(msg.into());
+                }
+            };
+
+            if let Some(backup) = corrupt_backup {
+                // 数据已重建，应用可正常使用，但用户的历史记录已清空 ——
+                // 必须明确告知，并给出备份路径
+                log::warn!("数据库曾损坏并已重建，原文件备份于: {}", backup.display());
+                show_database_rebuilt_dialog(app.handle(), &backup);
+            }
 
             let db = Arc::new(db);
 
@@ -484,13 +660,146 @@ pub fn run() {
             commands::security::count_scan_files,
             get_scan_results,
         ])
-        .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(|_app_handle, _event| {
+        .build(tauri::generate_context!());
+
+    // 构建失败（含 setup 返回的错误）时优雅退出：panic 钩子已记录现场，
+    // 这里再补一条明确的致命错误并以非零码退出，而不是 panic 出一堆噪声。
+    let app = match app {
+        Ok(app) => app,
+        Err(e) => {
+            log::error!("{}", fatal_startup_detail(&format!("应用启动失败: {e}")));
+            log::logger().flush();
+            std::process::exit(1);
+        }
+    };
+
+    app.run(|_app_handle, _event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = _event {
                 log::info!("收到 macOS Reopen 事件，尝试恢复主窗口");
                 show_main_window(_app_handle);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        corrupt_backup_path, is_database_corrupted, open_database_with_recovery, sidecar_path,
+    };
+    use std::path::Path;
+
+    #[test]
+    fn sidecar_path_appends_suffix_without_lossy_formatting() {
+        let db = Path::new("/tmp/dir/agent-skills.db");
+        assert_eq!(
+            sidecar_path(db, "-wal"),
+            Path::new("/tmp/dir/agent-skills.db-wal")
+        );
+        assert_eq!(
+            sidecar_path(db, "-shm"),
+            Path::new("/tmp/dir/agent-skills.db-shm")
+        );
+    }
+
+    #[test]
+    fn corrupt_backup_path_keeps_file_next_to_original() {
+        let db = Path::new("/tmp/dir/agent-skills.db");
+        let backup = corrupt_backup_path(db);
+        assert_eq!(backup.parent(), db.parent());
+        let name = backup.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            name.starts_with("agent-skills.db.corrupt-"),
+            "unexpected backup name: {name}"
+        );
+    }
+
+    #[test]
+    fn only_corruption_codes_trigger_rebuild() {
+        let corrupt = anyhow::Error::from(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+            None,
+        ));
+        assert!(is_database_corrupted(&corrupt));
+
+        let not_a_db = anyhow::Error::from(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_NOTADB),
+            None,
+        ));
+        assert!(is_database_corrupted(&not_a_db));
+
+        // 环境类错误：原库很可能完好，重建会造成真实的数据丢失
+        for code in [
+            rusqlite::ffi::SQLITE_BUSY,
+            rusqlite::ffi::SQLITE_PERM,
+            rusqlite::ffi::SQLITE_FULL,
+            rusqlite::ffi::SQLITE_CANTOPEN,
+            rusqlite::ffi::SQLITE_READONLY,
+        ] {
+            let err = anyhow::Error::from(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(code),
+                None,
+            ));
+            assert!(
+                !is_database_corrupted(&err),
+                "sqlite code {code} must not be treated as corruption"
+            );
+        }
+    }
+
+    /// 通过 `anyhow::Context` 包装后仍需能识别底层 sqlite 错误码，
+    /// 因为 `Database::new` 全程使用 `.context(...)`。
+    #[test]
+    fn corruption_is_detected_through_context_chain() {
+        use anyhow::Context;
+
+        let wrapped: anyhow::Result<()> = Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_NOTADB),
+            None,
+        ))
+        .context("Failed to open database");
+
+        assert!(is_database_corrupted(&wrapped.unwrap_err()));
+    }
+
+    #[test]
+    fn garbage_file_is_backed_up_and_rebuilt() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("agent-skills.db");
+        // 非 SQLite 内容 → SQLITE_NOTADB
+        std::fs::write(&db_path, b"this is definitely not a sqlite database").unwrap();
+
+        let (db, backup) = open_database_with_recovery(&db_path).expect("should rebuild");
+
+        let backup = backup.expect("corrupt file must be backed up");
+        assert!(backup.exists(), "backup file should exist");
+        assert!(db_path.exists(), "a fresh database should be in place");
+        // 重建后的库可用
+        assert_eq!(db.get_repositories().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn healthy_database_is_opened_without_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("agent-skills.db");
+
+        let (_db, backup) = open_database_with_recovery(&db_path).expect("fresh db opens");
+        assert!(backup.is_none(), "a healthy database must not be backed up");
+
+        // 二次打开同样不应触发备份
+        let (_db, backup) = open_database_with_recovery(&db_path).expect("existing db opens");
+        assert!(
+            backup.is_none(),
+            "reopening an existing database must not back it up"
+        );
+        assert_eq!(
+            std::fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+                .count(),
+            0,
+            "no corrupt backups should be created for a healthy database"
+        );
+    }
 }

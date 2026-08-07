@@ -3,7 +3,7 @@ use crate::models::{Plugin, Repository, Skill};
 use anyhow::{Context, Result};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::Mutex;
 
 /// 反序列化 security_issues JSON，兼容旧格式（Vec<String>）和新格式（Vec<SecurityIssue>）
 fn deserialize_security_issues(json_str: &str) -> Option<Vec<SecurityIssue>> {
@@ -25,7 +25,12 @@ fn deserialize_security_issues(json_str: &str) -> Option<Vec<SecurityIssue>> {
 }
 
 fn deserialize_security_report(json_str: &str) -> Option<SecurityReport> {
-    serde_json::from_str::<SecurityReport>(json_str).ok()
+    // 读取侧一并剥离 scanned_files：新写入的记录已不含该字段，但升级前
+    // 存下的历史记录仍带着最多 2000 条路径。在这里清掉，老用户无需等待
+    // 重新扫描就能免去每次列表查询的反序列化与 IPC 开销。
+    serde_json::from_str::<SecurityReport>(json_str)
+        .ok()
+        .map(SecurityReport::without_scanned_file_list)
 }
 
 fn build_legacy_security_report(
@@ -126,32 +131,21 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
     })
 }
 
-/// Wrapper to make `Connection` Sync-safe when guarded by `RwLock`.
+/// 数据库句柄。
 ///
-/// Safety: `Connection` is `Send` but not `Sync` due to internal `RefCell`.
-/// We rely on `RwLock` to enforce read/write exclusion at runtime.
-struct SyncConnection(Connection);
-
-// SAFETY: All access to the inner `Connection` goes through `RwLock`, which
-// ensures no concurrent mutable access. The `RefCell` inside `Connection`
-// is only accessed while holding a read or write guard.
-unsafe impl Sync for SyncConnection {}
-
-impl std::ops::Deref for SyncConnection {
-    type Target = Connection;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for SyncConnection {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
+/// 必须使用独占 `Mutex` 而非 `RwLock`：`rusqlite::Connection` 内部是
+/// `RefCell<InnerConnection>`，且**只读查询也会 `borrow_mut()`**
+/// （`Connection::prepare` → `self.db.borrow_mut()`，`query_row` 内部也先 `prepare`）。
+/// 用 `RwLock` 让多个读者并发持有 `&Connection` 会造成 `RefCell` 数据竞争：
+/// 轻则 panic（`already mutably borrowed`）导致 IPC 请求永不返回，
+/// 重则借用计数（非原子的 `Cell<isize>`）错乱产生真正的 UB。
+///
+/// `Connection` 是 `Send`，因此 `Mutex<Connection>` 自动获得 `Sync`，无需 `unsafe`。
+///
+/// 若将来确需并行查询，正确做法是使用多个独立连接 / 连接池 + WAL，
+/// 而不是共享同一个 `Connection`。
 pub struct Database {
-    conn: RwLock<SyncConnection>,
+    conn: Mutex<Connection>,
 }
 
 pub struct LocalCliToolRow {
@@ -169,27 +163,29 @@ pub struct LocalCliToolRow {
 }
 
 impl Database {
-    /// 获取数据库写锁，自动恢复 RwLock 中毒状态
+    /// 获取数据库连接（独占），自动恢复 Mutex 中毒状态。
     /// 线程 panic 持锁时，SQLite 连接可能处于不一致事务状态，
     /// 需要先回滚未提交的事务再继续使用。
-    fn lock_conn(&self) -> std::sync::RwLockWriteGuard<'_, SyncConnection> {
-        self.conn.write().unwrap_or_else(|poisoned| {
-            log::error!("Database rwlock was poisoned, attempting safe recovery");
+    fn lock_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|poisoned| {
+            log::error!("Database mutex was poisoned, attempting safe recovery");
             let guard = poisoned.into_inner();
             // 回滚可能残留的未提交事务，防止数据库处于不一致状态
             if let Err(e) = guard.execute_batch("ROLLBACK") {
-                log::error!("Failed to rollback after rwlock recovery: {}", e);
+                // 没有活动事务时 ROLLBACK 必然报错，属正常情况，降级为 debug
+                log::debug!("No transaction to rollback after mutex recovery: {}", e);
             }
             guard
         })
     }
 
-    /// 获取数据库读锁（用于只读操作）
-    fn lock_conn_read(&self) -> std::sync::RwLockReadGuard<'_, SyncConnection> {
-        self.conn.read().unwrap_or_else(|poisoned| {
-            log::error!("Database rwlock was poisoned (read), attempting safe recovery");
-            poisoned.into_inner()
-        })
+    /// 只读操作的连接获取入口。
+    ///
+    /// 与 `lock_conn` 完全等价（同一把独占锁）——保留独立命名是为了在调用点
+    /// 表达意图，并避免将来有人误以为存在"共享读"语义而改回 `RwLock`。
+    /// 详见 [`Database`] 的类型文档。
+    fn lock_conn_read(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.lock_conn()
     }
 
     /// 创建或打开数据库
@@ -203,9 +199,14 @@ impl Database {
         // 每次打开连接都需要启用外键约束（SQLite 默认关闭，且设置不持久化）
         conn.execute_batch("PRAGMA foreign_keys=ON;")
             .context("Failed to enable foreign keys")?;
+        // WAL 提升写并发下的读取表现；busy_timeout 避免外部进程占用时立即报
+        // SQLITE_BUSY。两者失败都不致命（例如数据库位于不支持 WAL 的网络盘）。
+        if let Err(e) = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;") {
+            log::warn!("Failed to apply WAL/busy_timeout pragmas: {}", e);
+        }
 
         let db = Self {
-            conn: RwLock::new(SyncConnection(conn)),
+            conn: Mutex::new(conn),
         };
 
         db.initialize_schema()?;
@@ -1350,6 +1351,7 @@ mod tests {
         parse_legacy_issue_string,
     };
     use crate::models::security::{IssueSeverity, SecurityLevel, SecurityReport};
+    use crate::models::{Repository, Skill};
 
     #[test]
     fn parse_legacy_issue_string_preserves_unknown_prefixes() {
@@ -1396,6 +1398,60 @@ mod tests {
         assert_eq!(decoded.skipped_files, vec!["b.bin".to_string()]);
     }
 
+    /// 升级前写入的历史记录仍带着完整 scanned_files（每份最多 2000 条路径）。
+    /// 读取侧必须剥离，否则老用户要等到重新扫描才有收益。
+    #[test]
+    fn deserialize_strips_scanned_files_from_legacy_rows() {
+        let legacy_json = r#"{
+            "skill_id": "skill-1",
+            "score": 80,
+            "level": "Low",
+            "issues": [],
+            "recommendations": [],
+            "blocked": false,
+            "hard_trigger_issues": [],
+            "scanned_files": ["a.sh", "b.py", "c.md"],
+            "partial_scan": false,
+            "skipped_files": ["d.bin"]
+        }"#;
+
+        let decoded = deserialize_security_report(legacy_json).unwrap();
+
+        assert!(
+            decoded.scanned_files.is_empty(),
+            "legacy scanned_files must be dropped on read"
+        );
+        // 其余字段不受影响
+        assert_eq!(decoded.score, 80);
+        assert_eq!(decoded.skipped_files, vec!["d.bin".to_string()]);
+    }
+
+    /// 剥离后的报告序列化时应完全省略该字段，而不是写出空数组
+    #[test]
+    fn stripped_report_omits_scanned_files_when_serialized() {
+        let report = SecurityReport {
+            skill_id: "skill-1".to_string(),
+            score: 90,
+            level: SecurityLevel::Safe,
+            issues: vec![],
+            recommendations: vec![],
+            blocked: false,
+            hard_trigger_issues: vec![],
+            scanned_files: vec!["a.sh".to_string()],
+            partial_scan: false,
+            skipped_files: vec![],
+            metadata: None,
+            kind_counts: None,
+        }
+        .without_scanned_file_list();
+
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(
+            !json.contains("scanned_files"),
+            "serialized report should omit the field entirely: {json}"
+        );
+    }
+
     #[test]
     fn build_legacy_security_report_keeps_backward_compatible_defaults() {
         let report = build_legacy_security_report("skill-1", Some(88), Some("Low"), None).unwrap();
@@ -1405,6 +1461,101 @@ mod tests {
         assert!(matches!(report.level, SecurityLevel::Low));
         assert!(!report.blocked);
         assert!(!report.partial_scan);
+    }
+
+    /// 回归防线：`Database` 曾用 `RwLock<SyncConnection>` + `unsafe impl Sync`，
+    /// 允许多个读者并发持有 `&Connection`。由于 `rusqlite::Connection` 内部是
+    /// `RefCell`，且只读查询也会 `borrow_mut()`，这会造成数据竞争
+    /// （panic `already mutably borrowed`，或借用计数错乱导致 UB）。
+    ///
+    /// 本测试从多个线程并发调用只读接口。若有人把锁改回 `RwLock`，
+    /// 此测试会以 panic 或崩溃的形式暴露问题。
+    #[test]
+    fn concurrent_reads_do_not_race_on_connection() {
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(super::Database::new(dir.path().join("test.db")).unwrap());
+
+        // 预置一些数据，让查询真正走到 prepare/query_map 路径
+        for i in 0..20 {
+            let repo = Repository::new(
+                format!("https://github.com/owner/repo-{i}"),
+                format!("repo-{i}"),
+            );
+            db.add_repository(&repo).unwrap();
+
+            let mut skill = Skill::new(
+                format!("skill-{i}"),
+                format!("https://github.com/owner/repo-{i}"),
+                format!("skills/skill-{i}"),
+            );
+            skill.installed = true;
+            db.save_skill(&skill).unwrap();
+        }
+
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let db = Arc::clone(&db);
+                std::thread::spawn(move || {
+                    for _ in 0..50 {
+                        db.get_skills().unwrap();
+                        db.get_repositories().unwrap();
+                        db.get_plugins().unwrap();
+                        db.get_all_local_cli_tools().unwrap();
+                    }
+                })
+            })
+            .collect();
+
+        for handle in threads {
+            handle.join().expect("concurrent reader thread panicked");
+        }
+
+        assert_eq!(db.get_repositories().unwrap().len(), 20);
+        assert_eq!(db.get_skills().unwrap().len(), 20);
+    }
+
+    /// 读写并发同样必须安全：写者持独占锁期间不得有读者进入。
+    #[test]
+    fn concurrent_reads_and_writes_do_not_race() {
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(super::Database::new(dir.path().join("test.db")).unwrap());
+
+        let writer = {
+            let db = Arc::clone(&db);
+            std::thread::spawn(move || {
+                for i in 0..100 {
+                    let mut skill = Skill::new(
+                        format!("skill-{i}"),
+                        "local".to_string(),
+                        format!("skills/skill-{i}"),
+                    );
+                    skill.installed = true;
+                    db.save_skill(&skill).unwrap();
+                }
+            })
+        };
+
+        let readers: Vec<_> = (0..4)
+            .map(|_| {
+                let db = Arc::clone(&db);
+                std::thread::spawn(move || {
+                    for _ in 0..100 {
+                        db.get_skills().unwrap();
+                    }
+                })
+            })
+            .collect();
+
+        writer.join().expect("writer thread panicked");
+        for handle in readers {
+            handle.join().expect("reader thread panicked");
+        }
+
+        assert_eq!(db.get_skills().unwrap().len(), 100);
     }
 
     #[test]

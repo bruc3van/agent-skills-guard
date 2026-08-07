@@ -145,6 +145,41 @@ describe("LocalCliPage", () => {
     });
   });
 
+  // 中断的批次结果会被丢弃，必须允许重试；
+  // 而已有结论的批次不能重试（见上一个用例），两者由 settled 标志区分。
+  it("批次在拿到结果前被中断时，后续会重新请求这些工具", async () => {
+    let resolveFirst: (value: Array<[string, string]>) => void = () => {};
+    fetchLocalCliDescriptions.mockImplementationOnce(
+      () =>
+        new Promise<Array<[string, string]>>((resolve) => {
+          resolveFirst = resolve;
+        })
+    );
+
+    const { LocalCliPage } = await import("./LocalCliPage");
+    const { rerender } = render(<LocalCliPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(fetchLocalCliDescriptions).toHaveBeenCalledWith(["/home/u/.local/bin/bdc"]);
+    });
+
+    // 结果尚未返回就让 effect 重跑（模拟列表刷新）
+    fetchLocalCliDescriptions.mockResolvedValue([]);
+    mockTools = [...mockTools];
+    rerender(<LocalCliPage />);
+
+    await waitFor(() => {
+      expect(fetchLocalCliDescriptions).toHaveBeenCalledTimes(2);
+    });
+    // 被中断的工具重新进入请求
+    expect(fetchLocalCliDescriptions).toHaveBeenLastCalledWith(["/home/u/.local/bin/bdc"]);
+
+    // 迟到的结果不应造成异常
+    await act(async () => {
+      resolveFirst([["/home/u/.local/bin/bdc", "late result"]]);
+    });
+  });
+
   it("同名但路径不同的工具按 detected_path 分别缓存和重试说明", async () => {
     mockTools = [
       {
@@ -221,7 +256,7 @@ describe("LocalCliPage", () => {
     expect(screen.queryByText("localCli.busy.fetchingDesc")).toBeNull();
   });
 
-  it("卸载后停止继续获取后续说明", async () => {
+  it("卸载后忽略仍在途的说明结果，且不再触发刷新", async () => {
     mockTools = [
       {
         id: "first-cli",
@@ -250,8 +285,12 @@ describe("LocalCliPage", () => {
     const { LocalCliPage } = await import("./LocalCliPage");
     const { unmount } = render(<LocalCliPage />, { wrapper });
 
+    // 缺描述的工具在一次调用里批量提交，而不是逐个串行发起
     await waitFor(() => {
-      expect(fetchLocalCliDescriptions).toHaveBeenCalledWith(["/home/u/.local/bin/first-cli"]);
+      expect(fetchLocalCliDescriptions).toHaveBeenCalledWith([
+        "/home/u/.local/bin/first-cli",
+        "/home/u/.local/bin/second-cli",
+      ]);
     });
 
     unmount();

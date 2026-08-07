@@ -72,6 +72,8 @@ function AppContent() {
   const queryClient = useQueryClient();
   const { isBusy } = useNavigationProtection();
   const [currentTab, setCurrentTab] = useState<TabType>("overview");
+  // 本地 CLI 页首次被打开后才挂载，之后常驻以保留状态（见渲染处说明）
+  const [hasVisitedLocalCli, setHasVisitedLocalCli] = useState(false);
   const [marketplacePreset, setMarketplacePreset] = useState<MarketplacePreset>(null);
   const [platform, setPlatform] = useState<Platform | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -89,6 +91,7 @@ function AppContent() {
   const requestTabChange = useCallback(
     (tab: TabType) => {
       if (isBusy) return false;
+      if (tab === "local-cli") setHasVisitedLocalCli(true);
       setCurrentTab(tab);
       return true;
     },
@@ -471,15 +474,22 @@ function AppContent() {
                 </ErrorBoundary>
               )}
             </Suspense>
-            {/* LocalCliPage 保持挂载，避免切换标签页时丢失状态和重复扫描 */}
-            <ErrorBoundary>
-              <div
-                style={{ display: currentTab === "local-cli" ? "block" : "none" }}
-                className="h-full overflow-hidden"
-              >
-                <LocalCliPage />
-              </div>
-            </ErrorBoundary>
+            {/*
+              LocalCliPage 首次进入后保持挂载：切换标签页不丢状态、不重复扫描。
+              但在用户从未打开过该页时不挂载 —— 它一挂载就会串行 spawn
+              npm/pnpm/pip/brew/scoop/choco 等一系列子进程做全量发现，
+              过去这些工作在冷启动时就已开始，是启动数秒内卡顿的主要来源之一。
+            */}
+            {hasVisitedLocalCli && (
+              <ErrorBoundary>
+                <div
+                  style={{ display: currentTab === "local-cli" ? "block" : "none" }}
+                  className="h-full overflow-hidden"
+                >
+                  <LocalCliPage />
+                </div>
+              </ErrorBoundary>
+            )}
         </main>
       </div>
     </div>

@@ -15,15 +15,6 @@ use tauri::Manager;
 use tauri::State;
 use tokio::sync::{Mutex, Semaphore};
 
-/// 扫描进度事件（security 和 plugins 共用）
-#[derive(serde::Serialize, Clone)]
-pub struct ScanProgressEvent {
-    pub scan_id: String,
-    pub kind: String,
-    pub item_id: String,
-    pub file_path: String,
-}
-
 /// 默认扫描并行度
 pub const DEFAULT_SCAN_PARALLELISM: usize = 3;
 /// 最大扫描并行度
@@ -33,6 +24,41 @@ pub fn clamp_scan_parallelism(scan_parallelism: Option<usize>) -> usize {
     scan_parallelism
         .unwrap_or(DEFAULT_SCAN_PARALLELISM)
         .clamp(1, MAX_SCAN_PARALLELISM)
+}
+
+/// 按并行度缓存的 Rayon 线程池。
+///
+/// 此前每次全量扫描都 `ThreadPoolBuilder::new().build()` 新建线程池、扫完即销毁，
+/// 造成反复的线程创建/回收开销。并行度已被 `clamp_scan_parallelism` 限制在
+/// 1..=MAX_SCAN_PARALLELISM，因此这里最多缓存 8 个池，每个只创建一次。
+///
+/// 常驻线程上限：池一旦创建就不再销毁，最坏情况是 8 个池各持有
+/// 1..=8 个线程，即 1+2+…+8 = **36 个常驻线程**（仅当用户反复改动并行度设置
+/// 才会达到；实际通常只有 1~2 个池）。Rayon 空闲线程阻塞在任务队列上，
+/// 不消耗 CPU，每线程栈开销也有限，因此接受这一取舍。
+/// 若将来上限调高，需重新评估此处。
+static SCAN_THREAD_POOLS: std::sync::LazyLock<
+    std::sync::Mutex<HashMap<usize, Arc<rayon::ThreadPool>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// 获取（或惰性创建）指定并行度的共享扫描线程池。
+pub fn scan_thread_pool(parallelism: usize) -> Result<Arc<rayon::ThreadPool>, String> {
+    let mut pools = SCAN_THREAD_POOLS
+        .lock()
+        .map_err(|_| "[SCAN_POOL_POISONED] 扫描线程池状态异常".to_string())?;
+
+    if let Some(pool) = pools.get(&parallelism) {
+        return Ok(Arc::clone(pool));
+    }
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(parallelism)
+        .thread_name(move |i| format!("asguard-scan-{parallelism}-{i}"))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let pool = Arc::new(pool);
+    pools.insert(parallelism, Arc::clone(&pool));
+    Ok(pool)
 }
 
 pub struct AppState {
@@ -564,18 +590,42 @@ fn allow_partial_scan_or_default(allow_partial_scan: Option<bool>) -> bool {
     allow_partial_scan.unwrap_or(false)
 }
 
+/// 在阻塞线程池上执行一段需要持有 `SkillManager` 锁的同步工作。
+///
+/// `get_all_skills` / `get_installed_skills` / `scan_local_skills` /
+/// `refresh_skill_links` 都会遍历各工具的 skill 目录、比对软链并回写数据库，
+/// 属于同步重活。此前它们直接在 `async` 命令体里执行，会占满 tokio 工作线程，
+/// 导致启动期和刷新期其他 IPC 请求排队（界面「点什么都没反应」）。
+async fn with_skill_manager_blocking<T, F>(state: &AppState, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&SkillManager) -> Result<T, String> + Send + 'static,
+{
+    let skill_manager = Arc::clone(&state.skill_manager);
+    tokio::task::spawn_blocking(move || {
+        let manager = skill_manager.blocking_lock();
+        work(&manager)
+    })
+    .await
+    .map_err(|e| format!("[TASK_JOIN_ERROR] Task join error: {}", e))?
+}
+
 /// 获取所有 skills
 #[tauri::command]
 pub async fn get_skills(state: State<'_, AppState>) -> Result<Vec<Skill>, String> {
-    let manager = state.skill_manager.lock().await;
-    manager.get_all_skills().map_err(|e| e.to_string())
+    with_skill_manager_blocking(&state, |manager| {
+        manager.get_all_skills().map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 获取已安装的 skills
 #[tauri::command]
 pub async fn get_installed_skills(state: State<'_, AppState>) -> Result<Vec<Skill>, String> {
-    let manager = state.skill_manager.lock().await;
-    manager.get_installed_skills().map_err(|e| e.to_string())
+    with_skill_manager_blocking(&state, |manager| {
+        manager.get_installed_skills().map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 安装 skill
@@ -656,10 +706,10 @@ pub async fn cancel_skill_installation(
 /// 卸载 skill
 #[tauri::command]
 pub async fn uninstall_skill(state: State<'_, AppState>, skill_id: String) -> Result<(), String> {
-    let manager = state.skill_manager.lock().await;
-    manager
-        .uninstall_skill(&skill_id)
-        .map_err(|e| e.to_string())
+    with_skill_manager_blocking(&state, move |manager| {
+        manager.uninstall_skill(&skill_id).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 卸载特定路径的技能
@@ -669,10 +719,12 @@ pub async fn uninstall_skill_path(
     skill_id: String,
     path: String,
 ) -> Result<(), String> {
-    let manager = state.skill_manager.lock().await;
-    manager
-        .uninstall_skill_path(&skill_id, &path)
-        .map_err(|e| e.to_string())
+    with_skill_manager_blocking(&state, move |manager| {
+        manager
+            .uninstall_skill_path(&skill_id, &path)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 删除 skill 记录
@@ -684,16 +736,20 @@ pub async fn delete_skill(state: State<'_, AppState>, skill_id: String) -> Resul
 /// 扫描本地技能目录并导入未追踪的技能
 #[tauri::command]
 pub async fn scan_local_skills(state: State<'_, AppState>) -> Result<Vec<Skill>, String> {
-    let manager = state.skill_manager.lock().await;
-    manager.scan_local_skills().map_err(|e| e.to_string())
+    with_skill_manager_blocking(&state, |manager| {
+        manager.scan_local_skills().map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 强制按磁盘实际状态刷新已安装技能的工具链接，并返回刷新后的已安装列表。
 /// 供应用内更新安装后、手动重新扫描等场景显式调用，确保 Claude Code / Codex 等软链图标正确点亮。
 #[tauri::command]
 pub async fn refresh_skill_links(state: State<'_, AppState>) -> Result<Vec<Skill>, String> {
-    let manager = state.skill_manager.lock().await;
-    manager.refresh_skill_links().map_err(|e| e.to_string())
+    with_skill_manager_blocking(&state, |manager| {
+        manager.refresh_skill_links().map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 清理指定仓库的缓存

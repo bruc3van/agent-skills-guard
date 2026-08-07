@@ -351,21 +351,14 @@ export const api = {
     );
   },
 
-  async scanInstalledSkill(
-    skillId: string,
-    locale: string,
-    scanId?: string
-  ): Promise<SkillScanResult> {
-    return safeInvoke(
-      invoke<SkillScanResult>("scan_installed_skill", { skillId, locale, scanId: scanId || null })
-    );
+  async scanInstalledSkill(skillId: string, locale: string): Promise<SkillScanResult> {
+    return safeInvoke(invoke<SkillScanResult>("scan_installed_skill", { skillId, locale }));
   },
 
   async scanInstalledPlugin(
     pluginId: string,
     locale: string,
     claudeCommand?: string,
-    scanId?: string,
     skipSync?: boolean
   ): Promise<string> {
     return safeInvoke(
@@ -373,7 +366,6 @@ export const api = {
         pluginId,
         locale,
         claudeCommand: claudeCommand || null,
-        scanId: scanId || null,
         skipSync: skipSync ?? null,
       })
     );

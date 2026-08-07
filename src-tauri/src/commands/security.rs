@@ -1,4 +1,4 @@
-use crate::commands::{clamp_scan_parallelism, AppState, ScanProgressEvent};
+use crate::commands::{clamp_scan_parallelism, scan_thread_pool, AppState};
 use crate::i18n::validate_locale;
 use crate::models::security::{SecurityLevel, SecurityReport, SkillScanResult};
 use crate::models::Skill;
@@ -6,9 +6,9 @@ use crate::security::cross_skill::{self, SkillScanContext};
 use crate::security::{ScanOptions, SecurityScanner};
 use anyhow::Result;
 use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, State};
+use std::sync::Arc;
+use tauri::State;
 
 /// 扫描所有已安装的 skills
 #[tauri::command]
@@ -17,11 +17,18 @@ pub async fn scan_all_installed_skills(
     locale: String,
     scan_parallelism: Option<usize>,
 ) -> Result<Vec<SkillScanResult>, String> {
-    let locale = validate_locale(&locale);
-    let skills = {
-        let manager = state.skill_manager.lock().await;
-        manager.get_installed_skills().map_err(|e| e.to_string())?
-    };
+    let locale = validate_locale(&locale).to_string();
+    let skill_manager = Arc::clone(&state.skill_manager);
+
+    // 读取已安装列表本身也是重活（会遍历各工具目录、比对软链），
+    // 同样不能占用 async 工作线程。
+    let skills = tokio::task::spawn_blocking(move || {
+        let manager = skill_manager.blocking_lock();
+        manager.get_installed_skills().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))??;
+
     let installed_skills: Vec<Skill> = skills
         .into_iter()
         .filter(|s| s.installed && s.local_path.is_some())
@@ -29,12 +36,26 @@ pub async fn scan_all_installed_skills(
 
     let parallelism = clamp_scan_parallelism(scan_parallelism);
     let db = state.db.clone();
-    let locale_owned = locale.to_string();
 
-    let pool = ThreadPoolBuilder::new()
-        .num_threads(parallelism)
-        .build()
-        .map_err(|e| e.to_string())?;
+    // 扫描是纯 CPU + 磁盘 IO 的同步任务。此前直接在 async 命令里
+    // `pool.install(...)`，会阻塞 tokio 工作线程直到全部扫完，期间其他 IPC
+    // 请求排队 —— 这正是扫描期间整个界面卡顿的原因。
+    tokio::task::spawn_blocking(move || {
+        scan_installed_skills_blocking(db, installed_skills, locale, parallelism)
+    })
+    .await
+    .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))?
+}
+
+/// `scan_all_installed_skills` 的同步主体，必须在阻塞线程上运行。
+fn scan_installed_skills_blocking(
+    db: Arc<crate::services::Database>,
+    installed_skills: Vec<Skill>,
+    locale: String,
+    parallelism: usize,
+) -> Result<Vec<SkillScanResult>, String> {
+    let locale_owned = locale;
+    let pool = scan_thread_pool(parallelism)?;
 
     let mut results = pool.install(|| {
         installed_skills
@@ -80,6 +101,9 @@ pub async fn scan_all_installed_skills(
                         return None;
                     }
                 };
+
+                // 出站前剥离 scanned_files（前端不读，仅徒增 DB / IPC 体积）
+                let report = report.without_scanned_file_list();
 
                 let mut updated = skill.clone();
                 updated.security_score = Some(report.score);
@@ -169,18 +193,28 @@ pub async fn scan_all_installed_skills(
     Ok(results.into_iter().map(|(_, result)| result).collect())
 }
 
-/// 扫描单个已安装 skill（用于前端展示扫描进度）
+/// 扫描单个已安装 skill
 #[tauri::command]
 pub async fn scan_installed_skill(
     state: State<'_, AppState>,
-    app: AppHandle,
     skill_id: String,
     locale: String,
-    scan_id: Option<String>,
 ) -> Result<SkillScanResult, String> {
-    let locale = validate_locale(&locale);
-    let mut skill = state
-        .db
+    let locale = validate_locale(&locale).to_string();
+    let db = state.db.clone();
+
+    tokio::task::spawn_blocking(move || scan_installed_skill_blocking(db, &skill_id, &locale))
+        .await
+        .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))?
+}
+
+/// `scan_installed_skill` 的同步主体，必须在阻塞线程上运行。
+fn scan_installed_skill_blocking(
+    db: Arc<crate::services::Database>,
+    skill_id: &str,
+    locale: &str,
+) -> Result<SkillScanResult, String> {
+    let mut skill = db
         .get_skills()
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -201,52 +235,30 @@ pub async fn scan_installed_skill(
         skill.local_paths = None;
         skill.source_path = None;
         skill.linked_tools = Vec::new();
-        if let Err(e) = state.db.save_skill(&skill) {
+        if let Err(e) = db.save_skill(&skill) {
             log::warn!("Failed to update stale skill '{}': {}", skill.name, e);
         }
-        return Err(format!("[SKILL_DIR_NOT_FOUND] Skill directory does not exist: {}", local_path));
+        return Err(format!(
+            "[SKILL_DIR_NOT_FOUND] Skill directory does not exist: {}",
+            local_path
+        ));
     }
 
     let scanner = SecurityScanner::new();
-    let report = if let Some(scan_id) = scan_id.filter(|id| !id.is_empty()) {
-        let app_handle = app.clone();
-        let item_id = skill.id.clone();
-        let kind = "skill".to_string();
-        let mut progress_cb = |file_path: &str| {
-            let payload = ScanProgressEvent {
-                scan_id: scan_id.clone(),
-                kind: kind.clone(),
-                item_id: item_id.clone(),
-                file_path: file_path.to_string(),
-            };
-            let _ = app_handle.emit("scan-progress", payload);
-        };
-        scanner
-            .scan_directory_with_options(
-                path.to_str().unwrap_or(""),
-                &skill.id,
-                &locale,
-                ScanOptions {
-                    skip_readme: true,
-                    ..Default::default()
-                },
-                Some(&mut progress_cb),
-            )
-            .map_err(|e| e.to_string())?
-    } else {
-        scanner
-            .scan_directory_with_options(
-                path.to_str().unwrap_or(""),
-                &skill.id,
-                &locale,
-                ScanOptions {
-                    skip_readme: true,
-                    ..Default::default()
-                },
-                None,
-            )
-            .map_err(|e| e.to_string())?
-    };
+    let report = scanner
+        .scan_directory_with_options(
+            path.to_str().unwrap_or(""),
+            &skill.id,
+            locale,
+            ScanOptions {
+                skip_readme: true,
+                ..Default::default()
+            },
+            None,
+        )
+        .map_err(|e| e.to_string())?
+        // 出站前剥离 scanned_files（前端不读，仅徒增 DB / IPC 体积）
+        .without_scanned_file_list();
 
     skill.security_score = Some(report.score);
     skill.security_level = Some(report.level.as_str().to_string());
@@ -254,9 +266,7 @@ pub async fn scan_installed_skill(
     skill.security_report = Some(report.clone());
     skill.scanned_at = Some(chrono::Utc::now());
 
-    state
-        .db
-        .save_skill(&skill)
+    db.save_skill(&skill)
         .map_err(|e| format!("Failed to save skill: {}", e))?;
 
     Ok(SkillScanResult {
@@ -275,26 +285,45 @@ pub async fn count_scan_files(
     dir_path: String,
     skip_readme: Option<bool>,
 ) -> Result<usize, String> {
-    let path = PathBuf::from(&dir_path);
-    if !path.exists() || !path.is_dir() {
-        return Err(format!("[DIR_NOT_FOUND] Directory does not exist: {}", dir_path));
-    }
+    tokio::task::spawn_blocking(move || {
+        let path = PathBuf::from(&dir_path);
+        if !path.exists() || !path.is_dir() {
+            return Err(format!(
+                "[DIR_NOT_FOUND] Directory does not exist: {}",
+                dir_path
+            ));
+        }
 
-    let scanner = SecurityScanner::new();
-    let options = ScanOptions {
-        skip_readme: skip_readme.unwrap_or(true),
-        ..Default::default()
-    };
+        let scanner = SecurityScanner::new();
+        let options = ScanOptions {
+            skip_readme: skip_readme.unwrap_or(true),
+            ..Default::default()
+        };
 
-    scanner
-        .count_scan_files(path.to_str().unwrap_or(""), options)
-        .map_err(|e| e.to_string())
+        scanner
+            .count_scan_files(path.to_str().unwrap_or(""), options)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))?
 }
 
 /// 获取缓存的扫描结果
 #[tauri::command]
 pub async fn get_scan_results(state: State<'_, AppState>) -> Result<Vec<SkillScanResult>, String> {
-    let skills = state.db.get_skills().map_err(|e| e.to_string())?;
+    let db = state.db.clone();
+
+    // 全表读 + 每条记录的 security_report JSON 反序列化，量大时不应占用
+    // async 工作线程
+    tokio::task::spawn_blocking(move || collect_scan_results(&db))
+        .await
+        .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))?
+}
+
+fn collect_scan_results(
+    db: &crate::services::Database,
+) -> Result<Vec<SkillScanResult>, String> {
+    let skills = db.get_skills().map_err(|e| e.to_string())?;
 
     let results: Vec<SkillScanResult> = skills
         .into_iter()

@@ -1212,11 +1212,15 @@ impl PluginManager {
             reports.push((resolved.plugin.clone(), report));
         }
 
-        let merged_report = merge_reports(&reports, &marketplace_name);
+        // 聚合发生在剥离之前：merge_reports 需要各插件的 scanned_files
+        // 来拼装跨插件的文件清单
+        let merged_report = merge_reports(&reports, &marketplace_name).without_scanned_file_list();
 
         let now = Utc::now();
         let blocked = merged_report.blocked;
         for (plugin_entry, report) in reports {
+            // 落库前剥离 scanned_files（前端不读，仅徒增 DB / IPC 体积）
+            let report = report.without_scanned_file_list();
             let mut updated = plugin_entry.clone();
             updated.security_score = Some(report.score);
             updated.security_level = Some(report.level.as_str().to_string());

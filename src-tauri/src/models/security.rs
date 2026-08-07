@@ -156,7 +156,13 @@ pub struct SecurityReport {
     pub recommendations: Vec<String>,
     pub blocked: bool,                    // 是否被硬触发规则阻止安装
     pub hard_trigger_issues: Vec<String>, // 触发的硬阻止规则列表
-    pub scanned_files: Vec<String>,       // 已扫描的文件列表
+    /// 已扫描的文件列表。
+    ///
+    /// 仅在扫描过程中有用（日志、跨插件聚合）。出站前会被
+    /// [`SecurityReport::without_scanned_file_list`] 清空，因此序列化时直接省略，
+    /// 让 IPC / DB 里连 `"scanned_files": []` 都不出现。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scanned_files: Vec<String>,
     pub partial_scan: bool,               // 是否存在未完整扫描
     pub skipped_files: Vec<String>,       // 跳过扫描的文件列表
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -164,6 +170,22 @@ pub struct SecurityReport {
     /// 各 kind 的 finding 数量统计
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind_counts: Option<KindCounts>,
+}
+
+impl SecurityReport {
+    /// 返回适合持久化 / 发送给前端的精简副本。
+    ///
+    /// `scanned_files` 每份报告最多可达 2000 条路径（见 `policy::default_max_files`），
+    /// 会被写入 SQLite 并随每次 `get_skills` / `get_installed_skills` 反序列化、
+    /// 经 IPC 传给前端再 `JSON.parse` —— 而前端从未读取该字段
+    /// （只用到 `skipped_files` 的数量与前几条预览）。
+    ///
+    /// 它在扫描过程中仍有用（日志、跨插件聚合），因此只在出站边界剥离，
+    /// 不改变扫描器内部行为。
+    pub fn without_scanned_file_list(mut self) -> Self {
+        self.scanned_files = Vec::new();
+        self
+    }
 }
 
 /// 各 FindingKind 的数量统计

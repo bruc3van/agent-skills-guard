@@ -10,12 +10,24 @@ export function useSkills() {
   });
 }
 
+/**
+ * 已安装技能列表。
+ *
+ * `get_installed_skills` 并非纯读：它会遍历各工具 skill 目录、比对软链、
+ * 必要时回写数据库，属于重量级调用。此前配置为 `staleTime: 0` +
+ * `refetchOnMount: "always"`，导致每次切换标签页都触发一轮全盘 reconcile。
+ *
+ * 改为 30 秒 staleTime 后，标签页来回切换直接命中缓存；真正需要立即反映
+ * 磁盘变化的场景（安装/卸载/同步工具链接、手动刷新、启动期 reconcile）
+ * 都会显式 invalidate 或 refetch 这个 key，不依赖挂载时的自动重取。
+ */
+const INSTALLED_SKILLS_STALE_TIME_MS = 30 * 1000;
+
 export function useInstalledSkills() {
   return useQuery({
     queryKey: ["skills", "installed"],
     queryFn: () => api.getInstalledSkills(),
-    staleTime: 0,
-    refetchOnMount: "always",
+    staleTime: INSTALLED_SKILLS_STALE_TIME_MS,
     refetchOnWindowFocus: false,
   });
 }

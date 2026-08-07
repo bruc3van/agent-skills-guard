@@ -61,15 +61,17 @@ export function LocalCliPage() {
   // Description cache: detected_path -> description
   const [descriptionMap, setDescriptionMap] = useState<Record<string, string>>({});
   const [isFetchingDesc, setIsFetchingDesc] = useState(false);
-  const [fetchProgress, setFetchProgress] = useState<{
-    current: string;
-    done: number;
-    total: number;
-  } | null>(null);
+  // 描述抓取现在是一次批量请求（后端并发处理），没有可报告的逐项进度，
+  // 只保留本批工具数量用于提示文案
+  const [fetchProgress, setFetchProgress] = useState<{ total: number } | null>(null);
   const [descriptionRetryToken, setDescriptionRetryToken] = useState(0);
   const attemptedDescriptionPathsRef = useRef<Set<string>>(new Set());
 
-  // Lazily fetch descriptions for tools missing one — one by one with progress
+  // 为缺少描述的工具补齐描述。
+  //
+  // 这里一次性把所有缺失路径交给后端并发解析，而不是逐个 await：
+  // 旧实现每个工具发一次 IPC、启一个子进程（最长 5 秒），并在每轮触发两次
+  // setState，导致这个 784 行的页面被整体重渲染 2N 次。
   useEffect(() => {
     if (isLoading || tools.length === 0) return;
     const missing = tools.filter(
@@ -84,43 +86,53 @@ export function LocalCliPage() {
       return;
     }
 
-    for (const tool of missing) {
-      attemptedDescriptionPathsRef.current.add(tool.detected_path);
+    // 先标记为「已尝试」，避免这一批在 effect 重跑时被重复请求。
+    const attemptedPaths = missing.map((t) => t.detected_path);
+    for (const path of attemptedPaths) {
+      attemptedDescriptionPathsRef.current.add(path);
     }
 
     let cancelled = false;
+    // 请求是否已有结论（成功或失败）。只有「尚未有结论就被中断」的批次
+    // 才需要在 cleanup 里撤销标记，否则这些工具的描述将永远不会再被抓取；
+    // 已有结论的批次必须保留标记，不然 effect 重跑会把它们再请求一遍。
+    let settled = false;
     setIsFetchingDesc(true);
+    // 整批只有一次 IPC，没有逐项进度可言，只报告本批规模
+    setFetchProgress({ total: missing.length });
 
-    const total = missing.length;
-
-    const fetchNext = async (index: number) => {
-      if (cancelled) return;
-      if (index >= missing.length) {
-        setIsFetchingDesc(false);
-        setFetchProgress(null);
-        void refetch();
-        return;
-      }
-      const tool = missing[index];
-      setFetchProgress({ current: tool.id, done: index, total });
+    (async () => {
       try {
-        const results = await api.fetchLocalCliDescriptions([tool.detected_path]);
+        const results = await api.fetchLocalCliDescriptions(attemptedPaths);
         if (cancelled) return;
         if (results.length > 0) {
-          const [, desc] = results[0];
-          setDescriptionMap((prev) => ({ ...prev, [tool.detected_path]: desc }));
+          // 一次性合并，只触发一次重渲染
+          setDescriptionMap((prev) => {
+            const next = { ...prev };
+            for (const [path, desc] of results) next[path] = desc;
+            return next;
+          });
         }
       } catch {
         if (cancelled) return;
-        // skip failed tool
+        // 整批失败时保持已有描述，不阻断页面
+      } finally {
+        settled = true;
+        if (!cancelled) {
+          setIsFetchingDesc(false);
+          setFetchProgress(null);
+          void refetch();
+        }
       }
-      if (cancelled) return;
-      void fetchNext(index + 1);
-    };
+    })();
 
-    void fetchNext(0);
     return () => {
       cancelled = true;
+      if (settled) return;
+      // 本批在拿到结果前被中断，结果会被丢弃 —— 撤销标记以便下次重试
+      for (const path of attemptedPaths) {
+        attemptedDescriptionPathsRef.current.delete(path);
+      }
     };
   }, [tools, isLoading, refetch, descriptionRetryToken]);
 
@@ -186,11 +198,7 @@ export function LocalCliPage() {
       return t("localCli.busy.uninstalling", { name: uninstallingTool.id });
     }
     if (fetchProgress) {
-      return t("localCli.busy.fetchingDesc", {
-        name: fetchProgress.current,
-        done: fetchProgress.done + 1,
-        total: fetchProgress.total,
-      });
+      return t("localCli.busy.fetchingDesc", { total: fetchProgress.total });
     }
     return null;
   }, [isChecking, isUpdating, isUninstalling, fetchProgress, t, updatingTool, uninstallingTool]);

@@ -593,6 +593,10 @@ fn is_ascii_art_char(ch: char) -> bool {
 }
 
 const CLI_SCAN_CACHE_TTL: Duration = Duration::from_secs(300);
+/// 单个工具解析描述的超时（会启动一个 `--help` 子进程）
+const DESCRIPTION_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
+/// 描述解析的并发上限，避免一次性拉起过多子进程
+const DESCRIPTION_FETCH_CONCURRENCY: usize = 4;
 
 /// 将扫描结果与 DB 缓存合并，写入内存缓存，并同步到 DB
 fn merge_and_cache_tools(state: &AppState, tools: &mut Vec<LocalCliTool>) -> Result<(), String> {
@@ -987,31 +991,54 @@ pub async fn fetch_local_cli_descriptions(
     state: State<'_, AppState>,
     tool_paths: Vec<String>,
 ) -> Result<Vec<(String, String)>, String> {
-    let mut results = Vec::new();
-
+    // 先批量筛出真正缺描述的工具，避免为已有描述的条目也起一个任务
+    let mut pending: Vec<(String, PathBuf)> = Vec::new();
     for tool_path in &tool_paths {
-        let row = match state.db.get_local_cli_tool(tool_path) {
-            Ok(Some(r)) if r.description.is_some() => continue,
-            Ok(Some(r)) => r,
+        match state.db.get_local_cli_tool(tool_path) {
+            Ok(Some(row)) if row.description.is_none() => {
+                pending.push((tool_path.clone(), PathBuf::from(row.detected_path)));
+            }
             _ => continue,
-        };
-        let detected_path = row.detected_path.clone();
-        let path = tool_path.clone();
+        }
+    }
 
-        let desc = tokio::time::timeout(
-            Duration::from_secs(5),
-            tokio::task::spawn_blocking(move || {
-                resolve_description_for_path(&PathBuf::from(detected_path))
-            }),
-        )
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .flatten();
+    if pending.is_empty() {
+        return Ok(Vec::new());
+    }
 
-        let Some(desc) = desc else { continue };
-        let _ = state.db.set_local_cli_tool_description(&path, &desc);
-        results.push((path, desc));
+    // 并发解析描述（每个都会 spawn 一个 `--help` 子进程）。
+    // 此前是逐个串行 await，N 个工具最坏要 N×5 秒；前端还为每个工具单独发一次
+    // IPC，每轮触发两次 setState 导致整页重渲染。
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(
+        DESCRIPTION_FETCH_CONCURRENCY.min(pending.len()),
+    ));
+
+    let mut tasks = Vec::with_capacity(pending.len());
+    for (path, detected_path) in pending {
+        let semaphore = Arc::clone(&semaphore);
+        tasks.push(tokio::spawn(async move {
+            let _permit = semaphore.acquire_owned().await.ok()?;
+            let desc = tokio::time::timeout(
+                DESCRIPTION_FETCH_TIMEOUT,
+                tokio::task::spawn_blocking(move || {
+                    resolve_description_for_path(&detected_path)
+                }),
+            )
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .flatten()?;
+            Some((path, desc))
+        }));
+    }
+
+    let mut results = Vec::new();
+    for task in tasks {
+        // 单个工具解析失败不应影响其余工具
+        if let Ok(Some((path, desc))) = task.await {
+            let _ = state.db.set_local_cli_tool_description(&path, &desc);
+            results.push((path, desc));
+        }
     }
 
     Ok(results)

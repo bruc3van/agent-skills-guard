@@ -1,5 +1,5 @@
 use crate::commands::featured_marketplaces;
-use crate::commands::{AppState, ScanProgressEvent};
+use crate::commands::AppState;
 use crate::i18n::validate_locale;
 use crate::models::{Plugin, SecurityReport};
 use crate::security::{ScanOptions, SecurityScanner};
@@ -9,9 +9,9 @@ use crate::services::plugin_manager::{
 };
 use chrono::Utc;
 use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, State};
+use std::sync::Arc;
+use tauri::State;
 
 /// 获取所有 plugins
 #[tauri::command]
@@ -247,18 +247,32 @@ pub async fn scan_all_installed_plugins(
         }
     }
 
-    let plugins = state.db.get_plugins().map_err(|e| e.to_string())?;
-    let installed_plugins: Vec<Plugin> = plugins.into_iter().filter(|p| p.installed).collect();
-
     let parallelism = crate::commands::clamp_scan_parallelism(scan_parallelism);
 
     let db = state.db.clone();
     let locale_owned = locale.to_string();
 
-    let pool = ThreadPoolBuilder::new()
-        .num_threads(parallelism)
-        .build()
-        .map_err(|e| e.to_string())?;
+    // 扫描是同步的 CPU + IO 重活，必须离开 async 工作线程，
+    // 否则会阻塞其他 IPC 请求（扫描期间界面整体卡顿）。
+    // `get_plugins()` 是全表读 + 每条记录的 security_report 反序列化，
+    // 同样属于重活，一并放进来（与 skills 扫描路径保持对称）。
+    tokio::task::spawn_blocking(move || {
+        scan_installed_plugins_blocking(db, locale_owned, parallelism)
+    })
+    .await
+    .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))?
+}
+
+/// `scan_all_installed_plugins` 的同步主体，必须在阻塞线程上运行。
+fn scan_installed_plugins_blocking(
+    db: Arc<crate::services::Database>,
+    locale_owned: String,
+    parallelism: usize,
+) -> Result<Vec<String>, String> {
+    let plugins = db.get_plugins().map_err(|e| e.to_string())?;
+    let installed_plugins: Vec<Plugin> = plugins.into_iter().filter(|p| p.installed).collect();
+
+    let pool = crate::commands::scan_thread_pool(parallelism)?;
 
     let mut scanned = pool.install(|| {
         installed_plugins
@@ -292,6 +306,9 @@ pub async fn scan_all_installed_plugins(
                     }
                 };
 
+                // 出站前剥离 scanned_files（前端不读，仅徒增 DB / IPC 体积）
+                let report = report.without_scanned_file_list();
+
                 let mut updated = plugin.clone();
                 updated.security_score = Some(report.score);
                 updated.security_level = Some(report.level.as_str().to_string());
@@ -313,18 +330,16 @@ pub async fn scan_all_installed_plugins(
     Ok(scanned.into_iter().map(|(_, id)| id).collect())
 }
 
-/// 安全扫描单个已安装 plugin（用于前端展示扫描进度）
+/// 安全扫描单个已安装 plugin
 #[tauri::command]
 pub async fn scan_installed_plugin(
     state: State<'_, AppState>,
-    app: AppHandle,
     plugin_id: String,
     locale: String,
     claude_command: Option<String>,
-    scan_id: Option<String>,
     skip_sync: Option<bool>,
 ) -> Result<String, String> {
-    let locale = validate_locale(&locale);
+    let locale = validate_locale(&locale).to_string();
 
     // 尝试同步 installPath（不强制成功）
     if !skip_sync.unwrap_or(false) {
@@ -334,8 +349,20 @@ pub async fn scan_installed_plugin(
         }
     }
 
-    let mut plugin = state
-        .db
+    let db = state.db.clone();
+
+    tokio::task::spawn_blocking(move || scan_installed_plugin_blocking(db, &plugin_id, &locale))
+        .await
+        .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))?
+}
+
+/// `scan_installed_plugin` 的同步主体，必须在阻塞线程上运行。
+fn scan_installed_plugin_blocking(
+    db: Arc<crate::services::Database>,
+    plugin_id: &str,
+    locale: &str,
+) -> Result<String, String> {
+    let mut plugin = db
         .get_plugins()
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -347,54 +374,34 @@ pub async fn scan_installed_plugin(
     }
 
     let Some(install_path) = plugin.claude_install_path.clone() else {
-        return Err("[PLUGIN_INSTALL_PATH_MISSING] Plugin install path is not available".to_string());
+        return Err(
+            "[PLUGIN_INSTALL_PATH_MISSING] Plugin install path is not available".to_string(),
+        );
     };
 
     let path = PathBuf::from(&install_path);
     if !path.exists() || !path.is_dir() {
-        return Err(format!("[PLUGIN_DIR_NOT_FOUND] Plugin directory does not exist: {}", install_path));
+        return Err(format!(
+            "[PLUGIN_DIR_NOT_FOUND] Plugin directory does not exist: {}",
+            install_path
+        ));
     }
 
     let scanner = SecurityScanner::new();
-    let report = if let Some(scan_id) = scan_id.filter(|id| !id.is_empty()) {
-        let app_handle = app.clone();
-        let item_id = plugin.id.clone();
-        let kind = "plugin".to_string();
-        let mut progress_cb = |file_path: &str| {
-            let payload = ScanProgressEvent {
-                scan_id: scan_id.clone(),
-                kind: kind.clone(),
-                item_id: item_id.clone(),
-                file_path: file_path.to_string(),
-            };
-            let _ = app_handle.emit("scan-progress", payload);
-        };
-        scanner
-            .scan_directory_with_options(
-                path.to_str().unwrap_or(""),
-                &plugin.id,
-                &locale,
-                ScanOptions {
-                    skip_readme: true,
-                    ..Default::default()
-                },
-                Some(&mut progress_cb),
-            )
-            .map_err(|e| e.to_string())?
-    } else {
-        scanner
-            .scan_directory_with_options(
-                path.to_str().unwrap_or(""),
-                &plugin.id,
-                &locale,
-                ScanOptions {
-                    skip_readme: true,
-                    ..Default::default()
-                },
-                None,
-            )
-            .map_err(|e| e.to_string())?
-    };
+    let report = scanner
+        .scan_directory_with_options(
+            path.to_str().unwrap_or(""),
+            &plugin.id,
+            locale,
+            ScanOptions {
+                skip_readme: true,
+                ..Default::default()
+            },
+            None,
+        )
+        .map_err(|e| e.to_string())?
+        // 出站前剥离 scanned_files（前端不读，仅徒增 DB / IPC 体积）
+        .without_scanned_file_list();
 
     plugin.security_score = Some(report.score);
     plugin.security_level = Some(report.level.as_str().to_string());
@@ -402,9 +409,7 @@ pub async fn scan_installed_plugin(
     plugin.security_report = Some(report.clone());
     plugin.scanned_at = Some(Utc::now());
 
-    state
-        .db
-        .save_plugin(&plugin)
+    db.save_plugin(&plugin)
         .map_err(|e| format!("Failed to save plugin: {}", e))?;
 
     Ok(plugin.id)

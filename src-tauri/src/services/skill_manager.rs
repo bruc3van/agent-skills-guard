@@ -167,13 +167,83 @@ fn paths_point_to_same_location(left: &Path, right: &Path) -> bool {
     }
 }
 
-fn skill_md_checksum(skill_dir: &Path) -> Option<String> {
+/// SKILL.md 校验和缓存条目：以 (修改时间, 大小) 作为失效依据
+#[derive(Clone, PartialEq, Eq)]
+struct ChecksumCacheEntry {
+    modified: Option<std::time::SystemTime>,
+    len: u64,
+    checksum: String,
+}
+
+/// SKILL.md 校验和缓存。
+///
+/// `refresh_existing_tool_links_for_skill` 会对「每个技能 × 每个工具目录」
+/// 调用一次校验和比对，一次 `get_installed_skills` 就是 O(N×T) 次
+/// 文件读取 + SHA256。100 个技能 / 5 个工具目录即上千次哈希，是切换标签页
+/// 卡顿的主要来源。这里按 (mtime, size) 缓存，文件未变更时零 IO。
+static SKILL_MD_CHECKSUM_CACHE: std::sync::LazyLock<ChecksumCache> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn hash_bytes(content: &[u8]) -> String {
     use sha2::{Digest, Sha256};
 
-    let content = std::fs::read(skill_dir.join("SKILL.md")).ok()?;
     let mut hasher = Sha256::new();
     hasher.update(content);
-    Some(hex::encode(hasher.finalize()))
+    hex::encode(hasher.finalize())
+}
+
+type ChecksumCache = std::sync::Mutex<std::collections::HashMap<PathBuf, ChecksumCacheEntry>>;
+
+/// 缓存注入版本，便于测试使用独立缓存（全局缓存是进程级状态，
+/// 在并行测试下无法可靠断言）。
+fn skill_md_checksum_with_cache(skill_dir: &Path, cache: &ChecksumCache) -> Option<String> {
+    let path = skill_dir.join("SKILL.md");
+
+    // 取不到元数据（文件不存在 / 无权限）时不使用缓存：
+    // 文件已被删除就应当如实返回 None，而不是给出陈旧校验和。
+    let Ok(metadata) = std::fs::metadata(&path) else {
+        return std::fs::read(&path).ok().map(|c| hash_bytes(&c));
+    };
+    let modified = metadata.modified().ok();
+    let len = metadata.len();
+
+    if let Ok(cache) = cache.lock() {
+        if let Some(entry) = cache.get(&path) {
+            if entry.modified == modified && entry.len == len {
+                return Some(entry.checksum.clone());
+            }
+        }
+    }
+
+    let checksum = hash_bytes(&std::fs::read(&path).ok()?);
+
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(
+            path,
+            ChecksumCacheEntry {
+                modified,
+                len,
+                checksum: checksum.clone(),
+            },
+        );
+    }
+
+    Some(checksum)
+}
+
+fn skill_md_checksum(skill_dir: &Path) -> Option<String> {
+    skill_md_checksum_with_cache(skill_dir, &SKILL_MD_CHECKSUM_CACHE)
+}
+
+/// 清空 SKILL.md 校验和缓存。
+///
+/// (mtime, size) 在绝大多数文件系统上足以判定变更，但安装 / 更新 / 卸载
+/// 会主动覆写技能目录，此时不依赖时间戳精度、直接失效整个缓存最稳妥。
+/// 缓存本身很小，`clear()` 的代价可以忽略。
+fn invalidate_skill_md_checksum_cache() {
+    if let Ok(mut cache) = SKILL_MD_CHECKSUM_CACHE.lock() {
+        cache.clear();
+    }
 }
 
 fn tool_skill_path_is_compatible_with_source(
@@ -545,7 +615,9 @@ impl SkillManager {
         skill.security_score = Some(report.score);
         skill.security_level = Some(report.level.as_str().to_string());
         skill.security_issues = Some(report.issues.clone());
-        skill.security_report = Some(report.clone());
+        // 落库前剥离 scanned_files：前端从不读取，却会随每次技能列表查询
+        // 反序列化并经 IPC 传输（每份报告最多 2000 条路径）
+        skill.security_report = Some(report.clone().without_scanned_file_list());
         skill.scanned_at = Some(Utc::now());
     }
 
@@ -1058,6 +1130,8 @@ impl SkillManager {
         allow_partial_scan: bool,
         target_tools: Vec<String>,
     ) -> Result<()> {
+        // 即将改写技能目录，先失效 SKILL.md 校验和缓存
+        invalidate_skill_md_checksum_cache();
         log::info!("Confirming installation for skill: {}", skill_id);
 
         {
@@ -1436,6 +1510,9 @@ impl SkillManager {
 
     /// 卸载 skill
     pub fn uninstall_skill(&self, skill_id: &str) -> Result<()> {
+        // 即将删除技能目录，先失效 SKILL.md 校验和缓存
+        invalidate_skill_md_checksum_cache();
+
         // 从数据库获取 skill
         let mut skill = self
             .db
@@ -1530,6 +1607,9 @@ impl SkillManager {
 
     /// 卸载特定路径的技能
     pub fn uninstall_skill_path(&self, skill_id: &str, path_to_remove: &str) -> Result<()> {
+        // 即将删除技能目录，先失效 SKILL.md 校验和缓存
+        invalidate_skill_md_checksum_cache();
+
         // 从数据库获取 skill
         let mut skill = self
             .db
@@ -1688,6 +1768,12 @@ impl SkillManager {
             .map(|tool_dir| (tool_dir.path.clone(), tool_dir.tool_id.clone()))
             .collect::<Vec<_>>();
 
+        // 这一步不可省略：它把 source_path / local_paths 重新指向磁盘上真实存在
+        // 的副本，adoption 才能把发现的磁盘分组匹配到既有记录，而不是新建一条
+        // 重复记录（见 installed_skills_reuse_existing_record_when_source_is_missing）。
+        // 它与下方循环确实做同样的链接比对，但比对中最昂贵的
+        // 「读 SKILL.md + SHA256」已由 SKILL_MD_CHECKSUM_CACHE 命中缓存，
+        // 第二轮几乎零 IO。
         self.refresh_installed_tool_links_from_dirs(&tool_dirs)?;
 
         let adoption_summary = self.adopt_existing_skills_for_scan(tool_skill_dirs)?;
@@ -2553,6 +2639,9 @@ impl SkillManager {
     ) -> Result<()> {
         use anyhow::Context;
 
+        // 即将改写技能目录，先失效 SKILL.md 校验和缓存
+        invalidate_skill_md_checksum_cache();
+
         log::info!("Confirming update for skill: {}", skill_id);
 
         let mut skill = self
@@ -3120,10 +3209,12 @@ fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 mod tests {
     use super::{
         build_local_skill_id, build_synced_tool_state, create_or_reuse_tool_link,
-        find_tool_id_for_scan_dir, install_base_conflicting_tool, paths_point_to_same_location,
+        find_tool_id_for_scan_dir, install_base_conflicting_tool,
+        invalidate_skill_md_checksum_cache, paths_point_to_same_location,
         refresh_existing_tool_links_for_skill, resolve_update_install_paths,
-        resolve_update_target_install_dir, restore_installation_backup,
-        tool_skill_path_is_compatible_with_source, ToolSkillDir, STAGING_LOCAL_PATH_PREFIX,
+        resolve_update_target_install_dir, restore_installation_backup, skill_md_checksum,
+        skill_md_checksum_with_cache, tool_skill_path_is_compatible_with_source, ToolSkillDir,
+        STAGING_LOCAL_PATH_PREFIX,
     };
     use crate::services::agent_tools::AgentTool;
     use crate::services::{link_fs, Database};
@@ -3734,6 +3825,79 @@ mod tests {
             .as_ref()
             .unwrap()
             .contains(&claude_link.to_string_lossy().to_string()));
+    }
+
+    /// SKILL.md 校验和缓存：命中、写入与失效。
+    ///
+    /// `refresh_existing_tool_links_for_skill` 对每个技能 × 每个工具目录都要比对
+    /// 一次校验和，缓存是消除 O(N×T) 次 SHA256 的关键。
+    ///
+    /// 使用独立缓存而非全局缓存：后者是进程级状态，`cargo test` 并行执行时
+    /// 其他测试的安装 / 卸载路径会调用 `invalidate_skill_md_checksum_cache()`，
+    /// 断言全局缓存必然出现偶发失败。
+    #[test]
+    fn skill_md_checksum_cache_hits_writes_and_invalidates() {
+        let cache: super::ChecksumCache = std::sync::Mutex::new(HashMap::new());
+        let temp = tempfile::tempdir().unwrap();
+        let skill_dir = temp.path().join("example");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let skill_md = skill_dir.join("SKILL.md");
+        std::fs::write(&skill_md, "original").unwrap();
+
+        // 首次读取应把结果写入缓存
+        let original = skill_md_checksum_with_cache(&skill_dir, &cache).expect("first read");
+        assert!(
+            cache.lock().unwrap().contains_key(&skill_md),
+            "first read should populate the cache"
+        );
+
+        // 篡改缓存值：若第二次调用命中缓存，就会原样返回被篡改的值，
+        // 从而证明它没有重新读盘 + 哈希。
+        cache
+            .lock()
+            .unwrap()
+            .get_mut(&skill_md)
+            .unwrap()
+            .checksum = "sentinel-cached-value".to_string();
+        assert_eq!(
+            skill_md_checksum_with_cache(&skill_dir, &cache).as_deref(),
+            Some("sentinel-cached-value"),
+            "unchanged file should be served from cache without re-hashing"
+        );
+
+        // 内容变化（长度不同）必须绕过缓存，重新计算
+        std::fs::write(&skill_md, "changed content that differs in length").unwrap();
+        let changed = skill_md_checksum_with_cache(&skill_dir, &cache).unwrap();
+        assert_ne!(changed, "sentinel-cached-value");
+        assert_ne!(changed, original);
+
+        // 文件被删除时不得返回陈旧校验和
+        std::fs::remove_file(&skill_md).unwrap();
+        assert_eq!(
+            skill_md_checksum_with_cache(&skill_dir, &cache),
+            None,
+            "a deleted SKILL.md must not report a stale checksum"
+        );
+    }
+
+    /// 安装 / 更新 / 卸载会覆写技能目录，必须能显式清空全局缓存。
+    #[test]
+    fn invalidate_clears_global_checksum_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let skill_dir = temp.path().join("example");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "content").unwrap();
+
+        let checksum = skill_md_checksum(&skill_dir).expect("read via global cache");
+
+        invalidate_skill_md_checksum_cache();
+
+        // 失效后重新计算，结果应与内容一致（不依赖缓存是否残留）
+        assert_eq!(
+            skill_md_checksum(&skill_dir).as_deref(),
+            Some(checksum.as_str()),
+            "recomputed checksum must match the file content"
+        );
     }
 
     #[test]

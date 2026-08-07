@@ -14,6 +14,7 @@ import { GroupCard, GroupCardItem } from "./ui/GroupCard";
 import type { SecurityReport } from "@/types/security";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useClaudeMarketplaces, usePlugins } from "@/hooks/usePlugins";
+import { useInstalledSkills } from "@/hooks/useSkills";
 import { getScanConcurrency } from "@/lib/storage";
 import { groupSkillsByName, getSkillGroupKey } from "@/lib/installed-skills";
 
@@ -54,10 +55,11 @@ export function OverviewPage() {
     });
   };
 
-  const { data: installedSkills = [] } = useQuery<Skill[]>({
-    queryKey: ["skills", "installed"],
-    queryFn: api.getInstalledSkills,
-  });
+  // 必须走 useInstalledSkills：它统一了这个 key 的缓存策略。
+  // 这里若另起一个裸 useQuery，会拿到默认的 staleTime: 0 + refetchOnMount，
+  // 于是每次进入总览页都重新触发一轮全盘磁盘 reconcile，
+  // 把 useInstalledSkills 的 30s 缓存优化整个抵消掉。
+  const { data: installedSkills = [] } = useInstalledSkills();
 
   const { data: repositories = [] } = useQuery<Repository[]>({
     queryKey: ["repositories"],
@@ -148,7 +150,7 @@ export function OverviewPage() {
         try {
           await runWithConcurrency(items, scanConcurrency, async (plugin) => {
             try {
-              await api.scanInstalledPlugin(plugin.id, i18n.language, undefined, undefined, true);
+              await api.scanInstalledPlugin(plugin.id, i18n.language, undefined, true);
               scannedPluginsCount += 1;
             } catch (e) {
               failedPluginsCount += 1;

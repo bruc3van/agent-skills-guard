@@ -823,7 +823,7 @@
     "busy": {
       "updating": "Updating {{name}}...",
       "uninstalling": "Uninstalling {{name}}...",
-      "fetchingDesc": "Fetching description for {{name}} ({{done}}/{{total}})..."
+      "fetchingDesc": "Fetching descriptions for {{total}} tools..."
     },
     "folder": {
       "opened": "Install folder opened",

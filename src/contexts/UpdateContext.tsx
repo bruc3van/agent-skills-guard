@@ -1,4 +1,12 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 import {
   checkForUpdate,
   type UpdateInfo,
@@ -214,20 +222,38 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(timer);
   }, [checkUpdate]);
 
-  const value: UpdateContextValue = {
-    hasUpdate,
-    updateInfo,
-    updateHandle,
-    isChecking,
-    error,
-    updatePhase,
-    updateProgress,
-    isDismissed,
-    dismissUpdate,
-    checkUpdate,
-    installUpdate,
-    resetDismiss,
-  };
+  // 未 memo 时每次渲染都会生成新对象，导致所有 useUpdate() 消费者
+  // （含常驻的 UpdateBadge）跟着无谓重渲染
+  const value: UpdateContextValue = useMemo(
+    () => ({
+      hasUpdate,
+      updateInfo,
+      updateHandle,
+      isChecking,
+      error,
+      updatePhase,
+      updateProgress,
+      isDismissed,
+      dismissUpdate,
+      checkUpdate,
+      installUpdate,
+      resetDismiss,
+    }),
+    [
+      hasUpdate,
+      updateInfo,
+      updateHandle,
+      isChecking,
+      error,
+      updatePhase,
+      updateProgress,
+      isDismissed,
+      dismissUpdate,
+      checkUpdate,
+      installUpdate,
+      resetDismiss,
+    ]
+  );
 
   return <UpdateContext.Provider value={value}>{children}</UpdateContext.Provider>;
 }
