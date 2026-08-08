@@ -1,7 +1,8 @@
 # Skills 生态整合实施方案（npx skills 兼容 + 市场自动化）
 
 - **日期**：2026-08-08
-- **修订**：rev2（经外部评审后重写；rev1 的两处 P0 与六处设计缺口已修正，见附录 A）
+- **修订**：rev4（经三轮外部评审；rev1→rev2 见附录 A，rev2→rev3 见附录 B，rev3→rev4 见附录 C）
+- **状态**：**M0 已放行**；M1 在本轮 tree SHA 闭环修正后放行；T3 / T8 保持门禁
 - **基线版本**：`54a964a`「尝试修复更新后软链状态丢失的问题」（v1.3.6 之后一个未发布提交）；本文档为未跟踪新增文件
 - **范围**：`src-tauri/src/services`、`src-tauri/src/security`、`src-tauri/src/commands`、`src/components`、CI
 - **性质**：实施方案，本文档不含代码改动
@@ -13,7 +14,7 @@
 
 1. **兼容性（不变）**：我们与 `npx skills` 选中了**同一套磁盘布局**（`~/.agents/skills/<name>` 规范目录 + 软链分发），物理层零冲突。但两边账本互不可见，开发机上已出现实际失联。这是必须先修的。
 
-2. **市场（结论已变）**：skills.sh 已上线正式 `/api/v1`，提供分页目录、搜索、详情、curated 与**多厂商安全审计聚合**。其中**只有 audit 端点匿名可用**，其余需 Vercel OIDC。因此**不能把桌面端主路径建在无正式匿名契约的接口上**。
+2. **市场（结论已变）**：skills.sh 已上线正式 `/api/v1`，提供分页目录、搜索、详情、curated 与**多厂商安全审计聚合**，全部标注需 Vercel OIDC。其中 audit 端点**实测匿名返回 200，但官方文档同样标注 `Authentication Required.`**——属实现状态而非契约。因此**不能把任何功能建立在其持续匿名开放的假设上**，skills.sh 的一切数据接入均置于 feature flag 之后。
 
 3. **差异化（必须重新定位）**：「全网唯一有安全数据」已不成立——skills.sh 已聚合 5 家厂商。新定位见 §二。
 
@@ -21,12 +22,12 @@
 
 | 编号 | 工作项 | 等级 | 里程碑 |
 |---|---|---|---|
-| T0 | API 契约验证与授权确认 | 🔴 P0 | M0 |
+| T0 | API 契约、授权与 GitHub 配额验证 | 🔴 P0 | M0 |
 | T1 | 只读 lock 识别 + 多信号匹配 + `update_provider` | 🔴 P0 | M1 |
 | T2 | 整目录扫描指纹 + 未扫描告警 | 🔴 P0 | M1 |
 | T7 | 安全扫描器抽为 headless CLI | 🔴 P0 | M2 |
 | T8 | CI 索引管线（带内容哈希） | 🔴 P0 | M2 |
-| T3 | skills.sh 数据接入（audit 匿名 + 搜索实验位） | 🟠 P1 | M3 |
+| T3 | skills.sh 数据接入（audit + 搜索，**均 flag 默认关闭**） | 🟠 P1 | M3 |
 | T9 | 市场页面重构 + 装前扫描闭环 | 🟠 P1 | M3 |
 | T10 | `featured-marketplace.yaml` 瘦身 | 🟡 P2 | M3 |
 | T4 | 账本写回（feature flag） | 🟠 P1 | M4 |
@@ -73,7 +74,7 @@
 
 | 端点 | 匿名访问 | 说明 |
 |---|---|---|
-| `GET /api/v1/skills/audit/{source}/{skill}` | ✅ **200** | 多厂商审计聚合 |
+| `GET /api/v1/skills/audit/{source}/{skill}` | ⚠️ 实测 200，**但文档标注需认证** | 多厂商审计聚合，见下方警示 |
 | `GET /api/v1/skills` | ❌ 401 | 分页排行榜（all-time / trending / hot） |
 | `GET /api/v1/skills/search` | ❌ 401 | |
 | `GET /api/v1/skills/curated` | ❌ 401 | 官方精选集 |
@@ -86,6 +87,8 @@
 认证方式：Vercel OIDC（`Authorization: Bearer $VERCEL_OIDC_TOKEN`），需应用**部署在 Vercel** 并开启 OIDC Federation，token 为请求级短期 JWT。限流 600 req/min per (team, project)。
 
 > **对我们的硬约束**：桌面 Tauri 应用与 GitHub Actions **都不是 Vercel 运行时**，无法天然获得 OIDC token。除非取得其他授权方式，否则 `/api/v1` 的四个受保护端点在本项目中**不可用**。
+>
+> **audit 端点的特别警示**：虽然实测匿名返回 200，但官方文档在该端点下明确写着 **"Authentication Required. Authenticated requests are rate-limited to 600/min per (team, project)."**。因此**匿名可用只是当前实现状态，不是公开契约**——随时可能收紧。叠加 `robots.txt` 的 `Disallow: /api/`，本方案不得把任何功能建立在「audit 端点将持续匿名开放」的假设上。T3-3a 因此与旧搜索接口同级：**feature flag 默认关闭，标注实验性**，待 T0-1 书面确认后再评估是否转正。
 
 ### 1.4 audit 端点实测样本（`anthropics/skills/pdf`）
 
@@ -119,11 +122,25 @@
 | 时机 | 装**后**自动生成，长尾装前无数据（404） | **装前强制扫描**，无数据即无法安装 |
 | 新鲜度 | 实测最新 4 个月前 | 本机实时，针对**实际将要落盘的那份内容** |
 | 可解释性 | 一句话摘要 | 文件 + 行号 + CWE + 修复建议（现有 `SecurityIssue` 模型已具备） |
-| 结论一致性 | 5 家打架，用户无从判断 | 单一策略引擎，可配置 strict/default |
+| 结论一致性 | 5 家打架，用户无从判断 | **统一、可解释、可复现**的本地策略结论（strict/default 可配） |
 | 覆盖面 | 仅 skills.sh 收录的技能 | **任意** GitHub 仓库、本地目录、任意来源 |
 | 执行位置 | 云端第三方 | 本机，代码不出网 |
 
 产品话术改为：**「skills 生态的本地安全网关」**——不与云端审计竞争覆盖面，而是提供装前的、可解释的、针对真实落盘内容的最后一道闸。上游的多厂商结论作为**补充参考信号**引入（T3），并如实标注其提供方与审计时间。
+
+### 能力边界（必须在 UI 与文档中同步声明）
+
+我方是**静态扫描**，存在固有的漏报与误报。以下表述为对外口径，不得省略：
+
+> **Safe 的准确含义**：在指定扫描策略（`default` / `strict`）、扫描范围与扫描器版本下，未发现已覆盖的常见危险模式。**不构成该技能绝对安全的保证。**
+
+必须同时明确的三点：
+
+1. **不覆盖运行时行为**：技能在实际执行中通过网络拉取并执行的内容、由 LLM 动态生成的命令，静态扫描无法预知
+2. **不构成对第三方结论的否定**：我方 `Safe` 而某厂商 `fail` 时，UI 并列展示两者，不做裁决，也不暗示我方更权威
+3. **"单一结论"不等于"更准确"**：它的价值在于口径统一、依据可查、结果可复现，而非命中率更高
+
+`scan_completeness != "full"`（截断/部分扫描）时，**一律不得显示 Safe**。
 
 ---
 
@@ -180,15 +197,56 @@
 
 | 项 | 内容 | 判定 |
 |---|---|---|
-| T0-1 | 联系 skills.sh / vercel-labs，确认非 Vercel 运行时的授权路径（API key？公开只读配额？）以及**批量使用 audit 端点的许可** | 有授权 → C 层可扩大；无 → C 层仅限用户主动触发的单条查询 |
+| T0-1 | 联系 skills.sh / vercel-labs，确认非 Vercel 运行时的授权路径（API key？公开只读配额？）以及 **audit 端点的匿名使用许可**（文档标 Required，实测 200，需澄清哪个是准） | 有书面授权 → T3-3a 可转正；无 → 永久保持 flag 关闭的实验态 |
 | T0-2 | 明确旧 `/api/search` 的定位（是否将下线） | 无承诺 → 只能作为 feature flag 后的实验功能 |
 | T0-3 | 冻结上游 CLI 版本与 schema：记录 `skills@1.5.22` 的 commit、`skill-lock.ts` 的 `CURRENT_VERSION=3`、`agents.ts` 的 commit hash 到 `docs/upstream-pin.md` | 后续所有生成脚本以此 pin 为准 |
 | T0-4 | 定义索引内容哈希算法与威胁模型（见 T8 附注） | 产出一页 spec |
-| T0-5 | 验证 `asg-scan` 从 `SecurityScanner` 抽离的可行性（30 行 PoC） | 确认无 tauri/SQLite 依赖 |
+| T0-5 | `asg-scan` PoC（见下方验收清单） | 确认无 tauri/SQLite 依赖，且不影响现有构建 |
+| T0-6 | **GitHub API 配额 dry-run** | 决定 T8 是否必须改 GraphQL 批处理 |
+| T0-7 | **整目录指纹性能基准** | 决定 T2 的缓存策略是否必要 |
 
-**产出**：`docs/upstream-pin.md` + `docs/index-hash-spec.md` + T0-1 的书面答复（或明确「无答复」的结论）。
+#### T0-5 `asg-scan` PoC 验收清单
 
-**为什么必须先做**：T3/T8/T9 的技术选型全部取决于 T0-1 与 T0-2 的答案。在契约未定时开工，返工成本远高于一周验证。
+1. 独立编译运行：`cargo build --bin asg-scan` 成功，且 `cargo tauri build` 行为无变化（不新增 feature、不改默认 target）
+2. stdout 仅有 JSON，可直接 `| jq`；所有日志与诊断进 stderr
+3. 对同一 fixture，等级、分数、issue 集合与 GUI 内扫描**完全一致**
+4. 输出排序稳定（issue 按 `file_path` + `line_number` 排序），且**不含动态时间字段**（`scanned_at` 由调用方注入，不由 CLI 生成），保证同输入两次运行字节级一致
+5. i18n 在无 tauri 上下文下可初始化，默认 `en`
+
+#### T0-6 GitHub API 配额 dry-run（新增，直接决定 T8 可行性）
+
+sitemap 实测：**19,968 个技能 URL、2,458 个唯一仓库、2,049 个唯一 owner**。
+
+朴素估算「每仓库 1 次元数据 + 1 次 Trees」= **4,916 次请求**，已贴近 GitHub token 的 5,000 次/小时上限，且尚未计入：
+
+- 默认分支 / commit sha 补查
+- Trees API 返回 `truncated: true` 后的递归补查（大仓库必现）
+- 失败重试
+- 与其他 workflow 共享同一 token 额度
+
+**dry-run 内容**：取 100–200 个真实仓库跑完整流程，统计每仓库实际请求数与 `truncated` 命中率，线性外推到 2,458。
+
+**据此决定**：
+- REST 是否必须换成 **GraphQL 批处理**（单次查询多仓库的 `stargazers`/`defaultBranchRef`/`object(expression:)`）
+- 跨运行缓存的键设计（`repo → (etag, pushed_at, tree_sha)`，未变更仓库零请求）
+- **rate-limit 续跑**：命中 429/剩余额度低于阈值时保存进度并在下次 workflow 续跑，而非失败重来
+
+**产出**：`docs/upstream-pin.md` + `docs/index-hash-spec.md` + `docs/t0-quota-dryrun.md` + T0-1 的书面答复（或明确「无答复」的结论）。
+
+#### 门禁矩阵（rev3 的 §M0 与 §路线图 表述冲突，此处统一）
+
+> rev3 一处说「T0 全部完成才能进 M1」，另一处又说「等外部答复时可并行开工 T1/T2」。两者矛盾。实际依赖是**逐项**的，不是整体的：
+
+| 工作项 | 依赖的 T0 子项 | 是否依赖外部答复 | 可否立即开工 |
+|---|---|---|---|
+| T1 | T0-3（上游 pin）、T0-4（哈希 spec） | ❌ 否 | ✅ 是 |
+| T2 | T0-7（性能基准） | ❌ 否 | ✅ 是 |
+| T7 | T0-5（PoC） | ❌ 否 | ✅ 是 |
+| T3 | **T0-1（授权）、T0-2（旧接口定位）** | ✅ **是** | ❌ 阻塞 |
+| T8 | T0-4、**T0-6（配额）** | ❌ 否（T0-6 是内部验证） | ⏸ 待 T0-6 结论 |
+| T4 / T5 / T6 / T11 | T0-3 | ❌ 否 | ✅ 是（但排期在 M4） |
+
+**结论**：只有 **T3** 真正被外部答复阻塞。T0-5 / T0-6 / T0-7 均为内部验证，可立刻并行执行；M1（T1+T2）在 T0-3/T0-4/T0-7 完成后即可开工，无需等待 T0-1/T0-2。
 
 ---
 
@@ -273,16 +331,53 @@ pub fn read_lock() -> LockState;
 | `local` / `node_modules` / `mintlify` / `well-known` / 其他 | — | `SkillsCli` | 同上 |
 | 无 lock 记录 | — | `None` | 仅显示来源未知，不提供更新入口 |
 
-**`GuardGithub` 的补齐流程**（作为 T1 的子任务）：
+**`GuardGithub` 的补齐流程**（作为 T1 的子任务）—— 改为**目录级 tree SHA 模型**
 
-1. `skillFolderHash` 是**目录 tree SHA，不是 commit SHA**，不可直接充当 `installed_commit_sha`
-2. 由 `source_url` + `skill_path` 调 `fetch_latest_commit_sha_for_path`，取**该路径当前 HEAD commit**
-3. 用它反查该 commit 下的 tree SHA，与 `skillFolderHash` 比对：
-   - 一致 → 内容即最新，写入 `installed_commit_sha = 该 commit`，标记 UpToDate
-   - 不一致 → 无法确定安装时点，`update_provider` 降级为 `SkillsCli`，**不猜测**
-4. 同时在 `repositories` 表 upsert 对应仓库行（`enabled=false`，仅供更新链解析用，不进入仓库列表 UI）
+> **rev2 缺陷修正**：rev2 写的是「由 `source_url` + `skill_path` 调 `fetch_latest_commit_sha_for_path`」。但 lock 的 `entry.skill_path` 是**文件**路径（开发机实测值：`".claude/skills/ui-ux-pro-max/SKILL.md"`），直接传入会把查询退化为**单文件级**——只改 `scripts/*.py` 而 `SKILL.md` 不变的提交会被漏掉。
+>
+> **同时澄清一个本仓库的事实**：现有远程更新检测**实测是目录级的**。`check_skill_update` 收到的 `skill.file_path` 存的是技能**目录**相对路径（[github.rs:164](../src-tauri/src/services/github.rs#L164) 取目录项 `item.path`；[github.rs:895](../src-tauri/src/services/github.rs#L895) 取 `skill_dir.strip_prefix(repo_root)`），而 GitHub commits API 的 `path` 参数传目录时**当前会**追踪整个子树。因此这不是既有功能的 correctness bug，而是 T1 新代码的输入转换 bug。
+>
+> ⚠️ **但目录递归只是实测行为，不是契约**：GitHub 官方文档对 `path` 参数的表述仅为 "Only commits containing this file path will be returned"（[List commits](https://docs.github.com/en/rest/commits/commits)），**未承诺目录递归语义**。这正是本方案改用 tree SHA 的独立理由之一——不能把检测正确性建立在未文档化的实现行为上。
 
-**绝不做**：写入伪造的 `installed_commit_sha`。宁可显示「由 skills CLI 管理」。
+**修正后的流程**：
+
+1. **路径归一化**：`dir_path = dirname(entry.skill_path)`，若为空则 `"."`。**禁止**把 lock 的原始 `skill_path` 直接传给任何按路径查询的 API
+2. **遵守 ref**：解析 `entry.ref`（分支/tag），缺省时用仓库默认分支。rev2 完全忽略了该字段
+3. **取目标 ref 当前 commit sha**
+4. **提取该 commit 下 `dir_path` 的 tree SHA**（Trees API）
+5. **与 `entry.skillFolderHash` 比对**：
+   - 一致 → 内容即最新。写入 `installed_commit_sha`（供下载与溯源）+ `installed_tree_sha = skillFolderHash`，标记 UpToDate
+   - 不一致 → 上游内容已变，但**安装时点未知**。写入 `installed_tree_sha = skillFolderHash`（这是唯一可信的锚点），`installed_commit_sha` 留空，标记 UpdateAvailable
+6. 在 `repositories` 表 upsert 对应仓库行（`enabled=false`，仅供更新链解析，不进入仓库列表 UI）
+
+**DB 新增** `installed_tree_sha: Option<String>`，职责划分明确：
+
+| 字段 | 职责 |
+|---|---|
+| `installed_tree_sha` | **目录内容变更检测的唯一依据** |
+| `installed_commit_sha` | 仅用于下载指定版本与溯源展示，**不再承担变更检测** |
+
+**既有更新链改造（T1 的必做项，不可推迟到 M2）**
+
+> **rev3 缺陷修正**：rev3 把这项列为「M2 搭车项、非 T1 阻塞」，与 M1 的设计直接冲突：T1 在 tree 不一致时会写入 `installed_tree_sha` 而把 `installed_commit_sha` 留空，但现有 `check_skill_update` 遇到空 `installed_commit_sha` **直接返回 `Unknown`**（[github.rs:1010](../src-tauri/src/services/github.rs#L1010)）；而 DB 中**没有任何持久化的 `UpdateAvailable` 状态**可供兜底——`SkillStatus` 枚举（[skill.rs:90](../src-tauri/src/models/skill.rs#L90)）自定义以来全仓库零引用，skills 表也无 `status` 列。结果就是「标着 `GuardGithub` 却永远查不出更新」的死角。
+>
+> 已选方案：**把 tree SHA 优先分支移入 T1**，使 `installed_tree_sha` 在 M1 内真正生效。（另一可选方案是缩减 M1——T1 只识别来源、所有 CLI 技能暂设 `SkillsCli`，到 M2 再切换。不采用，因为那会让 M1 失去「可更新」这一最主要的用户可感价值。）
+
+`check_skill_update` 改为双分支，**tree SHA 优先**：
+
+```
+if installed_tree_sha.is_some():
+    取目标 ref 当前 commit → 取该 commit 下 dir_path 的 tree SHA
+    与 installed_tree_sha 比对 → UpToDate | UpdateAvailable
+elif installed_commit_sha.is_some():
+    走现有 commits-API 路径过滤逻辑（保留，作为无 tree SHA 的老数据的兼容路径）
+else:
+    Unknown
+```
+
+tree SHA 分支不受**目录改名、force push、历史重写**影响，而 commits API 的路径过滤在这些场景下会退化为 `Unknown`。两条分支长期并存，老数据在首次成功比对后回填 `installed_tree_sha` 完成自愈（复用现有 `UpToDate { canonical_sha }` 的自愈模式）。
+
+**绝不做**：写入伪造的 `installed_commit_sha` 或 `installed_tree_sha`。宁可显示「由 skills CLI 管理」。
 
 **幽灵条目**：lock 中存在但磁盘不存在 → 列入「账本异常」区，提供说明与一键清理（清理动作属 T4，M1 只展示不执行）。
 
@@ -292,7 +387,7 @@ pub fn read_lock() -> LockState;
 - lock 缺失 / JSON 损坏 / version=4 / 条目结构不全 → 四种情况均静默降级为纯本地扫描，不崩溃、不报错、不写入
 - 手工放置的同名目录不会被误认为 CLI 技能
 
-**工作量**：5–6 天（较 rev1 的 2–3 天上调，多信号匹配与 sha 补齐是新增量）
+**工作量**：8–9 天（rev1 为 2–3 天；rev2 上调至 5–6 天用于多信号匹配与 sha 补齐；rev3 加 tree SHA 模型与 `installed_tree_sha` 迁移；rev4 再纳入 `check_skill_update` 双分支改造与老数据自愈）
 
 ---
 
@@ -310,7 +405,19 @@ fingerprint = sha256( 逐条拼接 sorted_by_relpath[ relpath \0 size \0 sha256(
 - 遍历规则必须复用 `scan_directory` 的同一份 walk 逻辑与忽略规则（抽成共享函数，**禁止两处各写一遍**）
 - 符号链接不跟随，记录为 `relpath \0 LINK \0 sha256(target_string)`
 - 超大文件按扫描器既有截断策略处理，并在指纹中记录截断标志
-- mtime **只用于快速预筛**（跳过明显未变的目录），不作为判定依据
+
+**关于 mtime——rev2 的写法自相矛盾，此处推翻重写**
+
+> rev2 一边说 mtime「不作为判定依据」，一边又说用它「跳过明显未变的目录」。只要根目录 mtime 未变就跳过哈希计算，mtime 事实上**就是**判定依据，原漏洞（改子目录内文件不更新父目录 mtime）原样保留。
+
+**新规则**：
+
+1. **禁止**以技能根目录 mtime 为条件跳过指纹计算
+2. 允许**逐文件**内容哈希缓存，缓存键 = `(相对路径, 文件大小, mtime_ns)`。三者任一变化即重算该文件的哈希；**目录结构（文件增删）永远重新遍历**，不受缓存影响
+3. 必须提供**强制全量重算**入口（设置页 + `--no-cache` 等价能力），用于缓存可疑时的兜底
+4. 缓存仅为性能优化，**语义上等价于每次全量计算**——单测须锁定这一点（同一目录，有缓存与无缓存的指纹必须相同）
+
+性能兜底由 T0-7 基准决定：若全量哈希在典型技能规模（实测你机器上 11 个技能）下耗时可接受，缓存可延后实现。
 
 **判定**：`scanned_at IS NULL` 或 `content_fingerprint != 当前计算值` → 未扫描/已过期。
 
@@ -368,8 +475,8 @@ exit: 0 扫描完成（无论结论）| 2 超时 | 3 输入无效 | 1 内部错�
 | 1 | 拉 `https://www.skills.sh/sitemap.xml` | **遍历 sitemapindex**，不硬编码分片数（当前 2 片，每片上限 10000） |
 | 2 | 解析 `owner/repo/skillName` 全集（约 2 万） | 仅取 URL 结构，不请求详情页 |
 | 3 | 按 repo 聚合（约数千） | |
-| 4 | GitHub API 补元数据 | stars / license / `pushed_at` / archived / **默认分支当前 commit sha**；`GITHUB_TOKEN` + ETag 缓存 |
-| 5 | Trees API 定位 `SKILL.md`，读 frontmatter `description` | 一次拿全树，**不爬 skills.sh 详情页** |
+| 4 | GitHub API 补元数据 | stars / license / `pushed_at` / archived / **默认分支当前 commit sha**；**优先 GraphQL 批量查询**（见下），REST 仅作回退；ETag + 跨运行缓存 |
+| 5 | Trees API 定位 `SKILL.md`，读 frontmatter `description` | 一次拿全树，**不爬 skills.sh 详情页**；必须处理 `truncated: true` 的递归补查 |
 | 6 | **稀疏 checkout 目标技能目录，记录 `commit_sha` 与 `content_hash`** | `content_hash` 用 T2 同算法 |
 | 7 | 对 top N（首期 300–500）跑 `asg-scan` | 结果与**第 6 步的 hash 绑定** |
 | 8 | 中文描述：仅对新增/变更条目批量机翻，结果落缓存 | 避免每日重译 |
@@ -377,6 +484,16 @@ exit: 0 扫描完成（无论结论）| 2 超时 | 3 输入无效 | 1 内部错�
 | 10 | 提交回仓库 | 沿用 [FEATURED_MARKETPLACES_REMOTE_URL](../src-tauri/src/commands/featured_marketplaces.rs#L5) 的分发路径 |
 
 **不做**：CI 内批量调用 skills.sh 任何 API（含 audit）。安装量等信号在 T0-1 拿到许可前不入索引；未获许可则该字段永久缺省。
+
+**API 配额设计（T0-6 的直接产物，rev2 完全缺失）**
+
+实测规模：**2,458 个唯一仓库**。朴素 REST 方案约 4,916 次请求即触顶 5,000/小时。三项强制措施：
+
+1. **GraphQL 批处理**：单次查询携带 ~50 个仓库的 `stargazerCount` / `licenseInfo` / `defaultBranchRef.target.oid` / `pushedAt`，把步骤 4 从 2,458 次压到约 50 次（GraphQL 按 node 计点，需按实测点数校准批大小）
+2. **跨运行缓存**：`repo → (etag, pushed_at, default_branch_oid, tree_sha, description_map)` 持久化在索引仓库。`pushed_at` 未变的仓库**零请求**跳过，日常增量应只触及数十个仓库
+3. **限流续跑**：监控 `X-RateLimit-Remaining`，低于阈值（如 200）时**保存进度快照并正常退出**，下次 workflow 从断点续跑；绝不因限流失败重来。首次全量允许跨多次 workflow 完成
+
+**估算调整**：T8 由 rev2 的 6–7 天上调至 **9–10 天**（新增 GraphQL 层、缓存层、续跑机制）。
 
 > **rev1 缺陷修正（TOCTOU）**：rev1 的 schema 只记 `scanned_at`，用户看到 Safe 时默认分支可能已变，实际安装到另一份内容。
 
@@ -418,7 +535,7 @@ exit: 0 扫描完成（无论结论）| 2 超时 | 3 输入无效 | 1 内部错�
 
 > **rev1 缺陷修正（回传）**：rev1 提出「用户点开详情时后台扫描并回传公共索引」。该设计缺少接收后端、身份认证与防伪，任何人可污染公共评级。**已删除**。按需扫描的结果仅存本机 SQLite 缓存，不回传。公共索引的扩容只能靠 CI 提高 top N。
 
-**工作量**：6–7 天
+**工作量**：9–10 天（rev2 为 6–7 天，rev3 因 GraphQL 批处理 / 跨运行缓存 / 限流续跑上调）
 
 ---
 
@@ -428,8 +545,11 @@ exit: 0 扫描完成（无论结论）| 2 超时 | 3 输入无效 | 1 内部错�
 
 **新增** `src-tauri/src/services/skills_registry.rs`，两个能力，分别独立开关：
 
-**3a. audit 补充信号（匿名可用，默认开启）**
-- 用户**点开技能详情时**按需请求 `GET /api/v1/skills/audit/{source}/{skill}`（单条、用户触发、不批量）
+**3a. audit 补充信号（feature flag，默认关闭）**
+
+> **rev2 缺陷修正**：rev2 设为「默认开启」，与 T0-1「先确认使用许可」自相矛盾。官方文档在该端点标注 `Authentication Required.`，匿名 200 只是当前实现状态。「用户主动单次请求」能控制频率，但**不能替代授权，也不能把非契约行为变成契约**。故降为与 3b 同级的实验功能，默认关闭，设置项文案注明「该端点官方标注需认证，当前匿名可用属实现细节，可能随时失效」。T0-1 取得书面确认后方可转正为默认开启。
+
+- 开启后，用户**点开技能详情时**按需请求 `GET /api/v1/skills/audit/{source}/{skill}`（单条、用户触发、不批量）
 - 结果作为「第三方审计参考」区块展示，**必须逐条标注 provider 与 `auditedAt`**
 - 必须显示我方结论在先、第三方在后；当多家结论冲突时（如实测的 Snyk `fail` vs 其余 `pass`）**如实并列展示，不做合并裁决**
 - 404（未审计）是常态，显示「暂无第三方审计」而非错误
@@ -480,7 +600,9 @@ exit: 0 扫描完成（无论结论）| 2 超时 | 3 输入无效 | 1 内部错�
 
 **七条护栏，缺一不可**：
 
-1. **只读闸门**：`LockState` 为 `Absent` / `UnsupportedVersion` / `Corrupt` 中任一 → **禁止一切写入**。特别地，`Corrupt` 状态**永不**用空账本覆盖
+1. **只读闸门（rev2 写错，此处修正）**：
+   - `UnsupportedVersion` / `Corrupt` → **绝对只读，禁止一切写入**。特别地，`Corrupt` 状态**永不**用空账本覆盖
+   - `Absent` → **允许创建**。rev2 把 `Absent` 也列入禁写，会导致「用户从未用过 skills CLI 时 Guard 永远建不出第一份 lock」，与「Guard 安装后 upsert」直接冲突。正确做法：用户开启实验开关**并在首次创建时二次确认**后，创建一份 `version: 3` 的新 lock（仅含 `version` + `skills` 两个键，不臆造 `dismissed` / `lastSelectedAgents`）
 2. **未知字段保留**：经 T1 的 `#[serde(flatten)] extra` 往返，顶层与条目两级
 3. **写入范围限定**：仅允许操作「Guard 自己创建、`sourceType == "github"`、且 `update_provider == GuardGithub`」的条目。CLI 创建的条目**只读**
 4. **摘要比对（乐观并发）**：读取时记录整文件 `sha256`；写入前重读并比对 → 不一致说明期间有他方写入 → **中止本次写入**，与最新内容做键级合并后提示用户重试
@@ -501,7 +623,17 @@ exit: 0 扫描完成（无论结论）| 2 超时 | 3 输入无效 | 1 内部错�
 | 隔离（T5） | 不动 |
 | 任何 CLI 创建的条目 | 不动 |
 
-`skillFolderHash` 由 GitHub Trees API 自算；算不出**留空**，绝不伪造。
+**`skillFolderHash` 缺失时的处置（rev2 写错，此处修正）**
+
+上游 schema 将 `skillFolderHash` 定义为**必填 string**（[skill-lock.ts](https://raw.githubusercontent.com/vercel-labs/skills/main/src/skill-lock.ts)）。rev2 说「算不出就留空」会产出一条上游无法正常用于更新比对的残缺条目——等于给对方埋雷。
+
+**正确处置（三级降级）**：
+
+1. 正常：由 GitHub Trees API 自算 tree SHA 后写入
+2. 暂时失败（限流 / 网络 / 超时）→ **不写该条目**，加入**待写队列**，在下次成功获取时补写。队列持久化在我方 SQLite，不污染 lock
+3. 永久失败（源不是 GitHub、无法定位目录）→ 该技能**永不写入 lock**，`update_provider` 保持 `SkillsCli`，UI 说明「该技能未同步至 skills CLI 账本」
+
+**绝不做**：写入残缺条目，或伪造 hash。宁可不同步。
 
 **工作量**：5 天
 
@@ -599,8 +731,10 @@ T12：读 `./skills-lock.json`（v1，SHA-256 内容哈希）+ `./.agents/skills
 
 | 层级 | 覆盖 |
 |---|---|
-| Rust 单测 | lock 五态解析（正常/缺失/损坏/未知版本/结构不全）；未知字段 flatten 往返**字节级一致**；多信号匹配的正反例；摘要比对中止逻辑 |
-| Rust 单测 | `content_fingerprint` 与 `scan_directory` 遍历一致性（同一 fixture，两者文件集合必须相等） |
+| Rust 单测 | lock 五态解析（正常/缺失/损坏/未知版本/结构不全）；多信号匹配的正反例；摘要比对中止逻辑；`Absent` 可创建 / `Corrupt` 绝对只读 |
+| Rust 单测 | 未知字段往返：断言 **JSON 语义等价（`serde_json::Value` 深度相等）且未知字段零丢失**。**不做字节级比较**——`BTreeMap` 会重排键序，缩进与换行也可能不同，字节级断言不现实且无意义。字节摘要仅用于 T4 护栏 4 的并发冲突检测，不用于往返测试 |
+| Rust 单测 | `content_fingerprint` 与 `scan_directory` 遍历一致性（同一 fixture，两者文件集合必须相等）；有缓存与无缓存的指纹必须相同 |
+| Rust 单测 | `dirname(entry.skill_path)` 归一化：`"a/b/SKILL.md"→"a/b"`、`"SKILL.md"→"."`、`entry.ref` 存在与缺省两路 |
 | Rust 集成 | `tempfile` 沙盒模拟 `~/.agents`：相对软链 / junction / `--copy` 副本三形态的扫描、隔离、卸载 |
 | Rust 集成 | 并发写 lock：两线程同时 read-modify-write，断言无字段丢失且冲突被检出 |
 | CLI | `asg-scan` 同输入两次运行输出字节级一致；超时不输出半截 JSON；退出码矩阵 |
@@ -616,15 +750,21 @@ T12：读 `./skills-lock.json`（v1，SHA-256 内容哈希）+ `./.agents/skills
 
 | 里程碑 | 版本 | 工作项 | 估算 | 交付价值 |
 |---|---|---|---|---|
-| M0 | — | T0 | ~5 工作日 | 契约与授权确定，避免围绕不稳定接口返工 |
-| M1 | v1.4.0 | T1 T2 | ~10 工作日 | 消除失联（只读方向）；安全结论不再失真 |
-| M2 | v1.5.0-beta | T7 T8 | ~10 工作日 | headless 扫描器 + 带哈希的小规模索引试运行 |
+| M0 | — | T0（含 T0-6 配额、T0-7 性能） | ~7 工作日 | 契约、授权、配额三项确定，避免围绕不稳定前提返工 |
+| M1 | v1.4.0 | T1 T2 | ~13 工作日 | 消除失联（只读方向）；安全结论不再失真；目录级 tree SHA 变更检测**闭环** |
+| M2 | v1.5.0-beta | T7 T8 | ~13 工作日 | headless 扫描器 + 带哈希与配额控制的索引试运行 |
 | M3 | v1.5.0 | T3 T9 T10 | ~11 工作日 | 市场重构 + 装前扫描闭环 |
 | M4 | v1.6.0 | T4 T5 T6 T11 T12 | ~24 工作日 | flag 后的写回、完整隔离、Agent 扩展、全来源 |
 
-**起手项：T0**。在 T0-1（授权）与 T0-2（旧接口定位）有答复前，不开工 T3/T8。
+**执行顺序**（依据 §M0 的门禁矩阵，非整体串行）：
 
-若 T0 需等待外部答复，**并行开工 T1 与 T2**——这两项完全不依赖 skills.sh，且修的是当前已存在的真实缺陷（账本失联、安全结论失真）。
+1. **T0-5** `asg-scan` PoC —— 独立、成本最低、不被任何答复阻塞
+2. **T0-7** 指纹性能基准 —— 决定 T2 的缓存策略
+3. **T0-6** GitHub 配额 dry-run —— 决定 T8 是否必须上 GraphQL
+4. 与 1–3 并行：发出 **T0-1 / T0-2** 的授权询问（外部答复周期不可控，越早发越好）
+5. T0-3 / T0-4 完成后即可开工 **M1（T1+T2）**，不等 T0-1/T0-2
+
+**批准状态**：M0 放行；**M1 在本轮 tree SHA 闭环修正（见 T1「既有更新链改造」）后放行**；T3 保持门禁（等 T0-1/T0-2），T8 保持门禁（等 T0-6）。
 
 ---
 
@@ -646,7 +786,41 @@ T12：读 `./skills-lock.json`（v1，SHA-256 内容哈希）+ `./.agents/skills
 | A12 | 基线写为 `cd05631` 且工作区干净 | P2 | 更正为 `54a964a`，并注明本文档为未跟踪文件 |
 | A13 | 建议「先做 T3」 | P1 | 改为「先做 T0，T1/T2 可并行」 |
 
-**评审中我方补正的两点**（评审意见未覆盖或有偏差）：
+**第一轮评审中我方补正的两点**（评审意见未覆盖或有偏差）：
 
 - **B1**：评审称 `/api/v1` 全部需 OIDC。实测 `GET /api/v1/skills/audit/{source}/{skill}` **匿名返回 200**，仅 `/skills`、`/search`、`/curated`、`/{source}/{skill}` 为 401。因此 T3 保留了一条无需授权的 audit 补充信号通道。
 - **B2**：上游 audit 数据的实际质量为新差异化提供了依据——实测 `anthropics/skills/pdf` 的 5 家结论中 Snyk 为 `fail`/`HIGH` 而其余 4 家为 `pass`，且 summary 自相矛盾；最新审计距今 4 个月；且 audit 仅在技能首次被安装后生成。这些构成 §二 表格中「新鲜度/一致性/时机」三行的事实基础。
+
+> **B1 的后续更正**：第二轮评审指出，官方文档在 audit 端点下明确标注 `Authentication Required.`。经复核属实。因此 B1 的结论需要收窄——匿名 200 是**当前实现状态而非公开契约**，不足以支撑「默认开启」。见附录 B 的 C1。
+
+---
+
+## 附录 B — rev2 → rev3 修订清单
+
+| 编号 | rev2 问题 | 等级 | rev3 处置 |
+|---|---|---|---|
+| C1 | 把 audit 匿名可用当作契约并设为「默认开启」，与 T0-1「先确认许可」自相矛盾。官方文档实为 `Authentication Required.` | P0 | §1.3 加警示；T3-3a 改为 **feature flag 默认关闭 + 实验标注**，T0-1 书面确认后方可转正 |
+| C2 | T1 补齐流程直接把 lock 的 `entry.skill_path`（文件路径）传给按路径查询的 API，退化为单文件级检测；且完全忽略 `entry.ref` | P1 | 改为**目录级 tree SHA 模型**：`dirname` 归一化 + 遵守 `ref` + 新增 `installed_tree_sha` 承担变更检测，`installed_commit_sha` 降级为下载/溯源用途 |
+| C3 | T2 允许用根目录 mtime「预筛跳过」，等于把 mtime 重新变成判定依据，原漏洞回归 | P1 | 明令禁止按根目录 mtime 跳过；改为**逐文件**缓存（键含 relpath+size+mtime_ns）+ 强制全量入口 + 有无缓存指纹必须相同的单测 |
+| C4 | T4 把 `Absent` 也列入禁写，导致 Guard 永远建不出第一份 lock | P1 | `Absent` 改为**允许创建**（需开关 + 二次确认）；只有 `Corrupt` / `UnsupportedVersion` 绝对只读 |
+| C5 | T4「`skillFolderHash` 算不出就留空」会产出上游 schema 定义为必填的残缺条目 | P1 | 改为**三级降级**：正常写入 / 暂时失败入待写队列重试 / 永久失败则该技能永不写 lock |
+| C6 | 测试要求未知字段往返「字节级一致」不现实（BTreeMap 重排、缩进差异） | P1 | 改为断言 **JSON 语义等价 + 未知字段零丢失**；字节摘要仅用于并发冲突检测 |
+| C7 | §二只写优势，未声明静态扫描的能力边界 | P2 | 新增「能力边界」小节：明确 Safe 的准确含义、三条限制、`truncated` 不得显示 Safe；「单一结论」改述为「统一、可解释、可复现」 |
+| C8 | T8 未做 API 配额可行性评估，6–7 天估算偏乐观 | P2 | 新增 T0-6 配额 dry-run；T8 补 GraphQL 批处理 / 跨运行缓存 / 限流续跑三项设计；估算上调至 9–10 天 |
+| C9 | T0-5 PoC 无验收标准 | P2 | 补五条验收清单（独立编译、stdout 纯 JSON、与 GUI 一致、输出确定性、不改构建行为） |
+| C10 | 未评估整目录指纹的性能影响 | P2 | 新增 T0-7 性能基准，据此决定缓存是否必要 |
+
+---
+
+## 附录 C — rev3 → rev4 修订清单
+
+| 编号 | rev3 问题 | 等级 | rev4 处置 |
+|---|---|---|---|
+| D1 | T1 标 `GuardGithub` 但把 tree SHA 检测推到 M2，而现有 `check_skill_update` 遇空 `installed_commit_sha` 直接返回 `Unknown`，DB 又无持久化 `UpdateAvailable`（`SkillStatus` 枚举零引用、无 `status` 列）→ M1 承诺的「目录级 tree SHA 变更检测」无法闭环 | P1 | tree SHA 优先分支**移入 T1/M1**，双分支并存 + 老数据自愈回填。未采用「缩减 M1」的备选，因其会抽掉 M1 最主要的用户可感价值 |
+| D2 | §M0「T0 全部完成才进 M1」与 §路线图「可并行开工 T1/T2」自相矛盾 | P2 | 新增**门禁矩阵**，依赖改为逐项；澄清只有 T3 真正被外部答复阻塞 |
+| D3 | 把目录递归描述为既成事实 | P2 | 改述为「实测行为，非契约」，并引 GitHub 文档原文 "Only commits containing this file path will be returned"；同时说明这正是改用 tree SHA 的独立理由 |
+| D4 | 附录 B 称 commits API 在 shallow history 下退化——**我方错误** | P2 | 删除。该查询在 GitHub 服务端执行，与本地 clone 深度无关。保留「目录改名、force push、历史重写」三项 |
+
+**第二轮评审中我方补正的一点**：
+
+- **B3**：评审称「现有更新检查按 `skill.file_path` 查询，故远程更新检测会漏掉技能目录内的辅助文件变化」。**该前提不成立**——本仓库的 `file_path` 存的是技能**目录**相对路径（[github.rs:164](../src-tauri/src/services/github.rs#L164) 取目录项 `item.path`；[github.rs:895](../src-tauri/src/services/github.rs#L895) 取 `skill_dir.strip_prefix(repo_root)`），而 GitHub commits API 的 `path` 参数传目录时会追踪整个子树，因此既有远程检测**本来就是目录级的**。真正的缺陷在 rev2 的 T1 新代码——它使用的是 lock 的 `entry.skill_path`（文件路径），这才是需要 `dirname` 归一化的地方（已记为 C2）。评审建议的 tree SHA 模型仍予采纳，但定位从「修正确性缺口」调整为「提升健壮性」：commits API 路径过滤在目录改名、force push、历史重写下会退化为 `Unknown`，且其目录递归语义未被官方文档承诺，tree SHA 比对不受这两项影响。（rev3 此处曾误列「shallow history」，rev4 已删除——该查询在 GitHub 服务端执行，与本地 clone 深度无关。）
