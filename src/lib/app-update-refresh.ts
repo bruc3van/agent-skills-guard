@@ -18,6 +18,17 @@ type AppVersionSkillRefreshDeps = {
   getInstalledSkills?: () => Promise<Awaited<ReturnType<typeof api.getInstalledSkills>>>;
 };
 
+type StartupSkillRefreshDeps = AppVersionSkillRefreshDeps & {
+  retryDelaysMs?: readonly number[];
+  sleep?: (delayMs: number) => Promise<void>;
+};
+
+const DEFAULT_STARTUP_RETRY_DELAYS_MS = [250, 1_000] as const;
+
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 function getLocalStorage(): Storage | null {
   try {
     return globalThis.localStorage ?? null;
@@ -61,8 +72,11 @@ export async function refreshSkillStateFromDisk(
   queryClient.setQueryData(["skills", "installed"], installed);
 }
 
-/** 应用内更新安装完成后调用（Windows 未重启前也会尝试同步链接状态）。 */
-export async function refetchSkillStateAfterAppUpdate(
+/**
+ * 开始应用内更新前调用。
+ * Windows updater 会在安装前直接结束进程，因此不能等 downloadAndInstall 返回后再持久化。
+ */
+export async function prepareSkillStateForAppUpdate(
   queryClient: QueryClient,
   deps: AppVersionSkillRefreshDeps = {}
 ): Promise<void> {
@@ -76,13 +90,31 @@ export async function refetchSkillStateAfterAppUpdate(
 export async function reconcileSkillStateOnAppStartup(
   queryClient: QueryClient,
   currentVersion: string,
-  deps: AppVersionSkillRefreshDeps = {}
+  deps: StartupSkillRefreshDeps = {}
 ): Promise<boolean> {
-  await refreshSkillStateFromDisk(queryClient, deps);
+  const retryDelaysMs = deps.retryDelaysMs ?? DEFAULT_STARTUP_RETRY_DELAYS_MS;
+  let attempt = 0;
+
+  while (true) {
+    try {
+      await refreshSkillStateFromDisk(queryClient, deps);
+      break;
+    } catch (error) {
+      const retryDelayMs = retryDelaysMs[attempt];
+      if (retryDelayMs === undefined) throw error;
+
+      attempt += 1;
+      await (deps.sleep ?? sleep)(retryDelayMs);
+    }
+  }
 
   const storage = deps.storage ?? getLocalStorage();
   if (storage) {
-    storage.setItem(APP_VERSION_SKILL_REFRESH_KEY, currentVersion);
+    try {
+      storage.setItem(APP_VERSION_SKILL_REFRESH_KEY, currentVersion);
+    } catch {
+      // 该键仅用于诊断，不再参与是否扫描的判断；写入失败不应让已完成的 reconcile 失败。
+    }
   }
 
   return true;

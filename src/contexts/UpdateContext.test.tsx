@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { act, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UpdateProvider, useUpdate } from "./UpdateContext";
-import { checkForUpdate, type UpdateHandle, type UpdateInfo } from "../lib/updater";
+import { checkForUpdate, relaunchApp, type UpdateHandle, type UpdateInfo } from "../lib/updater";
 
 vi.mock("../lib/updater", () => ({
   checkForUpdate: vi.fn(),
@@ -55,6 +55,7 @@ describe("UpdateProvider", () => {
   beforeEach(() => {
     localStorageMock.clear();
     vi.mocked(checkForUpdate).mockReset();
+    vi.mocked(relaunchApp).mockReset();
   });
 
   it("returns available update info from manual checks immediately", async () => {
@@ -90,5 +91,73 @@ describe("UpdateProvider", () => {
     });
 
     expect(result).toEqual({ hasUpdate: true, info });
+  });
+
+  it("persists state before downloadAndInstall can terminate the Windows process", async () => {
+    const calls: string[] = [];
+    let finishDownload!: () => void;
+    let markDownloadStarted!: () => void;
+    const downloadStarted = new Promise<void>((resolve) => {
+      markDownloadStarted = resolve;
+    });
+    const downloadFinished = new Promise<void>((resolve) => {
+      finishDownload = resolve;
+    });
+    const info: UpdateInfo = {
+      currentVersion: "1.3.5",
+      availableVersion: "1.3.6",
+    };
+    const update: UpdateHandle = {
+      version: "1.3.6",
+      downloadAndInstall: vi.fn(() => {
+        calls.push("downloadAndInstall");
+        markDownloadStarted();
+        return downloadFinished;
+      }),
+    };
+    vi.mocked(checkForUpdate).mockResolvedValueOnce({
+      status: "available",
+      info,
+      update,
+    });
+    vi.mocked(relaunchApp).mockImplementation(async () => {
+      calls.push("relaunch");
+    });
+
+    let context: ReturnType<typeof useUpdate> | undefined;
+    render(
+      <UpdateProvider>
+        <Probe
+          onReady={(ctx) => {
+            context = ctx;
+          }}
+        />
+      </UpdateProvider>
+    );
+
+    await act(async () => {
+      await context!.checkUpdate();
+    });
+
+    let installPromise!: Promise<boolean>;
+    await act(async () => {
+      installPromise = context!.installUpdate({
+        onBeforeDownload: async () => {
+          calls.push("persistSkillLinks");
+        },
+      });
+      await downloadStarted;
+    });
+
+    // Windows exits from inside downloadAndInstall, so the required persistence
+    // must already be complete while that Promise is still pending.
+    expect(calls).toEqual(["persistSkillLinks", "downloadAndInstall"]);
+
+    await act(async () => {
+      finishDownload();
+      await expect(installPromise).resolves.toBe(true);
+    });
+
+    expect(calls).toEqual(["persistSkillLinks", "downloadAndInstall", "relaunch"]);
   });
 });

@@ -34,7 +34,7 @@ interface UpdateContextValue {
   isDismissed: boolean;
   dismissUpdate: () => void;
   checkUpdate: () => Promise<CheckUpdateResult>;
-  installUpdate: (options?: { onBeforeRelaunch?: () => Promise<void> }) => Promise<boolean>;
+  installUpdate: (options?: { onBeforeDownload?: () => Promise<void> }) => Promise<boolean>;
   resetDismiss: () => void;
 }
 
@@ -121,8 +121,8 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
 
   const installUpdate = useCallback(
     async ({
-      onBeforeRelaunch,
-    }: { onBeforeRelaunch?: () => Promise<void> } = {}): Promise<boolean> => {
+      onBeforeDownload,
+    }: { onBeforeDownload?: () => Promise<void> } = {}): Promise<boolean> => {
       if (
         !updateHandle ||
         updatePhase === "downloading" ||
@@ -138,6 +138,17 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
       setUpdateProgress({ total: 0, downloaded: 0, percent: 0 });
 
       try {
+        // Windows updater 会在启动 MSI 前直接结束当前进程，
+        // 因此任何必须持久化的状态都要在 downloadAndInstall 之前完成。
+        if (onBeforeDownload) {
+          try {
+            await onBeforeDownload();
+          } catch (err) {
+            // 状态整理失败不应阻断应用安全更新；新进程启动时仍会再次 reconcile。
+            console.error("[UpdateContext] onBeforeDownload failed:", err);
+          }
+        }
+
         await updateHandle.downloadAndInstall((progress) => {
           if (progress.event === "Started") {
             const total = progress.total ?? 0;
@@ -167,19 +178,8 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
         setIsDismissed(false);
         setUpdateProgress(null);
 
-        // 新版本已安装到磁盘，但旧进程仍在运行。relaunch 前给调用方一次机会
-        // 把当前磁盘状态（软链 / 工具链接）写回 DB，确保新进程前端即使跳过
-        // 启动期 reconcile，也能拉到正确的 linked_tools。
-        if (onBeforeRelaunch) {
-          try {
-            await onBeforeRelaunch();
-          } catch (err) {
-            console.error("[UpdateContext] onBeforeRelaunch failed:", err);
-          }
-        }
-
-        // Windows MSI 安装结束后需启动新进程才能加载新版本；与 macOS 一样自动 relaunch。
-        // 官方文档：install 完成后应 relaunch；仅当 relaunch 失败时才退回手动重启提示。
+        // Windows 会在 downloadAndInstall 内退出，以下分支主要服务不会自动退出的平台。
+        // 安装完成后 relaunch；仅当 relaunch 失败时才退回手动重启提示。
         setUpdatePhaseSafe("restarting");
         try {
           await relaunchApp();

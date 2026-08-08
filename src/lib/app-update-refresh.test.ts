@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { AGENT_TOOLS_KEY } from "./agent-tools";
 import {
   APP_VERSION_SKILL_REFRESH_KEY,
+  prepareSkillStateForAppUpdate,
   reconcileSkillStateOnAppStartup,
-  refetchSkillStateAfterAppUpdate,
 } from "./app-update-refresh";
 import type { Skill } from "@/types";
 
@@ -75,7 +75,7 @@ async function prefetchSkillQueries(queryClient: QueryClient, calls: string[]) {
   });
 }
 
-describe("refetchSkillStateAfterAppUpdate", () => {
+describe("prepareSkillStateForAppUpdate", () => {
   it("forces linked-tool refresh, rescans, hydrates installed cache, then refetches related queries", async () => {
     const queryClient = new QueryClient({
       defaultOptions: {
@@ -92,7 +92,7 @@ describe("refetchSkillStateAfterAppUpdate", () => {
     let refreshCount = 0;
     calls.length = 0;
 
-    await refetchSkillStateAfterAppUpdate(queryClient, {
+    await prepareSkillStateForAppUpdate(queryClient, {
       refreshSkillLinks: async () => {
         refreshCount += 1;
         calls.push("refreshSkillLinks");
@@ -166,6 +166,55 @@ describe("reconcileSkillStateOnAppStartup", () => {
     expect(storage.getItem(APP_VERSION_SKILL_REFRESH_KEY)).toBe("1.2.5");
     expect(queryClient.getQueryData(["skills", "installed"])).toMatchObject([
       { id: "fresh", linked_tools: ["claude-code"] },
+    ]);
+  });
+
+  it("retries a transient startup failure without requiring another process restart", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Infinity,
+        },
+      },
+    });
+    const storage = createMemoryStorage();
+    const calls: string[] = [];
+    let refreshCount = 0;
+
+    const didRefresh = await reconcileSkillStateOnAppStartup(queryClient, "1.3.7", {
+      storage,
+      retryDelaysMs: [10],
+      sleep: async (delayMs) => {
+        calls.push(`sleep:${delayMs}`);
+      },
+      refreshSkillLinks: async () => {
+        refreshCount += 1;
+        calls.push(`refresh:${refreshCount}`);
+        if (refreshCount === 1) throw new Error("transient updater relaunch race");
+        return [];
+      },
+      scanLocalSkills: async () => {
+        calls.push("scanLocalSkills");
+        return [];
+      },
+      getInstalledSkills: async () => {
+        calls.push("getInstalled");
+        return [mockSkill({ linked_tools: ["claude-code", "codex"] })];
+      },
+    });
+
+    expect(didRefresh).toBe(true);
+    expect(calls).toEqual([
+      "refresh:1",
+      "sleep:10",
+      "refresh:2",
+      "scanLocalSkills",
+      "getInstalled",
+    ]);
+    expect(storage.getItem(APP_VERSION_SKILL_REFRESH_KEY)).toBe("1.3.7");
+    expect(queryClient.getQueryData(["skills", "installed"])).toMatchObject([
+      { id: "fresh", linked_tools: ["claude-code", "codex"] },
     ]);
   });
 });

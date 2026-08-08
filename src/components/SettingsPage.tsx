@@ -30,7 +30,7 @@ import {
 import { clearWebPersistedData } from "@/lib/reset";
 import { api } from "@/lib/api";
 import { relaunchApp } from "@/lib/updater";
-import { refetchSkillStateAfterAppUpdate } from "@/lib/app-update-refresh";
+import { prepareSkillStateForAppUpdate } from "@/lib/app-update-refresh";
 import {
   getDefaultScanConcurrency,
   getMaxScanConcurrency,
@@ -249,12 +249,11 @@ export function SettingsPage() {
 
     appToast.info(t("update.downloading"));
 
-    // 新版本文件安装完成后、relaunch 前强制刷新工具链接状态。
-    // 这样无论新进程前端是否触发启动期 reconcile，DB 中的 linked_tools 都已是最新值，
-    // 前端再次拉取即可点亮 Claude Code / Codex 等软链图标。
+    // Windows updater 会在安装前直接结束当前进程，所以必须在开始下载/安装前
+    // 把软链状态写回 DB；放在 downloadAndInstall 返回之后的代码在 Windows 上不可达。
     const ok = await updateContext.installUpdate({
-      onBeforeRelaunch: async () => {
-        await refetchSkillStateAfterAppUpdate(queryClient);
+      onBeforeDownload: async () => {
+        await prepareSkillStateForAppUpdate(queryClient);
       },
     });
     if (!ok) {
