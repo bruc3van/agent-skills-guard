@@ -163,8 +163,8 @@ pub struct SecurityReport {
     /// 让 IPC / DB 里连 `"scanned_files": []` 都不出现。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scanned_files: Vec<String>,
-    pub partial_scan: bool,               // 是否存在未完整扫描
-    pub skipped_files: Vec<String>,       // 跳过扫描的文件列表
+    pub partial_scan: bool,         // 是否存在未完整扫描
+    pub skipped_files: Vec<String>, // 跳过扫描的文件列表
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<SecurityReportMetadata>,
     /// 各 kind 的 finding 数量统计

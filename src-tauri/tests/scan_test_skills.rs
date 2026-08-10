@@ -173,7 +173,9 @@ fn scan_all_test_skills() {
                 match kind {
                     FixtureKind::PositiveReal => {
                         let expected_blocked = expectation.blocked.unwrap_or(false);
-                        if report.blocked != expected_blocked || !report.hard_trigger_issues.is_empty() {
+                        if report.blocked != expected_blocked
+                            || !report.hard_trigger_issues.is_empty()
+                        {
                             failures.push(format!(
                                 "real skill fixture '{}' should have blocked={}; blocked={}, hard_triggers={:?}",
                                 name, expected_blocked, report.blocked, report.hard_trigger_issues
@@ -189,7 +191,8 @@ fn scan_all_test_skills() {
                                 ));
                             }
                         }
-                        if expectation.blocked == Some(true) && report.hard_trigger_issues.is_empty()
+                        if expectation.blocked == Some(true)
+                            && report.hard_trigger_issues.is_empty()
                         {
                             failures.push(format!(
                                 "negative skill fixture '{}' should include hard-trigger details; blocked={}, hard_triggers={:?}, issues={:?}",

@@ -403,9 +403,7 @@ fn open_database_with_recovery(db_path: &Path) -> Result<(Database, Option<PathB
     log::error!("数据库文件已损坏，尝试备份并重建: {:#}", open_error);
 
     let Some(backup) = move_aside_corrupt_database(db_path) else {
-        return Err(format!(
-            "数据库文件已损坏且无法备份原文件：{open_error:#}"
-        ));
+        return Err(format!("数据库文件已损坏且无法备份原文件：{open_error:#}"));
     };
 
     Database::new(db_path.to_path_buf())
@@ -675,12 +673,12 @@ pub fn run() {
     };
 
     app.run(|_app_handle, _event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = _event {
-                log::info!("收到 macOS Reopen 事件，尝试恢复主窗口");
-                show_main_window(_app_handle);
-            }
-        });
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = _event {
+            log::info!("收到 macOS Reopen 事件，尝试恢复主窗口");
+            show_main_window(_app_handle);
+        }
+    });
 }
 
 #[cfg(test)]

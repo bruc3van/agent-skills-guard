@@ -129,7 +129,9 @@ fn normalize_tool_name(tool: &str) -> String {
 /// 检查 allowed_tools 中是否声明了某种能力
 fn has_tool(tools: &[String], capability: &str) -> bool {
     let cap_norm = normalize_tool_name(capability);
-    tools.iter().any(|t| tool_matches_capability(&normalize_tool_name(t), &cap_norm))
+    tools
+        .iter()
+        .any(|t| tool_matches_capability(&normalize_tool_name(t), &cap_norm))
 }
 
 fn tool_matches_capability(tool: &str, capability: &str) -> bool {
@@ -225,8 +227,7 @@ fn make_finding(
     };
 
     // 根据规则类型确定 FindingKind（委托给统一分类方法，避免映射漂移）
-    let finding_kind = FindingKind::classify_by_rule_id(rule_id)
-        .unwrap_or(FindingKind::Structure);
+    let finding_kind = FindingKind::classify_by_rule_id(rule_id).unwrap_or(FindingKind::Structure);
 
     finding_builder::make_finding(FindingSpec {
         rule_id,
@@ -897,7 +898,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dir_path = dir.path();
 
-        let skill_md = "---\nname: test-skill\ndescription: A valid description for testing\n---\n\nBody.";
+        let skill_md =
+            "---\nname: test-skill\ndescription: A valid description for testing\n---\n\nBody.";
         std::fs::write(dir_path.join("skill.md"), skill_md).unwrap();
         std::fs::write(
             dir_path.join("fetch.py"),

@@ -14,8 +14,7 @@ const CLAUDE_RELEASES_BASE_URL: &str = "https://downloads.claude.ai/claude-code-
 
 fn supports_read_only_update_check(tool: &LocalCliTool) -> bool {
     tool.manager != PackageManager::Unknown
-        && (tool.manager != PackageManager::Native
-            || matches!(tool.id.as_str(), "grok" | "claude"))
+        && (tool.manager != PackageManager::Native || matches!(tool.id.as_str(), "grok" | "claude"))
 }
 
 pub(crate) fn is_cache_fresh(last_checked: Option<&str>) -> bool {
@@ -269,16 +268,14 @@ async fn fetch_pip_latest_with_manager(tool: &LocalCliTool, pkg_name: &str) -> R
 
 fn parse_pip_latest(stdout: &str, pkg_name: &str) -> Option<String> {
     let prefix = format!("{} (", pkg_name.to_ascii_lowercase());
-    stdout
-        .lines()
-        .find_map(|line| {
-            let trimmed = line.trim();
-            let lower = trimmed.to_ascii_lowercase();
-            lower
-                .strip_prefix(&prefix)
-                .and_then(|rest| rest.strip_suffix(')'))
-                .map(ToOwned::to_owned)
-        })
+    stdout.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        lower
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.strip_suffix(')'))
+            .map(ToOwned::to_owned)
+    })
 }
 
 fn pip_check_commands(tool: &LocalCliTool, pkg_name: &str) -> Vec<(PathBuf, Vec<String>)> {
@@ -571,11 +568,7 @@ mod tests {
 
     #[test]
     fn pip_check_falls_back_from_path_to_python_module() {
-        let tool = LocalCliTool::new(
-            "demo",
-            "/home/user/.local/bin/demo",
-            PackageManager::Pip,
-        );
+        let tool = LocalCliTool::new("demo", "/home/user/.local/bin/demo", PackageManager::Pip);
 
         let commands = pip_check_commands(&tool, "demo-package");
 
@@ -588,8 +581,11 @@ mod tests {
     #[test]
     fn parses_pip_index_latest_version_case_insensitively() {
         assert_eq!(
-            parse_pip_latest("DEMO-PACKAGE (2.4.1)\nAvailable versions: 2.4.1", "demo-package")
-                .as_deref(),
+            parse_pip_latest(
+                "DEMO-PACKAGE (2.4.1)\nAvailable versions: 2.4.1",
+                "demo-package"
+            )
+            .as_deref(),
             Some("2.4.1")
         );
     }

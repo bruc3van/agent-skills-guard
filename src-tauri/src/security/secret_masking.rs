@@ -2,13 +2,17 @@ use lazy_regex::{lazy_regex, Lazy};
 use regex::Regex;
 
 static AWS_KEY_RE: Lazy<Regex> = lazy_regex!(r"(AKIA|ASIA)[A-Z0-9]{16}");
-static GITHUB_TOKEN_RE: Lazy<Regex> = lazy_regex!(r"(gh[opusr]_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{36,})");
+static GITHUB_TOKEN_RE: Lazy<Regex> =
+    lazy_regex!(r"(gh[opusr]_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{36,})");
 static PRIVATE_KEY_RE: Lazy<Regex> = lazy_regex!(
     r"-----BEGIN\s+(?:RSA|OPENSSH|EC|DSA)?\s*PRIVATE KEY-----[\s\S]*?-----END\s+(?:RSA|OPENSSH|EC|DSA)?\s*PRIVATE KEY-----"
 );
-static JWT_RE: Lazy<Regex> = lazy_regex!(r"eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}");
-static DB_CONN_RE: Lazy<Regex> = lazy_regex!(r#"(mongodb|mysql|postgresql|postgres)://[^\s"'\\]{10,}"#);
-static GENERIC_TOKEN_RE: Lazy<Regex> = lazy_regex!(r#"(?:secret|token|key)\s*[=:]\s*["']([a-zA-Z0-9_-]{16,})["']"#);
+static JWT_RE: Lazy<Regex> =
+    lazy_regex!(r"eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}");
+static DB_CONN_RE: Lazy<Regex> =
+    lazy_regex!(r#"(mongodb|mysql|postgresql|postgres)://[^\s"'\\]{10,}"#);
+static GENERIC_TOKEN_RE: Lazy<Regex> =
+    lazy_regex!(r#"(?:secret|token|key)\s*[=:]\s*["']([a-zA-Z0-9_-]{16,})["']"#);
 
 // Stripe key patterns
 static STRIPE_LIVE_KEY_RE: Lazy<Regex> = lazy_regex!(r"sk_live_[a-zA-Z0-9]{24,}");

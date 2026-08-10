@@ -1,16 +1,22 @@
 use crate::models::{GitHubContent, Repository, Skill};
+use crate::services::skill_manager::rename_with_retry;
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::future::Future;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use zip::ZipArchive;
 
 /// 下载压缩包的安全上限：100 MiB（压缩后大小）
 const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024;
+/// 解压后的单文件、累计体积与条目数预算。归档内容会在安全扫描前落盘，
+/// 因此不能只依赖压缩包大小限制。
+const MAX_ARCHIVE_ENTRY_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_EXTRACTED_BYTES: u64 = 500 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES: usize = 20_000;
 
 /// GitHub 默认分支候选列表
 pub const DEFAULT_BRANCHES: &[&str] = &["main", "master"];
@@ -32,6 +38,46 @@ fn is_safe_path(path: &Path, base: &Path) -> bool {
         result
     }
     normalize(path).starts_with(normalize(base))
+}
+
+/// 用同一文件系统中的 rename 提升已完整准备好的目录，并在失败时恢复旧目录。
+fn promote_prepared_directory(prepared_dir: &Path, final_dir: &Path) -> Result<()> {
+    let parent = final_dir.parent().context("无效的缓存目录")?;
+    fs::create_dir_all(parent).context("无法创建缓存父目录")?;
+    let backup_dir = parent.join(format!(
+        ".{}.backup-{}",
+        final_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("extracted"),
+        uuid::Uuid::new_v4()
+    ));
+
+    let had_existing = final_dir.exists();
+    if had_existing {
+        rename_with_retry(final_dir, &backup_dir)
+            .with_context(|| format!("无法备份旧缓存目录: {:?}", final_dir))?;
+    }
+
+    if let Err(promote_error) = rename_with_retry(prepared_dir, final_dir) {
+        if had_existing {
+            if let Err(restore_error) = rename_with_retry(&backup_dir, final_dir) {
+                return Err(anyhow::anyhow!(
+                    "无法提升新缓存目录: {}；同时无法恢复旧缓存: {}",
+                    promote_error,
+                    restore_error
+                ));
+            }
+        }
+        return Err(promote_error).context("无法原子替换仓库缓存目录");
+    }
+
+    if had_existing {
+        if let Err(error) = fs::remove_dir_all(&backup_dir) {
+            log::warn!("无法清理旧仓库缓存备份 {:?}: {}", backup_dir, error);
+        }
+    }
+    Ok(())
 }
 
 /// GitHub Commit API 响应
@@ -586,36 +632,83 @@ impl GitHubService {
             bytes.len()
         );
 
-        // 4. 解压缩
+        // 4. 解压到同一文件系统中的唯一临时目录。只有完整解压、预算校验和
+        // commit SHA 提取全部成功后，才替换当前 extracted，避免新旧提交混用。
         let extract_dir = repo_cache_dir.join("extracted");
-        self.extract_zip(&archive_path, &extract_dir)
-            .context("解压缩失败")?;
+        let prepared_extract_dir =
+            repo_cache_dir.join(format!(".extracted.tmp-{}", uuid::Uuid::new_v4()));
+        let prepare_result = (|| -> Result<String> {
+            self.extract_zip(&archive_path, &prepared_extract_dir)
+                .context("解压缩失败")?;
+
+            let commit_sha = self
+                .extract_commit_sha_from_cache(&prepared_extract_dir)
+                .context("无法提取 commit SHA")?;
+
+            let sha_file = prepared_extract_dir.join(".commit_sha");
+            fs::write(&sha_file, &commit_sha).context("无法写入 commit SHA 元数据文件")?;
+            Ok(commit_sha)
+        })();
+
+        let commit_sha = match prepare_result {
+            Ok(commit_sha) => commit_sha,
+            Err(error) => {
+                if prepared_extract_dir.exists() {
+                    let _ = fs::remove_dir_all(&prepared_extract_dir);
+                }
+                return Err(error);
+            }
+        };
+
+        if let Err(error) = promote_prepared_directory(&prepared_extract_dir, &extract_dir) {
+            if prepared_extract_dir.exists() {
+                let _ = fs::remove_dir_all(&prepared_extract_dir);
+            }
+            return Err(error);
+        }
 
         log::info!("解压完成: {:?}", extract_dir);
 
-        // 5. 提取 commit SHA（从解压后的目录名）
-        let commit_sha = self
-            .extract_commit_sha_from_cache(&extract_dir)
-            .context("无法提取 commit SHA")?;
-
+        // 5. commit SHA 仅来自本次下载产生的临时目录，不读取旧缓存元数据。
         log::info!("提取到 commit SHA: {}", commit_sha);
-
-        // 将 SHA 写入元数据文件，供后续可靠的缓存复用判断
-        let sha_file = extract_dir.join(".commit_sha");
-        if let Err(e) = fs::write(&sha_file, &commit_sha) {
-            log::warn!("无法写入 commit SHA 元数据文件: {}", e);
-        }
 
         Ok((extract_dir, commit_sha))
     }
 
     /// 解压zip文件
     fn extract_zip(&self, archive_path: &Path, extract_dir: &Path) -> Result<()> {
+        self.extract_zip_with_limits(
+            archive_path,
+            extract_dir,
+            MAX_ARCHIVE_ENTRIES,
+            MAX_ARCHIVE_ENTRY_BYTES,
+            MAX_EXTRACTED_BYTES,
+        )
+    }
+
+    fn extract_zip_with_limits(
+        &self,
+        archive_path: &Path,
+        extract_dir: &Path,
+        max_entries: usize,
+        max_entry_bytes: u64,
+        max_total_bytes: u64,
+    ) -> Result<()> {
         let file = File::open(archive_path).context("无法打开压缩包")?;
 
         let mut archive = ZipArchive::new(file).context("无法读取ZIP文件")?;
 
+        if archive.len() > max_entries {
+            anyhow::bail!(
+                "ZIP条目数量 ({}) 超过安全上限 ({})",
+                archive.len(),
+                max_entries
+            );
+        }
+
         log::info!("正在解压 {} 个文件...", archive.len());
+
+        let mut total_written = 0u64;
 
         for i in 0..archive.len() {
             let mut file = archive
@@ -639,6 +732,17 @@ impl GitHubService {
             if file.is_dir() {
                 fs::create_dir_all(&outpath).context(format!("无法创建目录: {:?}", outpath))?;
             } else {
+                if file.size() > max_entry_bytes {
+                    anyhow::bail!(
+                        "ZIP条目声明大小超过安全上限: {} ({} bytes)",
+                        file.name(),
+                        file.size()
+                    );
+                }
+                if total_written.saturating_add(file.size()) > max_total_bytes {
+                    anyhow::bail!("ZIP累计声明大小超过安全上限");
+                }
+
                 if let Some(parent) = outpath.parent() {
                     fs::create_dir_all(parent).context(format!("无法创建父目录: {:?}", parent))?;
                 }
@@ -646,8 +750,15 @@ impl GitHubService {
                 let mut outfile =
                     File::create(&outpath).context(format!("无法创建文件: {:?}", outpath))?;
 
-                std::io::copy(&mut file, &mut outfile)
+                let remaining_total = max_total_bytes.saturating_sub(total_written);
+                let entry_budget = max_entry_bytes.min(remaining_total);
+                let entry_name = file.name().to_string();
+                let written = std::io::copy(&mut (&mut file).take(entry_budget + 1), &mut outfile)
                     .context(format!("无法写入文件: {:?}", outpath))?;
+                if written > entry_budget {
+                    anyhow::bail!("ZIP条目实际解压大小超过安全上限: {}", entry_name);
+                }
+                total_written = total_written.saturating_add(written);
             }
         }
 
@@ -1117,6 +1228,65 @@ impl Default for GitHubService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zip::write::SimpleFileOptions;
+
+    fn write_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        let file = File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for (name, content) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(content).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn prepared_cache_promotion_replaces_old_tree_without_merging() {
+        let temp = tempfile::tempdir().unwrap();
+        let final_dir = temp.path().join("extracted");
+        let prepared_dir = temp.path().join(".extracted.tmp-test");
+        fs::create_dir_all(&final_dir).unwrap();
+        fs::create_dir_all(&prepared_dir).unwrap();
+        fs::write(final_dir.join("old-only.txt"), "old").unwrap();
+        fs::write(prepared_dir.join("new-only.txt"), "new").unwrap();
+
+        promote_prepared_directory(&prepared_dir, &final_dir).unwrap();
+
+        assert!(!final_dir.join("old-only.txt").exists());
+        assert_eq!(
+            fs::read_to_string(final_dir.join("new-only.txt")).unwrap(),
+            "new"
+        );
+        assert!(!prepared_dir.exists());
+    }
+
+    #[test]
+    fn zip_extraction_enforces_entry_count_and_size_budgets() {
+        let service = GitHubService::new();
+        let temp = tempfile::tempdir().unwrap();
+        let archive = temp.path().join("archive.zip");
+        write_test_zip(
+            &archive,
+            &[("root/one.txt", b"123456"), ("root/two.txt", b"abcdef")],
+        );
+
+        let count_error = service
+            .extract_zip_with_limits(&archive, &temp.path().join("count"), 1, 100, 100)
+            .expect_err("entry count budget must be enforced");
+        assert!(count_error.to_string().contains("ZIP条目数量"));
+
+        let entry_error = service
+            .extract_zip_with_limits(&archive, &temp.path().join("entry"), 10, 5, 100)
+            .expect_err("per-entry budget must be enforced");
+        assert!(entry_error.to_string().contains("条目声明大小"));
+
+        let total_error = service
+            .extract_zip_with_limits(&archive, &temp.path().join("total"), 10, 100, 10)
+            .expect_err("total extraction budget must be enforced");
+        assert!(total_error.to_string().contains("累计声明大小"));
+    }
 
     #[test]
     fn archive_branch_candidates_puts_default_branch_first_without_duplicates() {

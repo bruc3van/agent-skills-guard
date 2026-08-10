@@ -289,17 +289,27 @@ fn mismatch_severity(ext: &str, detected: ContentType) -> Option<IssueSeverity> 
 
     match ext {
         // 脚本/文本扩展名：如果是二进制/归档类内容 → Critical
-        "py" | "pyw" | "pyi" | "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "md" | "json"
-        | "yaml" | "yml" | "toml" | "cfg" | "ini" | "conf" | "xml" | "txt" | "csv" => {
+        "py" | "pyw" | "pyi" | "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "sh" | "bash"
+        | "zsh" | "fish" | "ps1" | "psm1" | "psd1" | "bat" | "cmd" | "rb" | "pl" | "lua" | "r"
+        | "rs" | "go" | "java" | "kt" | "kts" | "swift" | "dart" | "ex" | "exs" | "clj"
+        | "cljs" | "hs" | "elm" | "v" | "zig" | "md" | "json" | "yaml" | "yml" | "toml" | "cfg"
+        | "ini" | "conf" | "xml" | "txt" | "csv" => {
             match detected {
                 Pe | Elf | MachO | Zip | Pdf | Office | OfficeXml | Gzip | Tar | Png | Jpeg
-                | Gif => {
-                    Some(IssueSeverity::Critical)
-                }
+                | Gif => Some(IssueSeverity::Critical),
                 Html | Svg => Some(IssueSeverity::High),
                 _ => None, // Text, ShellScript, PythonScript, JavaScript, Unknown → OK
             }
         }
+
+        // PHP 模板可合法地以 HTML/SVG 开头；只阻止可执行文件、归档或二进制
+        // 伪装，避免把正常的混合模板报成 FILE_MAGIC_MISMATCH。
+        "php" | "phtml" => match detected {
+            Pe | Elf | MachO | Zip | Pdf | Office | OfficeXml | Gzip | Tar | Png | Jpeg | Gif => {
+                Some(IssueSeverity::Critical)
+            }
+            _ => None,
+        },
 
         // 图片扩展名：如果内容是脚本/可执行 → High
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "tiff" | "avif" => match detected
@@ -326,6 +336,9 @@ fn describe_expected_for_ext(ext: &str) -> String {
         "py" | "pyw" | "pyi" => "Python source".to_string(),
         "js" | "jsx" | "mjs" | "cjs" => "JavaScript source".to_string(),
         "ts" | "tsx" => "TypeScript source".to_string(),
+        "sh" | "bash" | "zsh" | "fish" => "Shell script".to_string(),
+        "ps1" | "psm1" | "psd1" => "PowerShell script".to_string(),
+        "bat" | "cmd" => "Windows batch script".to_string(),
         "md" => "Markdown document".to_string(),
         "json" => "JSON data".to_string(),
         "yaml" | "yml" => "YAML data".to_string(),
@@ -489,6 +502,32 @@ mod tests {
         assert_eq!(finding.rule_id, "FILE_MAGIC_MISMATCH");
         assert!(finding.description.contains("PE executable"));
         assert!(finding.description.contains("Python source"));
+    }
+
+    #[test]
+    fn executable_disguised_as_command_script_is_critical() {
+        for extension in ["sh", "bash", "ps1", "psm1", "bat", "cmd"] {
+            let pe_path = format!("payload.{extension}");
+            let pe = check_magic(&pe_path, b"MZ\x90\x00payload")
+                .expect("PE disguised as script must be detected");
+            assert_eq!(pe.severity, IssueSeverity::Critical, "{extension}");
+
+            let elf_path = format!("payload.{extension}");
+            let elf = check_magic(&elf_path, b"\x7fELF\x02\x01payload")
+                .expect("ELF disguised as script must be detected");
+            assert_eq!(elf.severity, IssueSeverity::Critical, "{extension}");
+        }
+    }
+
+    #[test]
+    fn php_html_templates_are_allowed_but_executable_disguises_are_not() {
+        let template = b"<!DOCTYPE html><html><?php echo 'ok'; ?></html>";
+        assert!(check_magic("index.php", template).is_none());
+        assert!(check_magic("index.phtml", template).is_none());
+
+        let finding = check_magic("payload.phtml", b"MZ\x90\x00payload")
+            .expect("PE disguised as phtml must be detected");
+        assert_eq!(finding.severity, IssueSeverity::Critical);
     }
 
     #[test]

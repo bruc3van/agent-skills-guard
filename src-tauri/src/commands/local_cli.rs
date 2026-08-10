@@ -791,8 +791,12 @@ pub async fn update_local_cli_tool(
     tool.package_name = pkg_name.clone();
     tool.description = desc.clone();
 
-    let (bin, args) = build_pty_update_args(&tool)
-        .ok_or_else(|| format!("[TOOL_UPDATE_UNSUPPORTED] 工具 {} 的包管理器不支持自动更新", display_id))?;
+    let (bin, args) = build_pty_update_args(&tool).ok_or_else(|| {
+        format!(
+            "[TOOL_UPDATE_UNSUPPORTED] 工具 {} 的包管理器不支持自动更新",
+            display_id
+        )
+    })?;
 
     state
         .db
@@ -910,8 +914,12 @@ pub async fn uninstall_local_cli_tool(
     tool.current_version = row.current_version;
     tool.package_name = row.package_name;
 
-    let (bin, args) = build_pty_uninstall_args(&tool)
-        .ok_or_else(|| format!("[TOOL_UNINSTALL_UNSUPPORTED] 工具 {} 的包管理器不支持自动卸载", display_id))?;
+    let (bin, args) = build_pty_uninstall_args(&tool).ok_or_else(|| {
+        format!(
+            "[TOOL_UNINSTALL_UNSUPPORTED] 工具 {} 的包管理器不支持自动卸载",
+            display_id
+        )
+    })?;
 
     state
         .db
@@ -989,11 +997,17 @@ pub async fn open_local_cli_folder(
         .ok_or_else(|| format!("[TOOL_NOT_FOUND] 工具 {} 未找到", tool_path))?;
 
     let detected_path = PathBuf::from(row.detected_path);
-    let folder = detected_path
-        .parent()
-        .ok_or_else(|| format!("[TOOL_DIR_UNAVAILABLE] 无法获取工具 {} 的安装目录", tool_path))?;
+    let folder = detected_path.parent().ok_or_else(|| {
+        format!(
+            "[TOOL_DIR_UNAVAILABLE] 无法获取工具 {} 的安装目录",
+            tool_path
+        )
+    })?;
     if !folder.exists() || !folder.is_dir() {
-        return Err(format!("[TOOL_DIR_NOT_FOUND] 安装目录不存在: {}", folder.display()));
+        return Err(format!(
+            "[TOOL_DIR_NOT_FOUND] 安装目录不存在: {}",
+            folder.display()
+        ));
     }
     let canonical = folder
         .canonicalize()

@@ -16,7 +16,8 @@ use regex::Regex;
 static MD_LINK_RE: Lazy<Regex> = lazy_regex!(r#"\[.*?\]\(([^)]+)\)"#);
 
 /// 模式 2: 自然语言引用 (see|refer to|check|read) `path.ext`
-static NATURAL_LANG_RE: Lazy<Regex> = lazy_regex!(r#"(?i)(?:see|refer to|check|read)\s+[`"']?(\S+\.\w+)[`"']?"#);
+static NATURAL_LANG_RE: Lazy<Regex> =
+    lazy_regex!(r#"(?i)(?:see|refer to|check|read)\s+[`"']?(\S+\.\w+)[`"']?"#);
 
 /// 模式 3: 执行型引用 (run|execute|invoke) scripts/...
 static EXEC_REF_RE: Lazy<Regex> = lazy_regex!(r#"(?i)(?:run|execute|invoke)\s+(scripts/\S+)"#);

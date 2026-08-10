@@ -84,13 +84,15 @@ impl Write for TeeWriter {
 /// 初始化日志。必须在 Tauri / Tokio 运行时启动前从 `main()` 调用一次。
 pub fn init() {
     let file_path = resolve_log_dir().map(|dir| dir.join(LOG_FILE_NAME));
-    let file = file_path.as_deref().and_then(|path| match open_log_file(path) {
-        Ok(file) => Some(Mutex::new(file)),
-        Err(e) => {
-            eprintln!("无法打开日志文件 {}: {}", path.display(), e);
-            None
-        }
-    });
+    let file = file_path
+        .as_deref()
+        .and_then(|path| match open_log_file(path) {
+            Ok(file) => Some(Mutex::new(file)),
+            Err(e) => {
+                eprintln!("无法打开日志文件 {}: {}", path.display(), e);
+                None
+            }
+        });
 
     let has_file = file.is_some();
     let _ = LOG_FILE_PATH.set(if has_file { file_path.clone() } else { None });

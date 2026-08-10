@@ -709,7 +709,9 @@ pub async fn cancel_skill_installation(
 #[tauri::command]
 pub async fn uninstall_skill(state: State<'_, AppState>, skill_id: String) -> Result<(), String> {
     with_skill_manager_blocking(&state, move |manager| {
-        manager.uninstall_skill(&skill_id).map_err(|e| e.to_string())
+        manager
+            .uninstall_skill(&skill_id)
+            .map_err(|e| e.to_string())
     })
     .await
 }

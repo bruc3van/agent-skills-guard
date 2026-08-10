@@ -84,11 +84,7 @@ pub fn make_finding(spec: FindingSpec) -> Finding {
         remediation: spec.remediation,
         analyzer: spec.analyzer.to_string(),
         metadata: Some(FindingMetadata {
-            rule_source: Some(
-                spec.rule_source
-                    .unwrap_or(spec.analyzer)
-                    .to_string(),
-            ),
+            rule_source: Some(spec.rule_source.unwrap_or(spec.analyzer).to_string()),
             finding_kind: Some(spec.finding_kind),
             cwe_id: spec.cwe_id,
             confidence: spec.confidence,

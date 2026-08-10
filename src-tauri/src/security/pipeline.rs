@@ -37,9 +37,8 @@ static RE_PIPE_EXEC: Lazy<Regex> = lazy_regex!(
 );
 
 // 执行命令：bash xxx.sh / sh xxx / ./xxx / python xxx
-static RE_EXEC_COMMAND: Lazy<Regex> = lazy_regex!(
-    r"(?i)\b(?:bash|sh|zsh|ksh|dash|python[23]?|ruby|perl|node|pwsh)\s+[^\s;|&]+"
-);
+static RE_EXEC_COMMAND: Lazy<Regex> =
+    lazy_regex!(r"(?i)\b(?:bash|sh|zsh|ksh|dash|python[23]?|ruby|perl|node|pwsh)\s+[^\s;|&]+");
 
 // chmod +x 模式
 static RE_CHMOD_X: Lazy<Regex> = lazy_regex!(r"(?i)\bchmod\s+[+\-]x\b");
@@ -54,9 +53,8 @@ static EXEC_CONTEXT_RE: Lazy<Regex> = lazy_regex!(
 static RE_FETCH_LINE: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:curl|wget)\s+[^\n]*https?://");
 
 // curl -o / wget -O 输出到文件
-static RE_FETCH_TO_FILE: Lazy<Regex> = lazy_regex!(
-    r"(?i)\b(?:curl\s+-[oO]|wget\s+(?:-[oO]\s+|[^\s]*-[oO]))\s+\S+"
-);
+static RE_FETCH_TO_FILE: Lazy<Regex> =
+    lazy_regex!(r"(?i)\b(?:curl\s+-[oO]|wget\s+(?:-[oO]\s+|[^\s]*-[oO]))\s+\S+");
 
 // 敏感文件路径模式（concat!() 拼接，使用 LazyLock）
 static RE_SENSITIVE_FILE: LazyLock<Regex> = LazyLock::new(|| {
@@ -75,7 +73,8 @@ static RE_SENSITIVE_FILE: LazyLock<Regex> = LazyLock::new(|| {
         r"|\*\.key",
         r"|\.env(?:\.\w+)?",
         r")",
-    )).expect("invalid RE_SENSITIVE_FILE pattern")
+    ))
+    .expect("invalid RE_SENSITIVE_FILE pattern")
 });
 
 // 敏感文件（不带 cat 前缀，用于 find -exec 场景）
@@ -87,13 +86,13 @@ static RE_SENSITIVE_FILE_PATH: LazyLock<Regex> = LazyLock::new(|| {
         r"|\.env(?:\.\w+)?",
         r"|\.pem",
         r"|\.key)",
-    )).expect("invalid RE_SENSITIVE_FILE_PATH pattern")
+    ))
+    .expect("invalid RE_SENSITIVE_FILE_PATH pattern")
 });
 
 // base64 编码/解码
-static RE_BASE64: Lazy<Regex> = lazy_regex!(
-    r"(?i)\bbase64(?:\s+-[dwa]|(?:\s+--(?:decode|wrap|ignore-garbage)))?"
-);
+static RE_BASE64: Lazy<Regex> =
+    lazy_regex!(r"(?i)\bbase64(?:\s+-[dwa]|(?:\s+--(?:decode|wrap|ignore-garbage)))?");
 
 // base64 解码管道
 static RE_BASE64_DECODE: Lazy<Regex> = lazy_regex!(r"(?i)\bbase64\s+(?:-d|--decode)\b");
@@ -107,7 +106,8 @@ static RE_NET_SEND: LazyLock<Regex> = LazyLock::new(|| {
         r"|curl\s+--form\b",
         r"|Invoke-RestMethod\s+.*-Method\s+POST",
         r"|iwr\s+.*-Method\s+POST)",
-    )).expect("invalid RE_NET_SEND pattern")
+    ))
+    .expect("invalid RE_NET_SEND pattern")
 });
 
 // 网络外传（更宽泛的 curl/wget 后跟 URL）
@@ -117,17 +117,15 @@ static RE_NET_EXFIL: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:curl|wget)\b[^\n]*http
 static RE_FIND_EXEC: Lazy<Regex> = lazy_regex!(r"(?i)\bfind\b[^\n]*-exec\b");
 
 // find | xargs sh/bash 模式
-static RE_FIND_XARGS_SH: Lazy<Regex> = lazy_regex!(
-    r"(?i)\bfind\b[^\n]*\|\s*xargs\s+(?:sh|bash|zsh)\b"
-);
+static RE_FIND_XARGS_SH: Lazy<Regex> =
+    lazy_regex!(r"(?i)\bfind\b[^\n]*\|\s*xargs\s+(?:sh|bash|zsh)\b");
 
 // env / printenv 输出到网络
 static RE_ENV_PRINT: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:env|printenv)\b");
 
 // 敏感环境变量
-static RE_SENSITIVE_ENV: Lazy<Regex> = lazy_regex!(
-    r"(?i)\b(?:env|printenv)\s+(?:\w*(?:SECRET|TOKEN|KEY|PASSWORD|CRED|AUTH|API)\w*)"
-);
+static RE_SENSITIVE_ENV: Lazy<Regex> =
+    lazy_regex!(r"(?i)\b(?:env|printenv)\s+(?:\w*(?:SECRET|TOKEN|KEY|PASSWORD|CRED|AUTH|API)\w*)");
 
 // 裸脚本执行（./script.sh、/path/to/script.sh、script.sh 等，无解释器前缀）
 static RE_EXEC_BARE: Lazy<Regex> = lazy_regex!(
@@ -144,7 +142,8 @@ static RE_SENSITIVE_PIPELINE: LazyLock<Regex> = LazyLock::new(|| {
         r"|~?/\.env(?:\.\w+)?",
         r"|\.env(?:\.\w+)?)",
         r"[^|]*\|\s*base64\b[^\|]*\|\s*(?:curl|wget)\b",
-    )).expect("invalid RE_SENSITIVE_PIPELINE pattern")
+    ))
+    .expect("invalid RE_SENSITIVE_PIPELINE pattern")
 });
 
 // 敏感文件直接管道到网络（concat!() 拼接，使用 LazyLock）
@@ -157,21 +156,22 @@ static RE_SENSITIVE_DIRECT_NET: LazyLock<Regex> = LazyLock::new(|| {
         r"|~?/\.env(?:\.\w+)?",
         r"|\.env(?:\.\w+)?)",
         r"[^|]*\|\s*(?:curl|wget)\b",
-    )).expect("invalid RE_SENSITIVE_DIRECT_NET pattern")
+    ))
+    .expect("invalid RE_SENSITIVE_DIRECT_NET pattern")
 });
 
 // env/printenv 管道到网络（同一行，可跨多个管道如 env | grep | curl）
-static RE_ENV_NET_SAME_LINE: Lazy<Regex> = lazy_regex!(
-    r"(?i)\b(?:env|printenv)\b[^\n]*\|\s*(?:curl|wget)\b"
-);
+static RE_ENV_NET_SAME_LINE: Lazy<Regex> =
+    lazy_regex!(r"(?i)\b(?:env|printenv)\b[^\n]*\|\s*(?:curl|wget)\b");
 
 // find ... -name "*.key" -exec curl 模式（同一行）
-static RE_FIND_KEY_CURL: Lazy<Regex> = lazy_regex!(
-    r"(?i)\bfind\b[^\n]*(?:\.key|\.pem|id_rsa|\.env)[^\n]*(?:curl|wget)\b"
-);
+static RE_FIND_KEY_CURL: Lazy<Regex> =
+    lazy_regex!(r"(?i)\bfind\b[^\n]*(?:\.key|\.pem|id_rsa|\.env)[^\n]*(?:curl|wget)\b");
 
-static RE_DOC_CONVERT: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:pandoc|pdftotext|libreoffice|textutil)\b");
-static RE_CAT_CONVERTED: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:cat|head|tail|less|more)\b.*\.(?:md|txt|html)");
+static RE_DOC_CONVERT: Lazy<Regex> =
+    lazy_regex!(r"(?i)\b(?:pandoc|pdftotext|libreoffice|textutil)\b");
+static RE_CAT_CONVERTED: Lazy<Regex> =
+    lazy_regex!(r"(?i)\b(?:cat|head|tail|less|more)\b.*\.(?:md|txt|html)");
 
 // 匹配 env VAR=val 前缀
 static RE_ENV_PREFIX: Lazy<Regex> = lazy_regex!(r"(?i)^env(?:\s+\w+=\S+)*\s+");
@@ -663,7 +663,6 @@ fn apply_installer_downgrade(hit: PipelineHit, policy: &ScanPolicy) -> Finding {
     );
     finding
 }
-
 
 /// 提取内容中最可疑的代码片段（截取匹配行附近上下文）
 fn extract_snippet(content: &str, pattern: &Regex, max_len: usize) -> Option<String> {

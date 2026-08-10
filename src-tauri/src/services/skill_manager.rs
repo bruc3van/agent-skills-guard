@@ -303,6 +303,54 @@ fn install_base_conflicting_tool(install_base_dir: &Path) -> Option<AgentTool> {
     None
 }
 
+/// A custom base directory is user-controlled and the staged directory name originates
+/// from repository content. Never replace an unrelated pre-existing child directory.
+fn ensure_custom_install_target_is_owned(
+    skill: &Skill,
+    final_install_dir: &Path,
+    custom_install_base: bool,
+) -> Result<()> {
+    if !custom_install_base || !final_install_dir.exists() {
+        return Ok(());
+    }
+
+    let tracked = skill
+        .local_path
+        .as_deref()
+        .into_iter()
+        .chain(
+            skill
+                .local_paths
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(String::as_str),
+        )
+        .any(|path| paths_point_to_same_location(Path::new(path), final_install_dir));
+
+    if !tracked {
+        anyhow::bail!(
+            "INSTALL_TARGET_EXISTS: 自定义安装目标 {:?} 已存在且不属于该技能",
+            final_install_dir
+        );
+    }
+
+    Ok(())
+}
+
+fn ensure_update_clear_has_backup(
+    target_exists: bool,
+    should_clear: bool,
+    backup_available: bool,
+) -> Result<()> {
+    if target_exists && should_clear && !backup_available {
+        anyhow::bail!(
+            "UPDATE_BACKUP_REQUIRED: 目标目录仍存在但没有可用备份，已拒绝破坏性清理；staging 已保留，可关闭占用目录的程序后重试"
+        );
+    }
+    Ok(())
+}
+
 fn find_tool_id_for_scan_dir(
     scan_dir: &Path,
     dir_to_tool: &HashMap<PathBuf, String>,
@@ -1216,6 +1264,8 @@ impl SkillManager {
         let skill_dir_name = cache_dir.file_name().context("INVALID_SKILL_DIR_NAME")?;
         let final_install_dir = install_base_dir.join(skill_dir_name);
 
+        ensure_custom_install_target_is_owned(&skill, &final_install_dir, install_path.is_some())?;
+
         // 确保目标基础目录存在
         std::fs::create_dir_all(&install_base_dir).context("无法创建目标目录")?;
 
@@ -1744,7 +1794,10 @@ impl SkillManager {
     /// `refresh_skill_links` 的可测试变体，允许传入显式工具目录。
     fn refresh_skill_links_from_dirs(&self, tool_dirs: &[(PathBuf, String)]) -> Result<Vec<Skill>> {
         let refreshed = self.refresh_installed_tool_links_from_dirs(tool_dirs)?;
-        log::info!("Forcibly refreshed tool-link state for {} skills", refreshed);
+        log::info!(
+            "Forcibly refreshed tool-link state for {} skills",
+            refreshed
+        );
         self.get_installed_skills_from_dirs(
             &tool_dirs
                 .iter()
@@ -2779,17 +2832,38 @@ impl SkillManager {
         // 确保目标目录干净：
         //   - rename备份成功：目标已不存在，创建新空目录
         //   - copy备份成功：备份已完成，安全清空原目录后重建
-        //   - force_overwrite：无论是否有备份，强制清空
+        //   - force_overwrite：仅在已有可用备份时强制清空；无备份不得破坏目标
         let should_clear = matches!(backup_dir, Some(BackupDir::Copied(_))) || force_overwrite;
+        ensure_update_clear_has_backup(
+            target_install_dir.exists(),
+            should_clear,
+            backup_dir.is_some(),
+        )?;
         if !target_install_dir.exists() {
             std::fs::create_dir_all(&target_install_dir)
                 .context(format!("无法创建目标目录: {:?}", target_install_dir))?;
         } else if should_clear {
             if let Err(clear_err) = std::fs::remove_dir_all(&target_install_dir) {
-                log::warn!(
-                    "无法清空旧技能目录，将尝试直接覆盖写入（可能保留部分旧文件）: {}",
-                    clear_err
-                );
+                // 绝不能把 staging 合并写入未清空的旧目录，否则安全报告描述的是
+                // staging，而实际执行目录还可能保留本次未扫描的旧文件。
+                let Some(BackupDir::Copied(backup_path)) = &backup_dir else {
+                    anyhow::bail!(
+                        "无法清空旧技能目录: {}；备份状态异常，staging 已保留",
+                        clear_err
+                    );
+                };
+                let restore_error = self
+                    .copy_dir_recursive(backup_path, &target_install_dir, &mut 0)
+                    .err();
+                if let Some(restore_error) = restore_error {
+                    anyhow::bail!(
+                        "无法清空旧技能目录: {}；同时无法从复制备份恢复: {}；staging 已保留",
+                        clear_err,
+                        restore_error
+                    );
+                }
+                self.clear_update_staging_state_best_effort(&mut skill);
+                anyhow::bail!("无法清空旧技能目录，已停止更新并保留旧版本: {}", clear_err);
             } else {
                 std::fs::create_dir_all(&target_install_dir)
                     .context(format!("无法重建目标目录: {:?}", target_install_dir))?;
@@ -3179,7 +3253,7 @@ fn is_retryable_rename_error(err: &std::io::Error) -> bool {
     matches!(err.raw_os_error(), Some(5 | 32 | 33))
 }
 
-fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
     let mut last_err: Option<std::io::Error> = None;
     let attempts = 8usize;
 
@@ -3209,6 +3283,7 @@ fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 mod tests {
     use super::{
         build_local_skill_id, build_synced_tool_state, create_or_reuse_tool_link,
+        ensure_custom_install_target_is_owned, ensure_update_clear_has_backup,
         find_tool_id_for_scan_dir, install_base_conflicting_tool,
         invalidate_skill_md_checksum_cache, paths_point_to_same_location,
         refresh_existing_tool_links_for_skill, resolve_update_install_paths,
@@ -3216,11 +3291,58 @@ mod tests {
         skill_md_checksum_with_cache, tool_skill_path_is_compatible_with_source, ToolSkillDir,
         STAGING_LOCAL_PATH_PREFIX,
     };
+    use crate::models::Skill;
     use crate::services::agent_tools::AgentTool;
     use crate::services::{link_fs, Database};
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn custom_install_does_not_replace_untracked_existing_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("authorized_keys");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("keep.txt"), "unrelated").unwrap();
+        let skill = Skill::new(
+            "example".to_string(),
+            "https://github.com/example/repo".to_string(),
+            "skills/authorized_keys".to_string(),
+        );
+
+        let error = ensure_custom_install_target_is_owned(&skill, &target, true)
+            .expect_err("untracked target must not be replaced");
+        assert!(error.to_string().contains("INSTALL_TARGET_EXISTS"));
+        assert_eq!(
+            std::fs::read_to_string(target.join("keep.txt")).unwrap(),
+            "unrelated"
+        );
+    }
+
+    #[test]
+    fn custom_reinstall_allows_exact_tracked_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("example");
+        std::fs::create_dir(&target).unwrap();
+        let mut skill = Skill::new(
+            "example".to_string(),
+            "https://github.com/example/repo".to_string(),
+            "skills/example".to_string(),
+        );
+        skill.local_path = Some(target.to_string_lossy().into_owned());
+
+        ensure_custom_install_target_is_owned(&skill, &target, true).unwrap();
+    }
+
+    #[test]
+    fn forced_update_never_clears_existing_target_without_backup() {
+        let error = ensure_update_clear_has_backup(true, true, false)
+            .expect_err("destructive clear without backup must be rejected");
+        assert!(error.to_string().contains("UPDATE_BACKUP_REQUIRED"));
+
+        ensure_update_clear_has_backup(true, true, true).unwrap();
+        ensure_update_clear_has_backup(false, true, false).unwrap();
+    }
 
     #[test]
     fn build_synced_tool_state_replaces_previous_links_with_requested_targets() {
@@ -3853,12 +3975,8 @@ mod tests {
 
         // 篡改缓存值：若第二次调用命中缓存，就会原样返回被篡改的值，
         // 从而证明它没有重新读盘 + 哈希。
-        cache
-            .lock()
-            .unwrap()
-            .get_mut(&skill_md)
-            .unwrap()
-            .checksum = "sentinel-cached-value".to_string();
+        cache.lock().unwrap().get_mut(&skill_md).unwrap().checksum =
+            "sentinel-cached-value".to_string();
         assert_eq!(
             skill_md_checksum_with_cache(&skill_dir, &cache).as_deref(),
             Some("sentinel-cached-value"),

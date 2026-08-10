@@ -48,68 +48,208 @@ static EXFILTRATOR_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 // 可疑共享模式
 static SUSPICIOUS_PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     vec![
-        ("base64_decode", Regex::new(r"base64[\s.]*(?:b64)?decode").expect("SUSP")),
+        (
+            "base64_decode",
+            Regex::new(r"base64[\s.]*(?:b64)?decode").expect("SUSP"),
+        ),
         ("exec_call", Regex::new(r"\bexec\s*\(").expect("SUSP")),
         ("eval_call", Regex::new(r"\beval\s*\(").expect("SUSP")),
-        ("hex_escape", Regex::new(r"\\x[0-9a-fA-F]{2}").expect("SUSP")),
-        ("chr_call", Regex::new(r"\bchr\s*\(\s*\d+\s*\)").expect("SUSP")),
-        ("getattr_dynamic", Regex::new(r#"getattr\s*\([^,]+,\s*["']"#).expect("SUSP")),
+        (
+            "hex_escape",
+            Regex::new(r"\\x[0-9a-fA-F]{2}").expect("SUSP"),
+        ),
+        (
+            "chr_call",
+            Regex::new(r"\bchr\s*\(\s*\d+\s*\)").expect("SUSP"),
+        ),
+        (
+            "getattr_dynamic",
+            Regex::new(r#"getattr\s*\([^,]+,\s*["']"#).expect("SUSP"),
+        ),
     ]
 });
 
 // Collector 描述词
 static COLLECTOR_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
-        "gather", "collect", "read", "scan", "fetch", "extract",
-        "retrieve", "download", "import", "load", "parse",
-    ].iter().copied().collect()
+        "gather", "collect", "read", "scan", "fetch", "extract", "retrieve", "download", "import",
+        "load", "parse",
+    ]
+    .iter()
+    .copied()
+    .collect()
 });
 
 // Sender 描述词
 static SENDER_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
-        "send", "upload", "post", "transfer", "sync", "export",
-        "share", "transmit", "deliver", "push", "submit",
-    ].iter().copied().collect()
+        "send", "upload", "post", "transfer", "sync", "export", "share", "transmit", "deliver",
+        "push", "submit",
+    ]
+    .iter()
+    .copied()
+    .collect()
 });
 
 // 停用词（排除后计算上下文词重叠）
 static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
-        "a", "an", "the", "is", "are", "was", "were", "be", "been",
-        "being", "have", "has", "had", "do", "does", "did", "will",
-        "would", "could", "should", "may", "might", "can", "shall",
-        "to", "of", "in", "for", "on", "with", "at", "by", "from",
-        "as", "into", "through", "during", "before", "after", "above",
-        "below", "between", "out", "off", "over", "under", "again",
-        "further", "then", "once", "that", "this", "these", "those",
-        "and", "but", "or", "nor", "not", "so", "yet", "both",
-        "each", "every", "all", "any", "few", "more", "most", "other",
-        "some", "such", "no", "only", "own", "same", "than", "too",
-        "very", "just", "because", "if", "when", "where", "how", "what",
-        "which", "who", "whom", "while", "although", "though", "after",
-        "before", "until", "unless", "since", "because", "about",
-        "tool", "utility", "helper", "assistant", "service", "agent",
-        "skill", "plugin", "extension", "function", "feature",
-    ].iter().copied().collect()
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "can",
+        "shall",
+        "to",
+        "of",
+        "in",
+        "for",
+        "on",
+        "with",
+        "at",
+        "by",
+        "from",
+        "as",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "between",
+        "out",
+        "off",
+        "over",
+        "under",
+        "again",
+        "further",
+        "then",
+        "once",
+        "that",
+        "this",
+        "these",
+        "those",
+        "and",
+        "but",
+        "or",
+        "nor",
+        "not",
+        "so",
+        "yet",
+        "both",
+        "each",
+        "every",
+        "all",
+        "any",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "only",
+        "own",
+        "same",
+        "than",
+        "too",
+        "very",
+        "just",
+        "because",
+        "if",
+        "when",
+        "where",
+        "how",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "while",
+        "although",
+        "though",
+        "after",
+        "before",
+        "until",
+        "unless",
+        "since",
+        "because",
+        "about",
+        "tool",
+        "utility",
+        "helper",
+        "assistant",
+        "service",
+        "agent",
+        "skill",
+        "plugin",
+        "extension",
+        "function",
+        "feature",
+    ]
+    .iter()
+    .copied()
+    .collect()
 });
 
 // 常见/可信域名（不报告）
 static COMMON_DOMAINS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
-        "github.com", "gitlab.com", "bitbucket.org",
-        "pypi.org", "npmjs.com", "npmjs.org", "npm.io",
-        "crates.io", "rubygems.org", "packagist.org",
-        "hub.docker.com", "docker.io",
-        "cloud.google.com", "aws.amazon.com", "azure.com",
-        "stackoverflow.com", "stackexchange.com",
-        "wikipedia.org", "wikimedia.org",
-        "google.com", "googleapis.com", "gstatic.com",
-        "microsoft.com", "apple.com", "mozilla.org",
-        "rust-lang.org", "python.org", "nodejs.org",
-        "deno.land", "bun.sh", "astral.sh",
-        "anthropic.com", "openai.com",
-    ].iter().copied().collect()
+        "github.com",
+        "gitlab.com",
+        "bitbucket.org",
+        "pypi.org",
+        "npmjs.com",
+        "npmjs.org",
+        "npm.io",
+        "crates.io",
+        "rubygems.org",
+        "packagist.org",
+        "hub.docker.com",
+        "docker.io",
+        "cloud.google.com",
+        "aws.amazon.com",
+        "azure.com",
+        "stackoverflow.com",
+        "stackexchange.com",
+        "wikipedia.org",
+        "wikimedia.org",
+        "google.com",
+        "googleapis.com",
+        "gstatic.com",
+        "microsoft.com",
+        "apple.com",
+        "mozilla.org",
+        "rust-lang.org",
+        "python.org",
+        "nodejs.org",
+        "deno.land",
+        "bun.sh",
+        "astral.sh",
+        "anthropic.com",
+        "openai.com",
+    ]
+    .iter()
+    .copied()
+    .collect()
 });
 
 // URL / 域名提取（从函数级移至模块级，避免每次调用重新初始化）

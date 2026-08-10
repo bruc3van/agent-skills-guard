@@ -10,6 +10,20 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 
+fn persist_skill_scan_report(
+    db: &crate::services::Database,
+    skill: &Skill,
+    report: &SecurityReport,
+) -> Result<()> {
+    let mut updated = skill.clone();
+    updated.security_score = Some(report.score);
+    updated.security_level = Some(report.level.as_str().to_string());
+    updated.security_issues = Some(report.issues.clone());
+    updated.security_report = Some(report.clone());
+    updated.scanned_at = Some(chrono::Utc::now());
+    db.save_skill(&updated)
+}
+
 /// 扫描所有已安装的 skills
 #[tauri::command]
 pub async fn scan_all_installed_skills(
@@ -105,22 +119,15 @@ fn scan_installed_skills_blocking(
                 // 出站前剥离 scanned_files（前端不读，仅徒增 DB / IPC 体积）
                 let report = report.without_scanned_file_list();
 
-                let mut updated = skill.clone();
-                updated.security_score = Some(report.score);
-                updated.security_level = Some(report.level.as_str().to_string());
-                updated.security_issues = Some(report.issues.clone());
-                updated.security_report = Some(report.clone());
-                updated.scanned_at = Some(chrono::Utc::now());
-
-                if let Err(e) = db.save_skill(&updated) {
-                    log::warn!("Failed to save skill {}: {}", updated.name, e);
+                if let Err(e) = persist_skill_scan_report(&db, skill, &report) {
+                    log::warn!("Failed to save skill {}: {}", skill.name, e);
                 }
 
                 Some((
                     index,
                     SkillScanResult {
-                        skill_id: updated.id.clone(),
-                        skill_name: updated.name.clone(),
+                        skill_id: skill.id.clone(),
+                        skill_name: skill.name.clone(),
                         score: report.score,
                         level: report.level.as_str().to_string(),
                         scanned_at: chrono::Utc::now().to_rfc3339(),
@@ -185,6 +192,21 @@ fn scan_installed_skills_blocking(
                 result.report.score = new_score;
                 result.level = SecurityLevel::from_score(new_score).as_str().to_string();
                 result.report.level = SecurityLevel::from_score(new_score);
+
+                // 单体扫描结果在 cross-skill 分析前已经落库；追加协同攻击 finding
+                // 后必须再次保存，否则 IPC 当次显示的分数会在重启/切页后消失。
+                if let Some(original) = installed_skills
+                    .iter()
+                    .find(|skill| skill.id == result.skill_id)
+                {
+                    if let Err(error) = persist_skill_scan_report(&db, original, &result.report) {
+                        log::warn!(
+                            "Failed to persist cross-skill findings for '{}': {}",
+                            original.name,
+                            error
+                        );
+                    }
+                }
             }
         }
     }
@@ -320,9 +342,7 @@ pub async fn get_scan_results(state: State<'_, AppState>) -> Result<Vec<SkillSca
         .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))?
 }
 
-fn collect_scan_results(
-    db: &crate::services::Database,
-) -> Result<Vec<SkillScanResult>, String> {
+fn collect_scan_results(db: &crate::services::Database) -> Result<Vec<SkillScanResult>, String> {
     let skills = db.get_skills().map_err(|e| e.to_string())?;
 
     let results: Vec<SkillScanResult> = skills
@@ -368,3 +388,57 @@ fn collect_scan_results(
     Ok(results)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::security::{IssueSeverity, SecurityIssue};
+
+    #[test]
+    fn persisted_report_keeps_post_scan_cross_skill_findings() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = crate::services::Database::new(temp.path().join("test.db")).unwrap();
+        let mut skill = Skill::new(
+            "first".to_string(),
+            "https://github.com/example/repo".to_string(),
+            "skills/first".to_string(),
+        );
+        skill.installed = true;
+        db.save_skill(&skill).unwrap();
+
+        let report = SecurityReport {
+            skill_id: skill.id.clone(),
+            score: 29,
+            level: SecurityLevel::Critical,
+            issues: vec![SecurityIssue {
+                severity: IssueSeverity::Critical,
+                rule_id: Some("CROSS_SKILL_PAYLOAD_CHAIN".to_string()),
+                description: "cross-skill chain".to_string(),
+                ..Default::default()
+            }],
+            recommendations: Vec::new(),
+            blocked: true,
+            hard_trigger_issues: vec!["CROSS_SKILL_PAYLOAD_CHAIN".to_string()],
+            scanned_files: Vec::new(),
+            partial_scan: false,
+            skipped_files: Vec::new(),
+            metadata: None,
+            kind_counts: None,
+        };
+
+        persist_skill_scan_report(&db, &skill, &report).unwrap();
+
+        let saved = db
+            .get_skills()
+            .unwrap()
+            .into_iter()
+            .find(|candidate| candidate.id == skill.id)
+            .unwrap();
+        assert_eq!(saved.security_score, Some(29));
+        assert!(saved
+            .security_report
+            .unwrap()
+            .issues
+            .iter()
+            .any(|issue| { issue.rule_id.as_deref() == Some("CROSS_SKILL_PAYLOAD_CHAIN") }));
+    }
+}

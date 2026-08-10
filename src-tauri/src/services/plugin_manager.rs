@@ -18,6 +18,24 @@ use std::sync::Arc;
 use std::time::Duration;
 use which::which;
 
+/// IPC may select the Claude launcher name for compatibility with Windows, but it must
+/// never supply an arbitrary path/executable. Resolution remains delegated to PATH.
+fn resolve_claude_command(requested: Option<String>) -> Result<Option<String>> {
+    let command = requested.unwrap_or_else(|| "claude".to_string());
+    let command = command.trim();
+    let allowed = ["claude", "claude.exe", "claude.cmd", "claude.bat"];
+    if !allowed
+        .iter()
+        .any(|candidate| command.eq_ignore_ascii_case(candidate))
+    {
+        anyhow::bail!("CLAUDE_COMMAND_NOT_ALLOWED: 仅允许通过 PATH 调用 Claude Code CLI");
+    }
+
+    Ok(which(command)
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned()))
+}
+
 #[derive(Debug, Deserialize)]
 struct MarketplaceManifest {
     name: String,
@@ -319,12 +337,11 @@ impl PluginManager {
     ///
     /// 原则：不直接读写 Claude 的缓存目录，仅通过 CLI `list --json` 获取状态并落库。
     pub async fn sync_claude_installed_state(&self, claude_command: Option<String>) -> Result<()> {
-        let cli_command = claude_command.unwrap_or_else(|| "claude".to_string());
-        if which(&cli_command).is_err() {
+        let Some(cli_command) = resolve_claude_command(claude_command)? else {
             // 未安装 Claude CLI 时，跳过同步，保持 DB 原样
-            log::debug!("未找到 Claude Code CLI: {}，跳过 plugins 同步", cli_command);
+            log::debug!("未找到 Claude Code CLI，跳过 plugins 同步");
             return Ok(());
-        }
+        };
 
         let claude_cli = ClaudeCli::new(cli_command);
         let commands = vec![
@@ -473,10 +490,9 @@ impl PluginManager {
         &self,
         claude_command: Option<String>,
     ) -> Result<Vec<ClaudeMarketplace>> {
-        let cli_command = claude_command.unwrap_or_else(|| "claude".to_string());
-        if which(&cli_command).is_err() {
+        let Some(cli_command) = resolve_claude_command(claude_command)? else {
             return Ok(Vec::new());
-        }
+        };
 
         let claude_cli = ClaudeCli::new(cli_command);
         let commands = vec![ClaudeCommand {
@@ -534,10 +550,9 @@ impl PluginManager {
         self.sync_claude_installed_state(claude_command.clone())
             .await?;
 
-        let cli_command = claude_command.unwrap_or_else(|| "claude".to_string());
-        if which(&cli_command).is_err() {
+        let Some(cli_command) = resolve_claude_command(claude_command)? else {
             return Ok(Vec::new());
-        }
+        };
 
         let claude_cli = ClaudeCli::new(cli_command);
         let commands = vec![ClaudeCommand {
@@ -615,10 +630,8 @@ impl PluginManager {
             anyhow::bail!("该插件尚未安装");
         }
 
-        let cli_command = claude_command.unwrap_or_else(|| "claude".to_string());
-        if which(&cli_command).is_err() {
-            anyhow::bail!("未找到 Claude Code CLI: {}", cli_command);
-        }
+        let cli_command =
+            resolve_claude_command(claude_command)?.context("未找到 Claude Code CLI")?;
 
         let scope = plugin
             .claude_scope
@@ -726,10 +739,8 @@ impl PluginManager {
         marketplace_name: &str,
         claude_command: Option<String>,
     ) -> Result<MarketplaceUpdateResult> {
-        let cli_command = claude_command.unwrap_or_else(|| "claude".to_string());
-        if which(&cli_command).is_err() {
-            anyhow::bail!("未找到 Claude Code CLI: {}", cli_command);
-        }
+        let cli_command =
+            resolve_claude_command(claude_command)?.context("未找到 Claude Code CLI")?;
 
         let claude_cli = ClaudeCli::new(cli_command);
         let commands = vec![ClaudeCommand {
@@ -764,15 +775,15 @@ impl PluginManager {
         &self,
         claude_command: Option<String>,
     ) -> Result<Vec<SkillPluginUpgradeCandidate>> {
-        let cli_command = claude_command.unwrap_or_else(|| "claude".to_string());
-        if which(&cli_command).is_err() {
+        // 嵌套调用必须继续传递经过白名单约束的“命令名”，不能把 which()
+        // 返回的绝对路径再次送入公开边界验证。
+        let nested_claude_command = claude_command.clone();
+        let Some(cli_command) = resolve_claude_command(claude_command)? else {
             return Ok(Vec::new());
-        }
+        };
 
         // 拉取 marketplaces（用于给出 marketplace add 的 repo 参数）
-        let marketplaces = self
-            .get_claude_marketplaces(Some(cli_command.clone()))
-            .await?;
+        let marketplaces = self.get_claude_marketplaces(nested_claude_command).await?;
         let mut marketplace_repo_by_name: HashMap<String, (Option<String>, Option<String>)> =
             HashMap::new();
         for mp in marketplaces {
@@ -1271,9 +1282,8 @@ impl PluginManager {
             .context("无法解析 marketplace repo")?;
         let marketplace_name = plugin.marketplace_name.clone();
 
-        let cli_command = claude_command.unwrap_or_else(|| "claude".to_string());
-        if which(&cli_command).is_err() {
-            let mut message = format!("未找到 Claude Code CLI: {}", cli_command);
+        let Some(cli_command) = resolve_claude_command(claude_command)? else {
+            let mut message = "未找到 Claude Code CLI".to_string();
             if which("codex").is_ok() {
                 message.push_str("\n检测到 Codex，但该流程仅支持 Claude Code Plugin。");
             }
@@ -1281,7 +1291,7 @@ impl PluginManager {
                 message.push_str("\n检测到 OpenCode，但该流程仅支持 Claude Code Plugin。");
             }
             anyhow::bail!(message);
-        }
+        };
         let claude_cli = ClaudeCli::new(cli_command);
 
         // 构建命令：1. marketplace add，2. 只安装选中的单个 plugin
@@ -1443,10 +1453,8 @@ impl PluginManager {
             anyhow::bail!("该插件尚未安装");
         }
 
-        let cli_command = claude_command.unwrap_or_else(|| "claude".to_string());
-        if which(&cli_command).is_err() {
-            anyhow::bail!("未找到 Claude Code CLI: {}", cli_command);
-        }
+        let cli_command =
+            resolve_claude_command(claude_command)?.context("未找到 Claude Code CLI")?;
         let claude_cli = ClaudeCli::new(cli_command);
 
         let commands = vec![ClaudeCommand {
@@ -1496,13 +1504,14 @@ impl PluginManager {
         marketplace_repo: &str,
         claude_command: Option<String>,
     ) -> Result<MarketplaceRemoveResult> {
-        let cli_command = claude_command.unwrap_or_else(|| "claude".to_string());
-        if which(&cli_command).is_err() {
-            anyhow::bail!("未找到 Claude Code CLI: {}", cli_command);
-        }
+        // 保留白名单允许的裸命令名供嵌套 API 使用；cli_command 是仅供本层
+        // ClaudeCli 执行的解析后绝对路径。
+        let nested_claude_command = claude_command.clone();
+        let cli_command =
+            resolve_claude_command(claude_command)?.context("未找到 Claude Code CLI")?;
 
         if let Err(e) = self
-            .sync_claude_installed_state(Some(cli_command.clone()))
+            .sync_claude_installed_state(nested_claude_command.clone())
             .await
         {
             log::warn!("同步 Claude plugins 状态失败（移除 marketplace 时）: {}", e);
@@ -1522,7 +1531,7 @@ impl PluginManager {
 
         for plugin in &installed_plugins {
             match self
-                .uninstall_plugin(&plugin.id, Some(cli_command.clone()))
+                .uninstall_plugin(&plugin.id, nested_claude_command.clone())
                 .await
             {
                 Ok(result) => {
@@ -1918,6 +1927,20 @@ fn strip_terminal_escapes(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_command_rejects_ipc_supplied_executable_paths() {
+        for command in [
+            "C:/tmp/claude.exe",
+            "../claude",
+            "powershell.exe",
+            "cmd /c claude",
+        ] {
+            let error = resolve_claude_command(Some(command.to_string()))
+                .expect_err("arbitrary executable must be rejected");
+            assert!(error.to_string().contains("CLAUDE_COMMAND_NOT_ALLOWED"));
+        }
+    }
 
     #[test]
     fn build_plugin_uninstall_args_includes_installed_scope() {

@@ -582,6 +582,7 @@ rules:
   hard_trigger: true
   patterns:
   - (>>|>)\s*\S*\.ssh/(?:authorized_keys|id_)
+  - (?i)\b(?:sudo\s+)?tee\s+(?:(?:-[A-Za-z]+|--(?:append|output-error(?:=\S+)?)|--)\s+)*\S*\.ssh/(?:authorized_keys|id_)
   description: SSH 密钥写入
   remediation: 检查SSH密钥写入操作，避免未授权访问
   cwe_id: CWE-506
@@ -1519,6 +1520,13 @@ rules:
   hard_trigger: true
   file_types:
   - .md
+  - .txt
+  - .html
+  - .svg
+  - .json
+  - .yaml
+  - .yml
+  - .toml
   patterns:
   - (?i)ignore\s+(?:all\s+)?(?:previous|prior|earlier)\s+(?:instructions|rules|prompts|guidelines)
   - (?i)disregard\s+(?:all\s+)?(?:previous|prior|earlier)\s+(?:instructions|rules)
@@ -1539,6 +1547,13 @@ rules:
   hard_trigger: true
   file_types:
   - .md
+  - .txt
+  - .html
+  - .svg
+  - .json
+  - .yaml
+  - .yml
+  - .toml
   patterns:
   - (?i)you\s+are\s+now\s+in\s+(?:unrestricted|debug|developer|admin|god|jailbreak)\s+mode
   - (?i)disable\s+(?:all\s+)?(?:safety|security|content|ethical)\s+(?:filters|checks|guidelines)
@@ -1559,6 +1574,13 @@ rules:
   hard_trigger: true
   file_types:
   - .md
+  - .txt
+  - .html
+  - .svg
+  - .json
+  - .yaml
+  - .yml
+  - .toml
   patterns:
   - (?i)bypass\s+(?:content|usage|safety)\s+policy
   - (?i)ignore\s+(?:safety|content|ethical)\s+(?:guidelines|restrictions|limits)
@@ -1580,6 +1602,13 @@ rules:
   hard_trigger: false
   file_types:
   - .md
+  - .txt
+  - .html
+  - .svg
+  - .json
+  - .yaml
+  - .yml
+  - .toml
   patterns:
   - (?i)reveal\s+(?:your|the)\s+system\s+(?:prompt|instructions|message)
   - (?i)show\s+me\s+(?:your|the)\s+system\s+(?:prompt|instructions)
@@ -1600,6 +1629,13 @@ rules:
   hard_trigger: true
   file_types:
   - .md
+  - .txt
+  - .html
+  - .svg
+  - .json
+  - .yaml
+  - .yml
+  - .toml
   patterns:
   - (?i)do\s+not\s+(?:tell|inform|mention|notify)\s+(?:the\s+)?user
   - (?i)hide\s+(?:this|that)\s+(?:action|operation|step|from)

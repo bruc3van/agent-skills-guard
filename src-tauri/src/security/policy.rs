@@ -405,8 +405,7 @@ const DEFAULT_POLICY_YAML: &str = include_str!("../../resources/security/policie
 
 /// 默认策略（启动时解析一次）
 static DEFAULT_POLICY: std::sync::LazyLock<ScanPolicy> = std::sync::LazyLock::new(|| {
-    serde_yaml::from_str(DEFAULT_POLICY_YAML)
-        .expect("Failed to parse embedded default policy YAML")
+    serde_yaml::from_str(DEFAULT_POLICY_YAML).expect("Failed to parse embedded default policy YAML")
 });
 
 impl ScanPolicy {
@@ -502,8 +501,7 @@ impl ScanPolicy {
                     seg.starts_with(ind.as_str()) && seg.as_bytes().get(ind_len) == Some(&b'-')
                 });
                 // 某段恰好等于 indicator（覆盖 docs/...、.../docs、.../docs/... 三种位置）
-                let has_exact_segment =
-                    multi_segment && segments.iter().any(|seg| *seg == ind);
+                let has_exact_segment = multi_segment && segments.iter().any(|seg| *seg == ind);
                 has_dash_prefix || has_exact_segment
             })
     }
@@ -526,8 +524,6 @@ impl ScanPolicy {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -536,7 +532,9 @@ mod tests {
     /// 两者漂移会让「默认策略」与「显式配置策略」对同一 skill 给出不同结论。
     #[test]
     fn test_installer_allowlist_matches_yaml() {
-        let from_yaml = &ScanPolicy::builtin_default().pipeline.known_installer_domains;
+        let from_yaml = &ScanPolicy::builtin_default()
+            .pipeline
+            .known_installer_domains;
         let from_default = default_known_installer_domains();
         assert_eq!(
             from_yaml, &from_default,
@@ -567,7 +565,8 @@ mod tests {
                 "{host} allows arbitrary user-published content and must not be allowlisted"
             );
             assert!(
-                !policy.targets_known_installer(&format!("curl https://{host}/x/pkg/install.sh | sh")),
+                !policy
+                    .targets_known_installer(&format!("curl https://{host}/x/pkg/install.sh | sh")),
                 "content served from {host} must not be downgraded"
             );
         }

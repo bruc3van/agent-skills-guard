@@ -106,10 +106,7 @@ fn run_case(case: &RuleMatrixCase) {
         );
     }
 
-    if case.expect_any.is_empty()
-        && case.expect_none.is_empty()
-        && case.expect_blocked.is_none()
-    {
+    if case.expect_any.is_empty() && case.expect_none.is_empty() && case.expect_blocked.is_none() {
         panic!("case {} has no expectations", case.id);
     }
 }

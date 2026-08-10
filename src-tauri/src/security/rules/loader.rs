@@ -29,7 +29,9 @@ fn compile_rule_regex(pattern: &str) -> Result<Regex> {
     if needs_multiline {
         builder.multi_line(true);
     }
-    builder.build().with_context(|| format!("Invalid regex pattern: {pattern}"))
+    builder
+        .build()
+        .with_context(|| format!("Invalid regex pattern: {pattern}"))
 }
 
 /// 加载并编译规则包
@@ -217,7 +219,10 @@ rules:
 
         let result = merge_rule_packs(first, second);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Duplicate rule ID"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Duplicate rule ID"));
     }
 
     #[test]
@@ -305,12 +310,14 @@ rules:
     fn test_all_rules_have_metadata_origin() {
         let rules = get_builtin_compiled_rules();
         for rule in rules {
-            let meta = rule.rule.metadata.as_ref().unwrap_or_else(|| {
-                panic!("Rule {} is missing metadata field", rule.id)
-            });
-            let meta_map = meta.as_mapping().unwrap_or_else(|| {
-                panic!("Rule {} metadata should be a mapping", rule.id)
-            });
+            let meta = rule
+                .rule
+                .metadata
+                .as_ref()
+                .unwrap_or_else(|| panic!("Rule {} is missing metadata field", rule.id));
+            let meta_map = meta
+                .as_mapping()
+                .unwrap_or_else(|| panic!("Rule {} metadata should be a mapping", rule.id));
             let origin = meta_map
                 .get(&serde_yaml::Value::String("origin".into()))
                 .unwrap_or_else(|| panic!("Rule {} missing metadata.origin", rule.id));
@@ -328,9 +335,11 @@ rules:
     fn test_cisco_parity_rules_have_source_ref() {
         let rules = get_builtin_compiled_rules();
         for rule in rules {
-            let meta = rule.rule.metadata.as_ref().unwrap_or_else(|| {
-                panic!("Rule {} missing metadata", rule.id)
-            });
+            let meta = rule
+                .rule
+                .metadata
+                .as_ref()
+                .unwrap_or_else(|| panic!("Rule {} missing metadata", rule.id));
             let meta_map = meta.as_mapping().unwrap();
             let origin = meta_map
                 .get(&serde_yaml::Value::String("origin".into()))
@@ -352,9 +361,11 @@ rules:
         let rules = get_builtin_compiled_rules();
         let valid_fp_risks = ["low", "medium", "high"];
         for rule in rules {
-            let meta = rule.rule.metadata.as_ref().unwrap_or_else(|| {
-                panic!("Rule {} missing metadata", rule.id)
-            });
+            let meta = rule
+                .rule
+                .metadata
+                .as_ref()
+                .unwrap_or_else(|| panic!("Rule {} missing metadata", rule.id));
             let meta_map = meta.as_mapping().unwrap();
             let fp_risk = meta_map
                 .get(&serde_yaml::Value::String("fp_risk".into()))
@@ -424,5 +435,4 @@ rules:
             }
         }
     }
-
 }

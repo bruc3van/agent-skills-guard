@@ -882,7 +882,6 @@ impl Database {
 
     /// 数据库迁移：添加缓存相关字段
     fn migrate_add_cache_fields(conn: &Connection) -> Result<()> {
-
         // 添加 cache_path 列
         let _ = conn.execute("ALTER TABLE repositories ADD COLUMN cache_path TEXT", []);
 
@@ -900,7 +899,6 @@ impl Database {
 
     /// 数据库迁移：添加安全扫描增强字段
     fn migrate_add_security_enhancement_fields(conn: &Connection) -> Result<()> {
-
         // 添加 security_level 列
         let _ = conn.execute("ALTER TABLE skills ADD COLUMN security_level TEXT", []);
 
@@ -918,7 +916,6 @@ impl Database {
 
     /// 数据库迁移：添加 local_paths 列,支持多个安装路径
     fn migrate_add_local_paths(conn: &Connection) -> Result<()> {
-
         // 添加 local_paths 列（JSON 数组格式）
         let _ = conn.execute("ALTER TABLE skills ADD COLUMN local_paths TEXT", []);
 
@@ -994,7 +991,6 @@ impl Database {
 
     /// 数据库迁移：添加 installed_commit_sha 列
     fn migrate_add_installed_commit_sha(conn: &Connection) -> Result<()> {
-
         // 添加 installed_commit_sha 列
         let _ = conn.execute(
             "ALTER TABLE skills ADD COLUMN installed_commit_sha TEXT",
@@ -1006,7 +1002,6 @@ impl Database {
 
     /// 数据库迁移：为 plugins 增加 Claude CLI 同步字段
     fn migrate_add_plugin_claude_fields(conn: &Connection) -> Result<()> {
-
         let _ = conn.execute("ALTER TABLE plugins ADD COLUMN claude_id TEXT", []);
         let _ = conn.execute("ALTER TABLE plugins ADD COLUMN installed_version TEXT", []);
         let _ = conn.execute("ALTER TABLE plugins ADD COLUMN discovery_source TEXT", []);
@@ -1041,7 +1036,6 @@ impl Database {
 
     /// 数据库迁移：为 plugins 增加 marketplace/plugin 安装指令字段
     fn migrate_add_plugin_install_commands(conn: &Connection) -> Result<()> {
-
         let _ = conn.execute(
             "ALTER TABLE plugins ADD COLUMN marketplace_add_command TEXT",
             [],
