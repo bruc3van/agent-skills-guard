@@ -5,6 +5,7 @@ use tauri::Manager;
 pub const FEATURED_MARKETPLACES_REMOTE_URL: &str =
     "https://raw.githubusercontent.com/bruc3van/agent-skills-guard/main/featured-marketplace.yaml";
 const DEFAULT_FEATURED_MARKETPLACES_YAML: &str = include_str!("../../../featured-marketplace.yaml");
+const MAX_REMOTE_YAML_BYTES: usize = 2 * 1024 * 1024;
 
 fn featured_marketplaces_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let app_dir = app
@@ -31,7 +32,7 @@ pub fn remove_cache_file(cache_path: &PathBuf) {
 pub async fn download_remote_yaml(url: &str) -> Result<String, String> {
     use std::time::Duration;
 
-    reqwest::Client::builder()
+    let mut response = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?
@@ -41,10 +42,38 @@ pub async fn download_remote_yaml(url: &str) -> Result<String, String> {
         .await
         .map_err(|e| format!("Failed to download: {}", e))?
         .error_for_status()
-        .map_err(|e| format!("Failed to download: {}", e))?
-        .text()
+        .map_err(|e| format!("Failed to download: {}", e))?;
+
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_REMOTE_YAML_BYTES as u64)
+    {
+        return Err(format!(
+            "Remote YAML exceeds {} byte limit",
+            MAX_REMOTE_YAML_BYTES
+        ));
+    }
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|e| format!("Failed to read content: {}", e))
+        .map_err(|e| format!("Failed to read content: {}", e))?
+    {
+        let next_len = body
+            .len()
+            .checked_add(chunk.len())
+            .ok_or_else(|| "Remote YAML size overflow".to_string())?;
+        if next_len > MAX_REMOTE_YAML_BYTES {
+            return Err(format!(
+                "Remote YAML exceeds {} byte limit",
+                MAX_REMOTE_YAML_BYTES
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    String::from_utf8(body).map_err(|e| format!("Remote YAML is not valid UTF-8: {}", e))
 }
 
 /// 将 YAML 内容原子写入缓存文件。

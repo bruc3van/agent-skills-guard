@@ -9,9 +9,33 @@ use crate::services::plugin_manager::{
 };
 use chrono::Utc;
 use rayon::prelude::*;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use tauri::State;
+
+/// PluginManager 的准备/CLI 操作混合了异步 I/O、同步安全扫描和同步 PTY。
+/// 将整个 future 固定在 blocking 线程，避免扫描或等待 CLI 时占住 Tokio worker。
+async fn with_plugin_manager_async_blocking<T, F>(state: &AppState, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: for<'a> FnOnce(
+            &'a crate::services::PluginManager,
+        ) -> Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>
+        + Send
+        + 'static,
+{
+    let plugin_manager = Arc::clone(&state.plugin_manager);
+    let runtime = tokio::runtime::Handle::try_current()
+        .map_err(|e| format!("[RUNTIME_UNAVAILABLE] Tokio runtime unavailable: {e}"))?;
+    tokio::task::spawn_blocking(move || {
+        let manager = plugin_manager.blocking_lock();
+        runtime.block_on(work(&manager))
+    })
+    .await
+    .map_err(|e| format!("[TASK_JOIN_ERROR] Task join error: {}", e))?
+}
 
 /// 获取所有 plugins
 #[tauri::command]
@@ -20,30 +44,40 @@ pub async fn get_plugins(
     app: tauri::AppHandle,
     locale: Option<String>,
 ) -> Result<Vec<Plugin>, String> {
-    let locale = validate_locale(locale.as_deref().unwrap_or("en"));
+    let locale = validate_locale(locale.as_deref().unwrap_or("en")).to_string();
     let featured_config = featured_marketplaces::get_featured_marketplaces(app)
         .await
         .ok();
 
     // 精选市场同步：持锁时间尽量短，同步完立即释放锁再做下一步
-    if let Some(config) = &featured_config {
-        let manager = state.plugin_manager.lock().await;
-        if let Err(e) = manager
-            .sync_featured_marketplaces(config, &locale, None, true)
-            .await
+    if let Some(config) = featured_config {
+        let sync_locale = locale.clone();
+        if let Err(e) = with_plugin_manager_async_blocking(&state, move |manager| {
+            Box::pin(async move {
+                manager
+                    .sync_featured_marketplaces(&config, &sync_locale, None, true)
+                    .await
+                    .map_err(|error| error.to_string())
+            })
+        })
+        .await
         {
             log::warn!("同步精选插件清单失败: {}", e);
         }
-        // manager 在此处 drop，释放锁
     }
 
     // Claude CLI 状态同步：独立持锁，不与精选市场同步串联
+    if let Err(e) = with_plugin_manager_async_blocking(&state, |manager| {
+        Box::pin(async move {
+            manager
+                .sync_claude_installed_state(None)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    })
+    .await
     {
-        let manager = state.plugin_manager.lock().await;
-        if let Err(e) = manager.sync_claude_installed_state(None).await {
-            log::warn!("同步 Claude plugins 状态失败: {}", e);
-        }
-        // manager 在此处 drop，释放锁
+        log::warn!("同步 Claude plugins 状态失败: {}", e);
     }
 
     state.db.get_plugins().map_err(|e| e.to_string())
@@ -62,16 +96,20 @@ pub async fn sync_featured_marketplace_plugins(
     app: tauri::AppHandle,
     locale: String,
 ) -> Result<Vec<Plugin>, String> {
-    let locale = validate_locale(&locale);
+    let locale = validate_locale(&locale).to_string();
     let featured_config = featured_marketplaces::get_featured_marketplaces(app)
         .await
         .map_err(|e| e.to_string())?;
 
-    let manager = state.plugin_manager.lock().await;
-    manager
-        .sync_featured_marketplaces(&featured_config, &locale, None, false)
-        .await
-        .map_err(|e| e.to_string())?;
+    with_plugin_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .sync_featured_marketplaces(&featured_config, &locale, None, false)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await?;
 
     state.db.get_plugins().map_err(|e| e.to_string())
 }
@@ -83,11 +121,15 @@ pub async fn prepare_plugin_installation(
     plugin_id: String,
     locale: String,
 ) -> Result<SecurityReport, String> {
-    let manager = state.plugin_manager.lock().await;
-    manager
-        .prepare_plugin_installation(&plugin_id, &locale)
-        .await
-        .map_err(|e| e.to_string())
+    with_plugin_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .prepare_plugin_installation(&plugin_id, &locale)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 确认安装 plugin：驱动 Claude Code CLI 执行安装
@@ -97,11 +139,15 @@ pub async fn confirm_plugin_installation(
     plugin_id: String,
     claude_command: Option<String>,
 ) -> Result<PluginInstallResult, String> {
-    let manager = state.plugin_manager.lock().await;
-    manager
-        .confirm_plugin_installation(&plugin_id, claude_command)
-        .await
-        .map_err(|e| e.to_string())
+    with_plugin_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .confirm_plugin_installation(&plugin_id, claude_command)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 取消 plugin 安装准备状态
@@ -123,11 +169,15 @@ pub async fn uninstall_plugin(
     plugin_id: String,
     claude_command: Option<String>,
 ) -> Result<PluginUninstallResult, String> {
-    let manager = state.plugin_manager.lock().await;
-    manager
-        .uninstall_plugin(&plugin_id, claude_command)
-        .await
-        .map_err(|e| e.to_string())
+    with_plugin_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .uninstall_plugin(&plugin_id, claude_command)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 移除整个 marketplace（会自动卸载该 marketplace 的所有 plugins）
@@ -138,11 +188,15 @@ pub async fn remove_marketplace(
     marketplace_repo: String,
     claude_command: Option<String>,
 ) -> Result<MarketplaceRemoveResult, String> {
-    let manager = state.plugin_manager.lock().await;
-    manager
-        .remove_marketplace(&marketplace_name, &marketplace_repo, claude_command)
-        .await
-        .map_err(|e| e.to_string())
+    with_plugin_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .remove_marketplace(&marketplace_name, &marketplace_repo, claude_command)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 获取 Claude Code 已配置的 marketplaces（来自 CLI）
@@ -151,11 +205,15 @@ pub async fn get_claude_marketplaces(
     state: State<'_, AppState>,
     claude_command: Option<String>,
 ) -> Result<Vec<ClaudeMarketplace>, String> {
-    let manager = state.plugin_manager.lock().await;
-    manager
-        .get_claude_marketplaces(claude_command)
-        .await
-        .map_err(|e| e.to_string())
+    with_plugin_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .get_claude_marketplaces(claude_command)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 检查已安装 plugins 的更新（来自 CLI）
@@ -165,11 +223,15 @@ pub async fn check_plugins_updates(
     state: State<'_, AppState>,
     claude_command: Option<String>,
 ) -> Result<Vec<(String, String)>, String> {
-    let manager = state.plugin_manager.lock().await;
-    manager
-        .check_plugins_updates(claude_command)
-        .await
-        .map_err(|e| e.to_string())
+    with_plugin_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .check_plugins_updates(claude_command)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 更新单个 plugin（调用 Claude Code CLI）
@@ -179,11 +241,15 @@ pub async fn update_plugin(
     plugin_id: String,
     claude_command: Option<String>,
 ) -> Result<PluginUpdateResult, String> {
-    let manager = state.plugin_manager.lock().await;
-    manager
-        .update_plugin(&plugin_id, claude_command)
-        .await
-        .map_err(|e| e.to_string())
+    with_plugin_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .update_plugin(&plugin_id, claude_command)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 检查 marketplaces 的更新（基于本地安装目录的 git HEAD 对比）
@@ -193,11 +259,15 @@ pub async fn check_marketplaces_updates(
     state: State<'_, AppState>,
     claude_command: Option<String>,
 ) -> Result<Vec<(String, String)>, String> {
-    let manager = state.plugin_manager.lock().await;
-    manager
-        .check_marketplaces_updates(claude_command)
-        .await
-        .map_err(|e| e.to_string())
+    with_plugin_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .check_marketplaces_updates(claude_command)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 更新单个 marketplace（调用 Claude Code CLI）
@@ -207,11 +277,15 @@ pub async fn update_marketplace(
     marketplace_name: String,
     claude_command: Option<String>,
 ) -> Result<MarketplaceUpdateResult, String> {
-    let manager = state.plugin_manager.lock().await;
-    manager
-        .update_marketplace(&marketplace_name, claude_command)
-        .await
-        .map_err(|e| e.to_string())
+    with_plugin_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .update_marketplace(&marketplace_name, claude_command)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 检测已安装 skills 中可升级为 Claude Code Plugin 的候选项
@@ -220,11 +294,15 @@ pub async fn get_skill_plugin_upgrade_candidates(
     state: State<'_, AppState>,
     claude_command: Option<String>,
 ) -> Result<Vec<SkillPluginUpgradeCandidate>, String> {
-    let manager = state.plugin_manager.lock().await;
-    manager
-        .get_skill_plugin_upgrade_candidates(claude_command)
-        .await
-        .map_err(|e| e.to_string())
+    with_plugin_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .get_skill_plugin_upgrade_candidates(claude_command)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 安全扫描所有已安装 plugins（读取 Claude CLI 提供的 installPath）
@@ -240,11 +318,17 @@ pub async fn scan_all_installed_plugins(
     let locale = validate_locale(&locale);
 
     // 先同步 Claude CLI 的安装状态，确保 installPath 最新
+    if let Err(e) = with_plugin_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .sync_claude_installed_state(claude_command)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    })
+    .await
     {
-        let manager = state.plugin_manager.lock().await;
-        if let Err(e) = manager.sync_claude_installed_state(claude_command).await {
-            log::warn!("同步 Claude plugins 状态失败（将继续扫描 DB 记录）: {}", e);
-        }
+        log::warn!("同步 Claude plugins 状态失败（将继续扫描 DB 记录）: {}", e);
     }
 
     let parallelism = crate::commands::clamp_scan_parallelism(scan_parallelism);
@@ -343,8 +427,16 @@ pub async fn scan_installed_plugin(
 
     // 尝试同步 installPath（不强制成功）
     if !skip_sync.unwrap_or(false) {
-        let manager = state.plugin_manager.lock().await;
-        if let Err(e) = manager.sync_claude_installed_state(claude_command).await {
+        if let Err(e) = with_plugin_manager_async_blocking(&state, move |manager| {
+            Box::pin(async move {
+                manager
+                    .sync_claude_installed_state(claude_command)
+                    .await
+                    .map_err(|error| error.to_string())
+            })
+        })
+        .await
+        {
             log::debug!("同步 Claude plugins 状态失败: {}", e);
         }
     }

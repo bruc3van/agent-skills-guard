@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { openPath } from "@tauri-apps/plugin-opener";
 import { formatRepositoryTag, formatFailurePreview } from "../lib/utils";
 import { CyberSelect, type CyberSelectOption } from "./ui/CyberSelect";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -2299,11 +2298,7 @@ function SkillCard({
                     <button
                       onClick={async () => {
                         try {
-                          try {
-                            await api.openSkillDirectory(path);
-                          } catch {
-                            await openPath(path);
-                          }
+                          await api.openSkillDirectory(path);
                           appToast.success(t("skills.folder.opened"), { duration: 5000 });
                         } catch (error: any) {
                           appToast.error(
@@ -2470,11 +2465,7 @@ function InstalledPluginCard({
               <button
                 onClick={async () => {
                   try {
-                    try {
-                      await api.openSkillDirectory(installPath);
-                    } catch {
-                      await openPath(installPath);
-                    }
+                    await api.openSkillDirectory(installPath);
                     appToast.success(t("skills.folder.opened"), { duration: 5000 });
                   } catch (error: any) {
                     appToast.error(

@@ -94,27 +94,12 @@ const CISCO_PARITY_RULES_YAML: &str =
     include_str!("../../../resources/security/packs/core/signatures/cisco_parity_signatures.yaml");
 
 fn load_merged_builtin_rules() -> Vec<CompiledYamlRule> {
-    let rules = match load_rule_pack(CORE_RULES_YAML) {
-        Ok(rules) => rules,
-        Err(err) => {
-            eprintln!("Failed to compile built-in YAML rule pack: {err:#}");
-            return Vec::new();
-        }
-    };
-    let cisco = match load_rule_pack(CISCO_PARITY_RULES_YAML) {
-        Ok(rules) => rules,
-        Err(err) => {
-            eprintln!("Failed to compile Cisco parity YAML rule pack: {err:#}");
-            return rules;
-        }
-    };
-    match merge_rule_packs(rules.clone(), cisco) {
-        Ok(merged) => merged,
-        Err(err) => {
-            eprintln!("Failed to merge Cisco parity YAML rule pack: {err:#}");
-            rules
-        }
-    }
+    let rules = load_rule_pack(CORE_RULES_YAML)
+        .unwrap_or_else(|err| panic!("Failed to compile built-in YAML rule pack: {err:#}"));
+    let cisco = load_rule_pack(CISCO_PARITY_RULES_YAML)
+        .unwrap_or_else(|err| panic!("Failed to compile Cisco parity YAML rule pack: {err:#}"));
+    merge_rule_packs(rules, cisco)
+        .unwrap_or_else(|err| panic!("Failed to merge built-in YAML rule packs: {err:#}"))
 }
 
 fn merge_rule_packs(

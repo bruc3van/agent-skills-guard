@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import { safeInvoke } from "./api-error";
+import { safeInvoke, safeInvokeValidated } from "./api-error";
+import {
+  securityReportSchema,
+  skillScanResultSchema,
+  skillUpdatePreparationSchema,
+} from "./ipc-schemas";
 import type {
   Repository,
   ImportFeaturedRepositoriesResult,
@@ -65,15 +70,14 @@ export const api = {
 
   async prepareSkillInstallation(
     skillId: string,
-    locale: string,
-    allowPartialScan = false
+    locale: string
   ): Promise<SecurityReport> {
-    return safeInvoke(
-      invoke<SecurityReport>("prepare_skill_installation", {
+    return safeInvokeValidated(
+      invoke<unknown>("prepare_skill_installation", {
         skillId,
         locale,
-        allowPartialScan,
-      })
+      }),
+      securityReportSchema
     );
   },
 
@@ -106,18 +110,19 @@ export const api = {
   },
 
   async getScanResults(): Promise<SkillScanResult[]> {
-    return safeInvoke(invoke<SkillScanResult[]>("get_scan_results"));
+    return safeInvokeValidated(invoke<unknown>("get_scan_results"), skillScanResultSchema.array());
   },
 
   async scanAllInstalledSkills(
     locale: string,
     scanParallelism?: number
   ): Promise<SkillScanResult[]> {
-    return safeInvoke(
-      invoke<SkillScanResult[]>("scan_all_installed_skills", {
+    return safeInvokeValidated(
+      invoke<unknown>("scan_all_installed_skills", {
         locale,
         scanParallelism: scanParallelism ?? null,
-      })
+      }),
+      skillScanResultSchema.array()
     );
   },
 
@@ -202,8 +207,9 @@ export const api = {
   },
 
   async prepareSkillUpdate(skillId: string, locale: string): Promise<[SecurityReport, string[]]> {
-    return safeInvoke(
-      invoke<[SecurityReport, string[]]>("prepare_skill_update", { skillId, locale })
+    return safeInvokeValidated(
+      invoke<unknown>("prepare_skill_update", { skillId, locale }),
+      skillUpdatePreparationSchema
     );
   },
 
@@ -236,7 +242,10 @@ export const api = {
   },
 
   async preparePluginInstallation(pluginId: string, locale: string): Promise<SecurityReport> {
-    return safeInvoke(invoke<SecurityReport>("prepare_plugin_installation", { pluginId, locale }));
+    return safeInvokeValidated(
+      invoke<unknown>("prepare_plugin_installation", { pluginId, locale }),
+      securityReportSchema
+    );
   },
 
   async confirmPluginInstallation(

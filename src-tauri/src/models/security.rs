@@ -281,6 +281,12 @@ pub struct SecurityIssue {
     /// Finding 产品展示维度（Security/Auditability/Structure）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finding_kind: Option<String>,
+    /// 扫描当时已经应用置信度、文档降级等策略后的实际评分权重。
+    ///
+    /// 跨技能分析追加 finding 后会仅凭 issues 重算分数，因此必须把显式的 0 权重
+    /// 一并持久化，避免重新回退到 YAML 原始权重。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_weight: Option<i32>,
 }
 
 impl Default for SecurityIssue {
@@ -299,6 +305,7 @@ impl Default for SecurityIssue {
             threat_category: None,
             same_path_other_rule_ids: None,
             finding_kind: None,
+            effective_weight: None,
         }
     }
 }

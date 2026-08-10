@@ -9,14 +9,9 @@
     "process:default",
     "updater:default",
     "store:default",
-    "opener:default",
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
-    "core:window:allow-start-dragging",
-    {
-      "identifier": "opener:allow-open-path",
-      "allow": [{ "path": "**" }]
-    }
+    "core:window:allow-start-dragging"
   ]
 }

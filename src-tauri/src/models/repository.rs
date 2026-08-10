@@ -36,6 +36,32 @@ impl Repository {
         }
     }
 
+    /// 将用户常见的 GitHub 仓库写法规范化为 HTTPS URL，并立即验证仓库路径。
+    pub fn normalize_github_url(url: &str) -> Result<String> {
+        let trimmed = url.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        let prefixes = [
+            "https://www.github.com/",
+            "http://www.github.com/",
+            "https://github.com/",
+            "http://github.com/",
+            "www.github.com/",
+            "github.com/",
+        ];
+        let path = prefixes
+            .iter()
+            .find_map(|prefix| lower.starts_with(prefix).then(|| &trimmed[prefix.len()..]))
+            .ok_or_else(|| {
+                anyhow!(
+                    "REPOSITORY_URL_UNSUPPORTED: 仅支持 GitHub 仓库，请检查地址或删除旧记录后重新添加: {}",
+                    url
+                )
+            })?;
+        let normalized = format!("https://github.com/{path}");
+        let (owner, repo) = Self::from_github_url(&normalized)?;
+        Ok(format!("https://github.com/{owner}/{repo}"))
+    }
+
     /// 从 GitHub URL 提取仓库信息
     /// 支持格式:
     ///   https://github.com/owner/repo
@@ -44,32 +70,58 @@ impl Repository {
     ///   https://github.com/owner/repo/tree/branch
     ///   https://github.com/owner/repo/blob/branch/file
     pub fn from_github_url(url: &str) -> Result<(String, String)> {
-        let url = url.trim_end_matches('/');
+        let original = url;
+        let path = url
+            .trim()
+            .strip_prefix("https://github.com/")
+            .ok_or_else(|| {
+                anyhow!(
+                    "REPOSITORY_URL_UNSUPPORTED: 仅支持 GitHub 仓库，请删除旧记录后重新添加: {}",
+                    original
+                )
+            })?;
+        let mut parts = path.trim_end_matches('/').split('/');
+        let owner = parts.next().unwrap_or_default();
+        let repo = parts.next().unwrap_or_default().trim_end_matches(".git");
+        let suffix = parts.next();
 
-        // 去掉 /tree/... 或 /blob/... 后缀（GitHub 页面分享的 URL 格式）
-        let url = if let Some(pos) = url.find("/tree/") {
-            &url[..pos]
-        } else if let Some(pos) = url.find("/blob/") {
-            &url[..pos]
-        } else {
-            url
-        };
-
-        let parts: Vec<&str> = url.split('/').collect();
-
-        if parts.len() < 2 {
-            return Err(anyhow!("Invalid GitHub URL: {}", url));
+        if !valid_github_owner(owner) || !valid_github_repo(repo) {
+            return Err(anyhow!(
+                "Invalid GitHub owner or repository name: {}",
+                original
+            ));
         }
 
-        let owner = parts[parts.len() - 2].to_string();
-        let repo = parts[parts.len() - 1].trim_end_matches(".git").to_string();
-
-        if owner.is_empty() || repo.is_empty() {
-            return Err(anyhow!("Invalid GitHub URL (empty owner or repo): {}", url));
+        // 只接受仓库根 URL，或 GitHub 标准的 tree/blob 页面 URL。这样 owner/repo
+        // 不会从任意域名或形似路径的字符串中被“倒数两段”误提取出来。
+        if let Some(kind) = suffix {
+            if !matches!(kind, "tree" | "blob") || parts.next().is_none() {
+                return Err(anyhow!("Invalid GitHub repository URL path: {}", original));
+            }
         }
 
-        Ok((owner, repo))
+        Ok((owner.to_string(), repo.to_string()))
     }
+}
+
+fn valid_github_owner(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 39
+        && !value.starts_with('-')
+        && !value.ends_with('-')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+fn valid_github_repo(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 100
+        && value != "."
+        && value != ".."
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 #[cfg(test)]
@@ -114,6 +166,39 @@ mod tests {
         let (owner, repo) = Repository::from_github_url("https://github.com/owner/repo/").unwrap();
         assert_eq!(owner, "owner");
         assert_eq!(repo, "repo");
+    }
+
+    #[test]
+    fn from_github_url_rejects_other_hosts_and_path_segments() {
+        assert!(Repository::from_github_url("https://example.com/owner/repo").is_err());
+        assert!(Repository::from_github_url("https://github.com/../repo").is_err());
+        assert!(Repository::from_github_url("https://github.com/owner/repo%2Fother").is_err());
+        assert!(Repository::from_github_url("https://github.com/owner/repo/issues").is_err());
+    }
+
+    #[test]
+    fn normalize_github_url_accepts_common_user_input() {
+        assert_eq!(
+            Repository::normalize_github_url("github.com/owner/repo").unwrap(),
+            "https://github.com/owner/repo"
+        );
+        assert_eq!(
+            Repository::normalize_github_url("http://www.github.com/owner/repo.git").unwrap(),
+            "https://github.com/owner/repo"
+        );
+        assert_eq!(
+            Repository::normalize_github_url(
+                "HTTPS://GITHUB.COM/owner/repo/tree/main/skills/example/"
+            )
+            .unwrap(),
+            "https://github.com/owner/repo"
+        );
+        assert!(
+            Repository::normalize_github_url("https://example.com/owner/repo")
+                .unwrap_err()
+                .to_string()
+                .contains("REPOSITORY_URL_UNSUPPORTED")
+        );
     }
 }
 

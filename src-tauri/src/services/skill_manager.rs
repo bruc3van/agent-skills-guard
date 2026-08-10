@@ -143,6 +143,33 @@ fn resolve_staging_dir(skill: &Skill) -> Option<PathBuf> {
         })
 }
 
+fn ensure_staging_path_is_contained(path: &Path) -> Result<PathBuf> {
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("STAGING_PATH_RESOLVE_FAILED: {:?}", path))?;
+    let cache_root = dirs::cache_dir()
+        .context("CACHE_DIR_UNAVAILABLE")?
+        .join("agent-skills-guard");
+    let allowed_roots = [cache_root.join("repositories"), cache_root.join("staging")];
+
+    let allowed = allowed_roots.into_iter().any(|root| {
+        root.canonicalize()
+            .map(|canonical_root| canonical.starts_with(canonical_root))
+            .unwrap_or(false)
+    });
+    // 单元测试使用隔离的系统临时目录，不触碰用户缓存。
+    #[cfg(test)]
+    let allowed = allowed
+        || std::env::temp_dir()
+            .canonicalize()
+            .map(|root| canonical.starts_with(root))
+            .unwrap_or(false);
+    if !allowed {
+        anyhow::bail!("STAGING_PATH_NOT_ALLOWED: staging 路径不在应用缓存目录内")
+    }
+    Ok(canonical)
+}
+
 fn normalize_path_for_compare(path: &Path) -> String {
     let mut normalized = path.to_string_lossy().replace('\\', "/");
     while normalized.len() > 1 && normalized.ends_with('/') {
@@ -786,8 +813,7 @@ impl SkillManager {
         allow_partial_scan: bool,
     ) -> Result<()> {
         let locale = rust_i18n::locale();
-        self.prepare_skill_installation(skill_id, &locale, allow_partial_scan)
-            .await?;
+        self.prepare_skill_installation(skill_id, &locale).await?;
         self.confirm_skill_installation(skill_id, install_path, allow_partial_scan, Vec::new())?;
         Ok(())
     }
@@ -798,7 +824,6 @@ impl SkillManager {
         &self,
         skill_id: &str,
         locale: &str,
-        allow_partial_scan: bool,
     ) -> Result<crate::models::security::SecurityReport> {
         use anyhow::Context;
 
@@ -892,7 +917,9 @@ impl SkillManager {
         // 保存安全信息到数据库，但不标记为已安装
         self.db.save_skill(&skill)?;
 
-        self.enforce_installable_report(&scan_report, "准备安装技能", allow_partial_scan)?;
+        // prepare 阶段必须把 partial_scan 报告返回给 UI，用户才能看到跳过文件并点击
+        // “谨慎安装”。真正写入前的 confirm 会重新扫描，并要求显式 allow_partial_scan。
+        self.enforce_installable_report(&scan_report, "准备安装技能", true)?;
 
         log::info!("Skill prepared successfully, scanned from cache, awaiting user confirmation");
         Ok(scan_report)
@@ -1222,17 +1249,19 @@ impl SkillManager {
             .context("SKILL_NOT_FOUND")?;
 
         // 获取缓存中的技能路径（优先从 staging_path 读取，向后兼容 __cache__: 前缀）
-        let cache_dir = if let Some(staging) = &skill.staging_path {
-            PathBuf::from(staging)
-        } else if let Some(local_path) = &skill.local_path {
-            if let Some(path) = local_path.strip_prefix(CACHE_LOCAL_PATH_PREFIX) {
-                PathBuf::from(path)
-            } else {
-                PathBuf::from(local_path)
-            }
-        } else {
-            anyhow::bail!("SKILL_NO_INSTALL_PATH");
-        };
+        let cache_dir = skill
+            .staging_path
+            .as_deref()
+            .map(PathBuf::from)
+            .or_else(|| {
+                skill
+                    .local_path
+                    .as_deref()
+                    .and_then(|path| path.strip_prefix(CACHE_LOCAL_PATH_PREFIX))
+                    .map(PathBuf::from)
+            })
+            .context("SKILL_NOT_PREPARED: 请重新执行准备安装")?;
+        let cache_dir = ensure_staging_path_is_contained(&cache_dir)?;
 
         // 优先使用 prepare 阶段写入的路径感知 SHA；缺失时回退到仓库 HEAD（向后兼容
         // 旧路径与未经过 prepare 的极端情况）。
@@ -1685,6 +1714,18 @@ impl SkillManager {
             }
         }
 
+        // 文件系统删除失败时必须保留原有安装元数据，否则 UI/数据库会把仍然存在或
+        // 仅被部分删除的路径误报为已卸载，后续也失去重试和修复入口。
+        if !errors.is_empty() {
+            log::warn!(
+                "Skill path uninstall failed; preserving metadata: {} from {}",
+                skill.name,
+                path_to_remove
+            );
+            self.invalidate_installed_cache();
+            anyhow::bail!("UNINSTALL_PATH_PARTIAL_FAILURE: {}", errors.join("; "))
+        }
+
         // 从 local_paths 中移除该路径（使用规范化比较，兼容 Windows 大小写/分隔符差异）
         let normalized_remove = normalize_path_for_compare(&path);
         if let Some(mut paths) = skill.local_paths.clone() {
@@ -1714,23 +1755,13 @@ impl SkillManager {
 
         self.db.save_skill(&skill).context("更新数据库失败")?;
 
-        if errors.is_empty() {
-            log::info!(
-                "Skill path uninstalled: {} from {}",
-                skill.name,
-                path_to_remove
-            );
-            self.invalidate_installed_cache();
-            Ok(())
-        } else {
-            log::warn!(
-                "Skill path uninstall completed with errors: {} from {}",
-                skill.name,
-                path_to_remove
-            );
-            self.invalidate_installed_cache();
-            anyhow::bail!("UNINSTALL_PATH_PARTIAL_FAILURE: {}", errors.join("; "))
-        }
+        log::info!(
+            "Skill path uninstalled: {} from {}",
+            skill.name,
+            path_to_remove
+        );
+        self.invalidate_installed_cache();
+        Ok(())
     }
 
     /// 获取所有 skills
@@ -2709,6 +2740,7 @@ impl SkillManager {
         if !staging_dir.exists() {
             anyhow::bail!("STAGING_DIR_NOT_FOUND");
         }
+        let staging_dir = ensure_staging_path_is_contained(&staging_dir)?;
 
         // 获取原安装路径（从 local_paths）
         let install_paths = skill.local_paths.as_ref().context("无法获取安装路径")?;
@@ -3044,8 +3076,13 @@ impl SkillManager {
         // 只删除该 skill 自身的 staging 目录，不上溯到父/祖父目录，
         // 避免误删同一仓库其他 skill 的 staging 数据。
         if staging_dir.exists() {
+            let staging_dir = ensure_staging_path_is_contained(&staging_dir)?;
             std::fs::remove_dir_all(&staging_dir)?;
             log::info!("已删除 staging 目录: {:?}", staging_dir);
+        } else {
+            // 目录可能已被用户、清理任务或崩溃恢复流程移除。取消操作仍需幂等地
+            // 清除数据库状态，否则 skill 会一直显示为“已准备更新”。
+            log::warn!("staging 目录已不存在，继续清理更新状态: {:?}", staging_dir);
         }
 
         // 新流程下 local_path 已是真实安装路径；旧 __staging__: 记录才需要恢复。
@@ -4245,6 +4282,40 @@ mod tests {
         assert_eq!(reloaded.local_path.as_deref(), Some(active_path.as_str()));
         assert_eq!(reloaded.staging_path, None);
         assert!(!staging_dir.exists());
+    }
+
+    #[test]
+    fn cancel_skill_update_clears_state_when_staging_directory_is_already_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("test.db")).unwrap());
+        let manager = super::SkillManager::new(Arc::clone(&db));
+        let install_dir = temp.path().join("installed").join("example");
+        let missing_staging_dir = temp.path().join("staging").join("already-removed");
+        std::fs::create_dir_all(&install_dir).unwrap();
+
+        let install_path = install_dir.to_string_lossy().to_string();
+        let mut skill = crate::models::Skill::new(
+            "example".to_string(),
+            "https://github.com/owner/repo".to_string(),
+            ".".to_string(),
+        );
+        skill.id = "skill-cancel-missing-staging".to_string();
+        skill.installed = true;
+        skill.local_path = Some(install_path.clone());
+        skill.local_paths = Some(vec![install_path.clone()]);
+        skill.staging_path = Some(missing_staging_dir.to_string_lossy().to_string());
+        db.save_skill(&skill).unwrap();
+
+        manager.cancel_skill_update(&skill.id).unwrap();
+
+        let reloaded = db
+            .get_skills()
+            .unwrap()
+            .into_iter()
+            .find(|candidate| candidate.id == skill.id)
+            .unwrap();
+        assert_eq!(reloaded.local_path.as_deref(), Some(install_path.as_str()));
+        assert_eq!(reloaded.staging_path, None);
     }
 
     #[test]

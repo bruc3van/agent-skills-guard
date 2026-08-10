@@ -5,11 +5,18 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build (for example, v1.3.6)"
+        required: true
+        type: string
 
 jobs:
   release:
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     strategy:
       fail-fast: false
       matrix:
@@ -21,23 +28,61 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: lts/*
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Validate release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)*$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          if ! git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG^{commit}" >/dev/null; then
+            echo "Release ref is not an existing Git tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          VERSION="${RELEASE_TAG#v}"
+          PACKAGE_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
+          TAURI_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json', 'utf8')).version")"
+          CARGO_VERSION="$(awk '
+            $0 == "[package]" { in_package=1; next }
+            in_package && /^\[/ { exit }
+            in_package && /^version = / {
+              gsub(/^version = "|"$/, "")
+              print
+              exit
+            }
+          ' src-tauri/Cargo.toml)"
+
+          if [[ "$VERSION" != "$PACKAGE_VERSION" || "$VERSION" != "$TAURI_VERSION" || "$VERSION" != "$CARGO_VERSION" ]]; then
+            echo "Release tag/version mismatch: tag=$VERSION package=$PACKAGE_VERSION tauri=$TAURI_VERSION cargo=$CARGO_VERSION" >&2
+            exit 1
+          fi
+          if ! grep -Fq "## [$VERSION]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no section for $VERSION" >&2
+            exit 1
+          fi
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           prefix-key: "v1-rust"
           cache-bin: "false"
@@ -51,13 +96,13 @@ jobs:
           cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps >/dev/null
 
       - name: Install frontend dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Extract changelog
         id: changelog
         shell: bash
         run: |
-          TAG="${{ github.ref_name }}"
+          TAG="$RELEASE_TAG"
           # 从 CHANGELOG.md 提取当前版本的更新说明
           # tag 格式: v0.9.6, CHANGELOG 格式: [0.9.6]
           VERSION="${TAG#v}"  # 去掉 v 前缀
@@ -76,14 +121,14 @@ jobs:
           } >> $GITHUB_OUTPUT
 
       - name: Build the app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@944946e3e4cac6603d1fe8f514171e9ecd3c78aa # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Agent Skills Guard ${{ github.ref_name }}"
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: "Agent Skills Guard ${{ env.RELEASE_TAG }}"
           releaseBody: ${{ steps.changelog.outputs.changelog }}
           releaseDraft: false
           prerelease: false

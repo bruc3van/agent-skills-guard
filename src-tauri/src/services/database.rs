@@ -112,6 +112,7 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
             threat_category: None,
             same_path_other_rule_ids: None,
             finding_kind: None,
+            effective_weight: None,
         });
     }
 
@@ -129,6 +130,7 @@ fn parse_legacy_issue_string(issue_str: &str) -> Option<SecurityIssue> {
         threat_category: None,
         same_path_other_rule_ids: None,
         finding_kind: None,
+        effective_weight: None,
     })
 }
 
@@ -358,6 +360,7 @@ impl Database {
             Self::migrate_add_local_cli_tools(&conn)?;
             Self::migrate_local_cli_tools_to_path_key(&conn)?;
             Self::migrate_add_staging_path(&conn)?;
+            Self::migrate_normalize_github_urls(&conn)?;
 
             Ok(())
         })();
@@ -374,6 +377,74 @@ impl Database {
                 Err(e)
             }
         }
+    }
+
+    /// 将旧版本允许写入的 GitHub URL 统一为仓库根 HTTPS URL。
+    ///
+    /// 同一个仓库可能同时以无 scheme、http、www、`.git` 或 tree/blob URL 存在。
+    /// 若规范化后发生冲突，保留已存在的 canonical 记录，重定向关联的 skill/plugin
+    /// 后删除重复行。非 GitHub 历史记录保持原样，后续会给出明确的不支持提示。
+    fn migrate_normalize_github_urls(conn: &Connection) -> Result<()> {
+        let repositories = {
+            let mut stmt = conn.prepare("SELECT id, url FROM repositories ORDER BY added_at")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        for (repository_id, old_url) in repositories {
+            let Ok(canonical_url) = Repository::normalize_github_url(&old_url) else {
+                continue;
+            };
+            if canonical_url == old_url {
+                continue;
+            }
+
+            let canonical_id = conn
+                .query_row(
+                    "SELECT id FROM repositories WHERE url = ?1",
+                    params![canonical_url],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+
+            conn.execute(
+                "UPDATE skills SET repository_url = ?1 WHERE repository_url = ?2",
+                params![canonical_url, old_url],
+            )?;
+            conn.execute(
+                "UPDATE plugins SET repository_url = ?1 WHERE repository_url = ?2",
+                params![canonical_url, old_url],
+            )?;
+
+            if let Some(canonical_id) = canonical_id {
+                if canonical_id != repository_id {
+                    // 尽量保留重复记录中已有的缓存与展示信息。
+                    conn.execute(
+                        "UPDATE repositories SET
+                            description = COALESCE(description, (SELECT description FROM repositories WHERE id = ?2)),
+                            last_scanned = COALESCE(last_scanned, (SELECT last_scanned FROM repositories WHERE id = ?2)),
+                            cache_path = COALESCE(cache_path, (SELECT cache_path FROM repositories WHERE id = ?2)),
+                            cached_at = COALESCE(cached_at, (SELECT cached_at FROM repositories WHERE id = ?2)),
+                            cached_commit_sha = COALESCE(cached_commit_sha, (SELECT cached_commit_sha FROM repositories WHERE id = ?2))
+                         WHERE id = ?1",
+                        params![canonical_id, repository_id],
+                    )?;
+                    conn.execute(
+                        "DELETE FROM repositories WHERE id = ?1",
+                        params![repository_id],
+                    )?;
+                }
+            } else {
+                conn.execute(
+                    "UPDATE repositories SET url = ?1 WHERE id = ?2",
+                    params![canonical_url, repository_id],
+                )?;
+            }
+        }
+
+        Ok(())
     }
 
     /// 保存 plugin
@@ -1485,6 +1556,49 @@ mod tests {
         assert!(matches!(report.level, SecurityLevel::Low));
         assert!(!report.blocked);
         assert!(!report.partial_scan);
+    }
+
+    #[test]
+    fn reopening_database_normalizes_legacy_github_urls_and_merges_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let legacy_url = "http://www.github.com/owner/repo.git/";
+        let canonical_url = "https://github.com/owner/repo";
+
+        {
+            let db = super::Database::new(db_path.clone()).unwrap();
+            db.add_repository(&Repository::new(
+                canonical_url.to_string(),
+                "canonical".to_string(),
+            ))
+            .unwrap();
+            db.add_repository(&Repository::new(
+                legacy_url.to_string(),
+                "legacy".to_string(),
+            ))
+            .unwrap();
+
+            let mut skill = Skill::new(
+                "legacy-skill".to_string(),
+                legacy_url.to_string(),
+                "skills/legacy".to_string(),
+            );
+            skill.installed = true;
+            db.save_skill(&skill).unwrap();
+        }
+
+        let reopened = super::Database::new(db_path).unwrap();
+        let repositories = reopened.get_repositories().unwrap();
+        assert_eq!(repositories.len(), 1);
+        assert_eq!(repositories[0].url, canonical_url);
+
+        let skills = reopened.get_skills().unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].repository_url, canonical_url);
+        assert!(skills[0].installed);
+        assert_eq!(skills[0].id, format!("{}::skills/legacy", legacy_url));
+        assert!(reopened.repository_url_exists(canonical_url).unwrap());
+        assert!(!reopened.repository_url_exists(legacy_url).unwrap());
     }
 
     /// 回归防线：`Database` 曾用 `RwLock<SyncConnection>` + `unsafe impl Sync`，

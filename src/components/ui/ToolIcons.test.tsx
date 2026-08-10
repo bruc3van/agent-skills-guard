@@ -29,9 +29,6 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/plugin-opener", () => ({
-  openPath: vi.fn(),
-}));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({

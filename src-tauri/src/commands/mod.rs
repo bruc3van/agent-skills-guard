@@ -8,7 +8,9 @@ use crate::services::{
     AgentTool, Database, GitHubService, PluginManager, SkillManager, SkillUpdateStatus,
 };
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tauri::Manager;
@@ -76,6 +78,28 @@ pub struct CliScanCache {
     pub scanned_at: Instant,
 }
 
+fn skill_source_key(skill: &Skill) -> (String, String) {
+    (skill.repository_url.clone(), skill.file_path.clone())
+}
+
+fn index_existing_skills_by_source(skills: &[Skill]) -> HashMap<(String, String), Skill> {
+    let mut indexed = HashMap::new();
+    for skill in skills.iter().cloned() {
+        indexed
+            .entry(skill_source_key(&skill))
+            .and_modify(|current: &mut Skill| {
+                // If an earlier run of the URL migration already created a duplicate,
+                // keep the installed row as the source of truth. The uninstalled row
+                // will then be collected as stale in the same scan transaction.
+                if !current.installed && skill.installed {
+                    *current = skill.clone();
+                }
+            })
+            .or_insert(skill);
+    }
+    indexed
+}
+
 fn merge_scanned_skill(existing: Option<&Skill>, scanned: Skill) -> Skill {
     let Some(existing) = existing else {
         return scanned;
@@ -85,6 +109,11 @@ fn merge_scanned_skill(existing: Option<&Skill>, scanned: Skill) -> Skill {
     let checksum_changed = existing.checksum != scanned.checksum;
 
     let mut merged = scanned;
+    // `Skill::new` derives the id from repository_url + file_path. URL normalization
+    // can therefore change a freshly scanned id even though it is the same persisted
+    // skill. Keep the existing opaque id so installed state and legacy references do
+    // not split into a second row after migration.
+    merged.id = existing.id.clone();
     merged.version = existing.version.clone();
     merged.author = existing.author.clone();
     merged.installed = existing.installed;
@@ -135,6 +164,7 @@ pub async fn add_repository(
     url: String,
     name: String,
 ) -> Result<String, String> {
+    let url = Repository::normalize_github_url(&url).map_err(|e| e.to_string())?;
     let repo = Repository::new(url, name);
     let repo_id = repo.id.clone();
     state.db.add_repository(&repo).map_err(|e| e.to_string())?;
@@ -376,11 +406,7 @@ pub async fn scan_repository(
         .into_iter()
         .filter(|skill| skill.repository_url == repo.url)
         .collect();
-    let existing_by_id: HashMap<String, Skill> = existing_repo_skills
-        .iter()
-        .cloned()
-        .map(|skill| (skill.id.clone(), skill))
-        .collect();
+    let existing_by_source = index_existing_skills_by_source(&existing_repo_skills);
     let merged_skills: Vec<Skill> = skills
         .into_iter()
         .filter(|skill| {
@@ -391,7 +417,10 @@ pub async fn scan_repository(
                 true
             }
         })
-        .map(|skill| merge_scanned_skill(existing_by_id.get(&skill.id), skill))
+        .map(|skill| {
+            let source_key = skill_source_key(&skill);
+            merge_scanned_skill(existing_by_source.get(&source_key), skill)
+        })
         .collect();
 
     // 在单个事务中保存所有新/更新 skill 并删除过期记录，避免中途崩溃导致 DB 不一致
@@ -461,6 +490,7 @@ mod tests {
             threat_category: None,
             same_path_other_rule_ids: None,
             finding_kind: None,
+            effective_weight: None,
         }]);
         existing.security_report = Some(crate::models::security::SecurityReport {
             skill_id: existing.id.clone(),
@@ -520,6 +550,52 @@ mod tests {
             vec!["codex".to_string(), "claude-code".to_string()]
         );
         assert!(!merged.is_local_only);
+    }
+
+    #[test]
+    fn merge_scanned_skill_keeps_legacy_id_after_repository_url_migration() {
+        let canonical_url = "https://github.com/example/repo";
+        let mut existing = make_existing_skill_with_security();
+        existing.id = "http://www.github.com/example/repo.git/::skill-a".to_string();
+        existing.repository_url = canonical_url.to_string();
+
+        let scanned = Skill::new(
+            "Updated".to_string(),
+            canonical_url.to_string(),
+            "skill-a".to_string(),
+        );
+        assert_ne!(existing.id, scanned.id);
+        assert_eq!(skill_source_key(&existing), skill_source_key(&scanned));
+
+        let merged = merge_scanned_skill(Some(&existing), scanned);
+
+        assert_eq!(merged.id, existing.id);
+        assert!(merged.installed);
+        assert_eq!(merged.local_path, existing.local_path);
+    }
+
+    #[test]
+    fn source_index_prefers_installed_legacy_record_over_uninstalled_duplicate() {
+        let mut installed = make_existing_skill_with_security();
+        installed.id = "legacy-id".to_string();
+
+        let mut duplicate = Skill::new(
+            "Duplicate".to_string(),
+            installed.repository_url.clone(),
+            installed.file_path.clone(),
+        );
+        duplicate.id = "canonical-id".to_string();
+
+        let indexed = index_existing_skills_by_source(&[duplicate.clone(), installed.clone()]);
+        let selected = indexed.get(&skill_source_key(&installed)).unwrap();
+
+        assert_eq!(selected.id, installed.id);
+        assert!(selected.installed);
+        let stale = collect_stale_uninstalled_skill_ids(
+            &[installed.clone(), duplicate.clone()],
+            &[installed],
+        );
+        assert_eq!(stale, vec![duplicate.id]);
     }
 
     #[test]
@@ -586,6 +662,38 @@ mod tests {
         assert!(!allow_partial_scan_or_default(Some(false)));
         assert!(allow_partial_scan_or_default(Some(true)));
     }
+
+    #[test]
+    fn allowed_root_check_canonicalizes_both_sides() {
+        let temp = tempfile::tempdir().unwrap();
+        let allowed_root = temp.path().join("allowed");
+        let child = allowed_root.join("child");
+        std::fs::create_dir_all(&child).unwrap();
+        let canonical_child = child.canonicalize().unwrap();
+
+        #[cfg(target_os = "windows")]
+        assert!(
+            !canonical_child.starts_with(&allowed_root),
+            "the regression requires Windows canonical paths to use a verbatim prefix"
+        );
+        assert!(path_is_within_allowed_roots(
+            &canonical_child,
+            std::slice::from_ref(&allowed_root)
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn shell_open_path_removes_windows_verbatim_prefixes() {
+        assert_eq!(
+            shell_open_path(Path::new(r"\\?\C:\Users\Bruce\.agents\skills")),
+            r"C:\Users\Bruce\.agents\skills"
+        );
+        assert_eq!(
+            shell_open_path(Path::new(r"\\?\UNC\server\share\skills")),
+            r"\\server\share\skills"
+        );
+    }
 }
 
 fn allow_partial_scan_or_default(allow_partial_scan: Option<bool>) -> bool {
@@ -607,6 +715,31 @@ where
     tokio::task::spawn_blocking(move || {
         let manager = skill_manager.blocking_lock();
         work(&manager)
+    })
+    .await
+    .map_err(|e| format!("[TASK_JOIN_ERROR] Task join error: {}", e))?
+}
+
+/// 在阻塞线程池上驱动同时包含异步下载和同步扫描的 SkillManager 操作。
+///
+/// 这些操作内部会调用 Rayon/文件系统扫描；若直接在 Tokio worker 上 await，
+/// future 恢复后会在该 worker 上执行同步重活。这里把整个 future 固定到 blocking
+/// 线程，并只借用 Tokio runtime 驱动其中真正的异步 I/O。
+async fn with_skill_manager_async_blocking<T, F>(state: &AppState, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: for<'a> FnOnce(
+            &'a SkillManager,
+        ) -> Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>
+        + Send
+        + 'static,
+{
+    let skill_manager = Arc::clone(&state.skill_manager);
+    let runtime = tokio::runtime::Handle::try_current()
+        .map_err(|e| format!("[RUNTIME_UNAVAILABLE] Tokio runtime unavailable: {e}"))?;
+    tokio::task::spawn_blocking(move || {
+        let manager = skill_manager.blocking_lock();
+        runtime.block_on(work(&manager))
     })
     .await
     .map_err(|e| format!("[TASK_JOIN_ERROR] Task join error: {}", e))?
@@ -638,15 +771,19 @@ pub async fn install_skill(
     install_path: Option<String>,
     allow_partial_scan: Option<bool>,
 ) -> Result<(), String> {
-    let manager = state.skill_manager.lock().await;
-    manager
-        .install_skill(
-            &skill_id,
-            install_path,
-            allow_partial_scan_or_default(allow_partial_scan),
-        )
-        .await
-        .map_err(|e| e.to_string())
+    with_skill_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .install_skill(
+                    &skill_id,
+                    install_path,
+                    allow_partial_scan_or_default(allow_partial_scan),
+                )
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 准备安装技能：下载并扫描，但不标记为已安装
@@ -655,17 +792,16 @@ pub async fn prepare_skill_installation(
     state: State<'_, AppState>,
     skill_id: String,
     locale: String,
-    allow_partial_scan: Option<bool>,
 ) -> Result<crate::models::security::SecurityReport, String> {
-    let manager = state.skill_manager.lock().await;
-    manager
-        .prepare_skill_installation(
-            &skill_id,
-            &locale,
-            allow_partial_scan_or_default(allow_partial_scan),
-        )
-        .await
-        .map_err(|e| e.to_string())
+    with_skill_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .prepare_skill_installation(&skill_id, &locale)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 确认安装技能：标记为已安装，并为 target_tools 创建链接
@@ -971,6 +1107,32 @@ pub struct ClearAllCachesResult {
     pub total_size_freed: u64,
 }
 
+fn path_is_within_allowed_roots(canonical_path: &Path, allowed_paths: &[PathBuf]) -> bool {
+    allowed_paths.iter().any(|allowed| {
+        allowed
+            .canonicalize()
+            .map(|canonical_allowed| canonical_path.starts_with(canonical_allowed))
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn shell_open_path(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{}", rest)
+    } else if let Some(rest) = value.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        value.into_owned()
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn shell_open_path(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
 /// 打开技能目录
 #[tauri::command]
 pub async fn open_skill_directory(
@@ -1037,16 +1199,14 @@ pub async fn open_skill_directory(
             }
         }
 
-        allowed_paths
-            .iter()
-            .any(|allowed| canonical.starts_with(allowed))
+        path_is_within_allowed_roots(&canonical, &allowed_paths)
     };
 
     if !allowed {
         return Err("[PATH_NOT_ALLOWED] Path is not within an allowed directory".to_string());
     }
 
-    let canonical_str = canonical.to_string_lossy().to_string();
+    let canonical_str = shell_open_path(&canonical);
 
     #[cfg(target_os = "windows")]
     {
@@ -1335,6 +1495,7 @@ pub async fn reset_app_data(
 /// 检查仓库是否已添加
 #[tauri::command]
 pub async fn is_repository_added(state: State<'_, AppState>, url: String) -> Result<bool, String> {
+    let url = Repository::normalize_github_url(&url).map_err(|e| e.to_string())?;
     state
         .db
         .repository_url_exists(&url)
@@ -1455,11 +1616,15 @@ pub async fn prepare_skill_update(
     skill_id: String,
     locale: String,
 ) -> Result<(crate::models::security::SecurityReport, Vec<String>), String> {
-    let manager = state.skill_manager.lock().await;
-    manager
-        .prepare_skill_update(&skill_id, &locale)
-        .await
-        .map_err(|e| e.to_string())
+    with_skill_manager_async_blocking(&state, move |manager| {
+        Box::pin(async move {
+            manager
+                .prepare_skill_update(&skill_id, &locale)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
 }
 
 /// 确认技能更新

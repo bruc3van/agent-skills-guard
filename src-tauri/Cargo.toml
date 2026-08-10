@@ -66,7 +66,6 @@ uuid = { version = "1.11", features = ["v4"] }
 
 # 目录
 dirs = "5.0"
-tauri-plugin-opener = "~2.5.0"
 
 # ZIP解压
 zip = "2.2"

@@ -2,9 +2,9 @@ export interface SecurityIssue {
   severity: string;
   category: string;
   description: string;
-  line_number?: number;
-  code_snippet?: string;
-  file_path?: string; // 记录哪个文件有风险
+  line_number?: number | null;
+  code_snippet?: string | null;
+  file_path?: string | null; // Rust Option 字段通过 IPC 序列化为 null
   rule_id?: string;
   confidence?: string;
   remediation?: string;
@@ -12,6 +12,7 @@ export interface SecurityIssue {
   threat_category?: string;
   same_path_other_rule_ids?: string[];
   finding_kind?: string; // Security | Auditability | Structure
+  effective_weight?: number; // Rust 侧用于跨技能重算的策略后权重
 }
 
 /// 各 FindingKind 的数量统计

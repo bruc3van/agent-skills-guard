@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Network, Loader2, FolderOpen } from "lucide-react";
 import type { FC, SVGProps } from "react";
 import { useTranslation } from "react-i18next";
-import { openPath } from "@tauri-apps/plugin-opener";
 import { api } from "@/lib/api";
 import { useAgentTools } from "@/lib/agent-tools";
 
@@ -75,11 +74,7 @@ const TOOLS: ToolDef[] = [
 ];
 
 async function openToolDir(path: string) {
-  try {
-    await api.openSkillDirectory(path);
-  } catch {
-    await openPath(path);
-  }
+  await api.openSkillDirectory(path);
 }
 
 export function ToolIcons({
@@ -111,7 +106,9 @@ export function ToolIcons({
   return (
     <>
       <div className="pt-4 border-t border-border/60">
-        <div className="text-xs font-medium text-muted-foreground mb-3">{t("tool_icons.programming_tools", "编程工具")}</div>
+        <div className="text-xs font-medium text-muted-foreground mb-3">
+          {t("tool_icons.programming_tools", "编程工具")}
+        </div>
         <div className="flex flex-wrap gap-2">
           {activeToolIds.includes("agents") ? (
             /* 已在通用目录 — 静态徽章 + 始终显示打开目录按钮 */
@@ -141,7 +138,10 @@ export function ToolIcons({
                 type="button"
                 onClick={() => !disabled && onToggle("agents", false)}
                 disabled={disabled || pendingToolId === "agents"}
-                title={t("tool_icons.click_sync_to_universal", "点击同步到通用目录（~/.agents/skills），原位置替换为链接")}
+                title={t(
+                  "tool_icons.click_sync_to_universal",
+                  "点击同步到通用目录（~/.agents/skills），原位置替换为链接"
+                )}
                 className={`
                   flex items-center px-2 py-1.5 border transition-all cursor-pointer
                   ${agentsPath ? "rounded-l-lg rounded-r-none border-r-0" : "rounded-lg"}

@@ -283,10 +283,6 @@ impl PluginManager {
         };
 
         let existing_plugins = self.db.get_plugins().unwrap_or_default();
-        let existing_map: HashMap<String, Plugin> = existing_plugins
-            .into_iter()
-            .map(|plugin| (plugin.id.clone(), plugin))
-            .collect();
 
         let mut plugins = Vec::new();
         for entry in manifest.plugins {
@@ -323,7 +319,7 @@ impl PluginManager {
 
             // 不再要求 plugin.json 存在，marketplace.json 里的 plugins 条目足够 Claude Code CLI 安装
 
-            if let Some(existing) = existing_map.get(&plugin.id) {
+            if let Some(existing) = find_existing_plugin(&existing_plugins, &plugin) {
                 plugin.merge_existing(existing);
             }
 
@@ -739,6 +735,7 @@ impl PluginManager {
         marketplace_name: &str,
         claude_command: Option<String>,
     ) -> Result<MarketplaceUpdateResult> {
+        validate_existing_marketplace_name(marketplace_name)?;
         let cli_command =
             resolve_claude_command(claude_command)?.context("未找到 Claude Code CLI")?;
 
@@ -1019,11 +1016,6 @@ impl PluginManager {
     ) -> Result<()> {
         let locale = validate_locale(locale);
         let existing_plugins = self.db.get_plugins().unwrap_or_default();
-        let existing_map: HashMap<String, Plugin> = existing_plugins
-            .iter()
-            .cloned()
-            .map(|plugin| (plugin.id.clone(), plugin))
-            .collect();
         let installed_marketplace_plugins = if sync_installed_marketplaces {
             self.load_installed_featured_marketplace_plugins(config, claude_command)
                 .await
@@ -1039,6 +1031,14 @@ impl PluginManager {
                     format!("https://github.com/{}", marketplace.marketplace_repo)
                 });
                 let marketplace_name = marketplace.marketplace_name.clone();
+                if let Err(error) = validate_marketplace_name(&marketplace_name) {
+                    log::warn!(
+                        "跳过名称不合法的 featured marketplace {:?}: {}",
+                        marketplace_name,
+                        error
+                    );
+                    continue;
+                }
 
                 let plugins_to_sync: Vec<Plugin> = if let Some(manifest_plugins) =
                     installed_marketplace_plugins.get(&marketplace_name)
@@ -1122,7 +1122,7 @@ impl PluginManager {
                 };
 
                 for mut plugin in plugins_to_sync {
-                    if let Some(existing) = existing_map.get(&plugin.id) {
+                    if let Some(existing) = find_existing_plugin(&existing_plugins, &plugin) {
                         plugin.merge_existing(existing);
                     }
 
@@ -1192,13 +1192,9 @@ impl PluginManager {
         }
 
         let existing_plugins = self.db.get_plugins().unwrap_or_default();
-        let existing_map: HashMap<String, Plugin> = existing_plugins
-            .into_iter()
-            .map(|plugin| (plugin.id.clone(), plugin))
-            .collect();
 
         for resolved in &mut resolved_plugins {
-            if let Some(existing) = existing_map.get(&resolved.plugin.id) {
+            if let Some(existing) = find_existing_plugin(&existing_plugins, &resolved.plugin) {
                 resolved.plugin.merge_existing(existing);
             }
         }
@@ -1207,6 +1203,7 @@ impl PluginManager {
             .first()
             .map(|p| p.plugin.marketplace_name.clone())
             .unwrap_or_else(|| plugin.marketplace_name.clone());
+        validate_existing_marketplace_name(&marketplace_name)?;
 
         let mut reports = Vec::new();
         for resolved in &resolved_plugins {
@@ -1281,6 +1278,7 @@ impl PluginManager {
             })
             .context("无法解析 marketplace repo")?;
         let marketplace_name = plugin.marketplace_name.clone();
+        validate_existing_marketplace_name(&marketplace_name)?;
 
         let Some(cli_command) = resolve_claude_command(claude_command)? else {
             let mut message = "未找到 Claude Code CLI".to_string();
@@ -1504,6 +1502,7 @@ impl PluginManager {
         marketplace_repo: &str,
         claude_command: Option<String>,
     ) -> Result<MarketplaceRemoveResult> {
+        validate_existing_marketplace_name(marketplace_name)?;
         // 保留白名单允许的裸命令名供嵌套 API 使用；cli_command 是仅供本层
         // ClaudeCli 执行的解析后绝对路径。
         let nested_claude_command = claude_command.clone();
@@ -1618,6 +1617,51 @@ fn parse_claude_plugin_id(id: &str) -> Option<(String, String)> {
         return None;
     }
     Some((name.to_string(), marketplace.to_string()))
+}
+
+fn find_existing_plugin<'a>(plugins: &'a [Plugin], candidate: &Plugin) -> Option<&'a Plugin> {
+    plugins
+        .iter()
+        .filter(|plugin| {
+            let same_source = plugin.repository_url == candidate.repository_url
+                && plugin.marketplace_name == candidate.marketplace_name
+                && plugin.name == candidate.name;
+
+            plugin.id == candidate.id || same_source
+        })
+        // Prefer the installed record if a previous buggy scan already created an
+        // uninstalled canonical-id duplicate beside the migrated legacy row.
+        .max_by_key(|plugin| (plugin.installed, plugin.id == candidate.id))
+}
+
+fn validate_marketplace_name(name: &str) -> Result<()> {
+    let name = name.trim();
+    if name.is_empty()
+        || name.len() > 100
+        || matches!(name, "." | "..")
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        anyhow::bail!("MARKETPLACE_NAME_INVALID: 名称仅允许字母、数字、点、下划线和连字符")
+    }
+    Ok(())
+}
+
+/// 已由 Claude CLI/历史版本创建的名称可能包含空格或非 ASCII。更新和删除必须
+/// 保持兼容，只拒绝可能改变路径语义的值；新增入口仍使用严格校验。
+fn validate_existing_marketplace_name(name: &str) -> Result<()> {
+    let name = name.trim();
+    if name.is_empty()
+        || name.len() > 255
+        || name.contains("..")
+        || name.contains('/')
+        || name.contains('\\')
+        || name.chars().any(char::is_control)
+    {
+        anyhow::bail!("MARKETPLACE_NAME_INVALID: 名称包含不安全的路径字符")
+    }
+    Ok(())
 }
 
 fn plugin_claude_id(plugin: &Plugin) -> String {
@@ -2196,6 +2240,49 @@ noise after json..."#;
         );
         assert!(source.get("repo").is_none());
     }
+
+    #[test]
+    fn plugin_merge_keeps_legacy_id_after_repository_url_migration() {
+        let canonical_url = "https://github.com/owner/repo";
+        let mut existing = Plugin::new(
+            "plugin-a".to_string(),
+            "http://www.github.com/owner/repo.git/".to_string(),
+            "marketplace-a".to_string(),
+            "./plugin-a".to_string(),
+        );
+        existing.repository_url = canonical_url.to_string();
+        existing.installed = true;
+        existing.install_status = Some("installed".to_string());
+
+        let mut discovered = Plugin::new(
+            "plugin-a".to_string(),
+            canonical_url.to_string(),
+            "marketplace-a".to_string(),
+            "./plugin-a".to_string(),
+        );
+        assert_ne!(existing.id, discovered.id);
+        let uninstalled_duplicate = discovered.clone();
+        let existing_plugins = vec![uninstalled_duplicate, existing.clone()];
+
+        let matched = find_existing_plugin(&existing_plugins, &discovered)
+            .expect("canonical discovery should match the migrated legacy record");
+        discovered.merge_existing(matched);
+
+        assert_eq!(discovered.id, existing.id);
+        assert!(discovered.installed);
+        assert_eq!(discovered.install_status.as_deref(), Some("installed"));
+    }
+
+    #[test]
+    fn marketplace_names_reject_path_components() {
+        assert!(validate_marketplace_name("claude-plugins_official.v2").is_ok());
+        assert!(validate_marketplace_name("../outside").is_err());
+        assert!(validate_marketplace_name(r"nested\outside").is_err());
+        assert!(default_marketplace_install_location("../outside").is_none());
+        assert!(validate_existing_marketplace_name("Legacy 市场").is_ok());
+        assert!(validate_existing_marketplace_name("../outside").is_err());
+        assert!(default_marketplace_install_location("Legacy 市场").is_some());
+    }
 }
 
 fn parse_marketplace_list_text(output: &str) -> Vec<ClaudeMarketplace> {
@@ -2266,7 +2353,7 @@ fn parse_marketplace_list_text(output: &str) -> Vec<ClaudeMarketplace> {
 }
 
 fn default_marketplace_install_location(name: &str) -> Option<String> {
-    if name.trim().is_empty() {
+    if validate_existing_marketplace_name(name).is_err() {
         return None;
     }
     let home = dirs::home_dir()?;

@@ -21,6 +21,10 @@ const MAX_SCAN_DEPTH: usize = 20;
 /// 单文件最大读取字节数 (2 MiB)
 const MAX_BYTES_PER_FILE: u64 = 2 * 1024 * 1024;
 
+/// Context analyzer 的复用缓存只保存小文件，并限制单次目录扫描的总驻留量。
+const MAX_CONTEXT_CACHE_BYTES_PER_FILE: usize = 256 * 1024;
+const MAX_CONTEXT_CACHE_TOTAL_BYTES: usize = 16 * 1024 * 1024;
+
 /// 检测 subprocess 是否使用 `shell=True` 时，从调用行向下扫描的最大行数。
 /// 覆盖典型多行调用（如 `subprocess.run(\n cmd,\n shell=True\n)`），同时避免
 /// 过宽窗口把不相邻的另一个 subprocess 调用的 shell 标志错误关联进来（历史误报源）。
@@ -283,6 +287,7 @@ impl SecurityScanner {
             threat_category: Some(m.category.as_str().to_string()),
             same_path_other_rule_ids: None,
             finding_kind: Some(finding_kind.as_str().to_string()),
+            effective_weight: Some(Self::effective_rule_weight(m).round() as i32),
         }
     }
 
@@ -316,6 +321,7 @@ impl SecurityScanner {
             threat_category: Some(finding.category.as_str().to_string()),
             same_path_other_rule_ids: same_path,
             finding_kind: Some(finding_kind.as_str().to_string()),
+            effective_weight: None,
         }
     }
 
@@ -693,7 +699,9 @@ impl SecurityScanner {
     ) -> bool {
         if rule_id == "TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL" {
             if Self::is_markdown_file(file_path) {
-                return true;
+                // 普通文档/示例继续抑制；SKILL.md 是实际会交给 agent 执行的指令，
+                // 保留为 Info 提示供应链副作用，但不把它当作 High 风险漏洞。
+                return !Self::is_skill_md(file_path);
             }
             return Self::package_install_is_inert_hint(content, line_number, file_path);
         }
@@ -955,7 +963,20 @@ impl SecurityScanner {
             && policy.targets_known_installer(&code_snippet)
             && !EXEC_CONTEXT_RE.is_match(&code_snippet);
 
-        let (severity, hard_trigger, weight, description) = if installer_downgrade {
+        let informational_skill_instruction =
+            compiled_rule.id == "TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL" && Self::is_skill_md(file_path);
+
+        let (severity, hard_trigger, weight, description) = if informational_skill_instruction {
+            (
+                IssueSeverity::Info,
+                false,
+                0,
+                format!(
+                    "{}（SKILL.md 中的环境变更说明，仅作信息提示，请在执行前确认包来源）",
+                    compiled_rule.rule.description
+                ),
+            )
+        } else if installer_downgrade {
             (
                 // 只压不抬：本就低于 Medium 的保持原级别
                 match severity {
@@ -1324,7 +1345,7 @@ impl SecurityScanner {
     ///
     /// 判定逻辑：包含 NUL 字节且非 UTF-16 编码 → 视为二进制。
     /// UTF-16 编码的文本文件（含 BOM 或符合统计特征）不被判定为二进制。
-    fn is_binary_sample(sample: &[u8]) -> bool {
+    pub(crate) fn is_binary_sample(sample: &[u8]) -> bool {
         sample.contains(&0u8) && Self::detect_utf16_encoding(sample).is_none()
     }
 
@@ -1452,13 +1473,14 @@ impl SecurityScanner {
         let mut blocked = false;
         let mut partial_scan = false;
         let mut files_scanned = 0usize;
+        let mut context_cache_bytes = 0usize;
 
         // ── SkillContext 构建与结构校验 ──
         let policy = options
             .policy
             .clone()
             .unwrap_or_else(|| crate::security::policy::ScanPolicy::builtin_default().clone());
-        let skill_ctx = match SkillContext::for_directory(dir_path, policy.clone()) {
+        let mut skill_ctx = match SkillContext::for_directory(dir_path, policy.clone()) {
             Ok(ctx) => ctx,
             Err(e) => {
                 log::warn!("Failed to build SkillContext for directory '{}': {}. Falling back to empty context.", dir_path, e);
@@ -1666,6 +1688,20 @@ impl SecurityScanner {
             }
 
             let content = content.unwrap_or_else(|| String::from_utf8_lossy(&buf).into_owned());
+            // 后续 pipeline / consistency analyzer 共用本次已读取内容，避免同一文件
+            // 在一次扫描中被各 analyzer 反复从磁盘读取。
+            // 大文件继续由 context analyzer 按需从磁盘完整读取，既保持旧语义（不把
+            // 前 2 MiB 截断内容冒充完整文件），也避免 2000 × 2 MiB 的最坏内存占用。
+            if !truncated
+                && content.len() <= MAX_CONTEXT_CACHE_BYTES_PER_FILE
+                && context_cache_bytes.saturating_add(content.len())
+                    <= MAX_CONTEXT_CACHE_TOTAL_BYTES
+            {
+                context_cache_bytes += content.len();
+                skill_ctx
+                    .file_contents
+                    .insert(rel_str.clone(), content.clone());
+            }
             scanned_files.push(rel_str.clone());
             files_scanned += 1;
 
@@ -1842,9 +1878,16 @@ impl SecurityScanner {
             .map(|r| r.rule.weight)
     }
 
-    fn issue_effective_weight(issue: &SecurityIssue, match_weights: &HashMap<String, i32>) -> i32 {
+    fn issue_effective_weight(
+        issue: &SecurityIssue,
+        match_weights: &HashMap<(String, String), i32>,
+    ) -> i32 {
+        if let Some(weight) = issue.effective_weight {
+            return weight.max(0);
+        }
         if let Some(rule_id) = &issue.rule_id {
-            if let Some(&w) = match_weights.get(rule_id) {
+            let file_path = issue.file_path.as_deref().unwrap_or_default();
+            if let Some(&w) = match_weights.get(&(rule_id.clone(), file_path.to_string())) {
                 return w;
             }
             if let Some(w) = Self::yaml_rule_weight(rule_id) {
@@ -1891,12 +1934,15 @@ impl SecurityScanner {
     ) -> i32 {
         let score_kinds = policy.map(|p| &p.score_kinds);
 
-        let mut match_weights: HashMap<String, i32> = HashMap::new();
+        let mut match_weights: HashMap<(String, String), i32> = HashMap::new();
         for matched in matches {
             let weight = Self::effective_rule_weight(matched).round() as i32;
-            if weight > 0 {
-                match_weights.insert(matched.rule_id.clone(), weight);
-            }
+            // 0 是有意义的显式覆盖（Info-only finding）；若丢掉它，后续会回退到
+            // YAML 原始权重，导致“仅提示”仍按 High 扣分。
+            match_weights
+                .entry((matched.rule_id.clone(), matched.file_path.clone()))
+                .and_modify(|current| *current = (*current).max(weight))
+                .or_insert(weight.max(0));
         }
 
         let mut rule_hits: HashMap<String, (i32, HashSet<String>)> = HashMap::new();
@@ -3145,6 +3191,7 @@ eval(user_input)
                 threat_category: None,
                 same_path_other_rule_ids: None,
                 finding_kind: None,
+                effective_weight: None,
             },
             SecurityIssue {
                 severity: IssueSeverity::Medium,
@@ -3160,6 +3207,7 @@ eval(user_input)
                 threat_category: None,
                 same_path_other_rule_ids: None,
                 finding_kind: None,
+                effective_weight: None,
             },
         ];
         SecurityScanner::annotate_issue_cooccurrence(&mut issues);
@@ -3378,7 +3426,7 @@ eval(user_input)
     }
 
     #[test]
-    fn test_markdown_dependency_install_notes_do_not_trigger_system_install_risk() {
+    fn test_markdown_dependency_install_notes_are_informational() {
         let scanner = SecurityScanner::new();
         let content = r#"---
 name: mainstream-tooling-skill
@@ -3398,13 +3446,15 @@ Use the installed tools only when the user asks for document conversion.
 
         let report = scanner.scan_file(content, "SKILL.md", "en").unwrap();
 
-        assert!(
-            !report.issues.iter().any(|i| {
-                i.rule_id.as_deref() == Some("TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL")
-            }),
-            "Dependency notes in SKILL.md should not be treated as package-install abuse, got: {:?}",
-            report.issues
-        );
+        let package_issues = report
+            .issues
+            .iter()
+            .filter(|issue| issue.rule_id.as_deref() == Some("TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL"))
+            .collect::<Vec<_>>();
+        assert!(!package_issues.is_empty());
+        assert!(package_issues
+            .iter()
+            .all(|issue| issue.severity == IssueSeverity::Info));
         assert!(
             report.score >= 90,
             "Benign dependency notes should not materially lower score, got {} with {:?}",
@@ -3414,7 +3464,7 @@ Use the installed tools only when the user asks for document conversion.
     }
 
     #[test]
-    fn test_markdown_inline_install_notes_do_not_trigger_system_install_risk() {
+    fn test_markdown_inline_install_notes_are_informational() {
         let scanner = SecurityScanner::new();
         let content = r#"---
 name: docx
@@ -3428,17 +3478,14 @@ Generate .docx files with JavaScript, then validate. Install: `npm install -g do
 
         let report = scanner.scan_file(content, "SKILL.md", "en").unwrap();
 
-        assert!(
-            !report.issues.iter().any(|i| {
-                i.rule_id.as_deref() == Some("TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL")
-            }),
-            "Inline install notes in Markdown should not be treated as package-install abuse, got: {:?}",
-            report.issues
-        );
+        assert!(report.issues.iter().any(|issue| {
+            issue.rule_id.as_deref() == Some("TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL")
+                && issue.severity == IssueSeverity::Info
+        }));
     }
 
     #[test]
-    fn test_markdown_setup_code_blocks_do_not_trigger_system_install_risk() {
+    fn test_markdown_setup_code_blocks_are_informational() {
         let scanner = SecurityScanner::new();
         let content = r#"---
 name: using-git-worktrees
@@ -3455,13 +3502,10 @@ if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
         let report = scanner.scan_file(content, "SKILL.md", "en").unwrap();
 
-        assert!(
-            !report.issues.iter().any(|i| {
-                i.rule_id.as_deref() == Some("TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL")
-            }),
-            "Project setup examples in Markdown should not be treated as package-install abuse, got: {:?}",
-            report.issues
-        );
+        assert!(report.issues.iter().any(|issue| {
+            issue.rule_id.as_deref() == Some("TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL")
+                && issue.severity == IssueSeverity::Info
+        }));
     }
 
     #[test]
@@ -3643,6 +3687,50 @@ if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
             "A string bound to a variable is not provably display-only, got: {:?}",
             report.issues
         );
+    }
+
+    #[test]
+    fn test_system_package_install_in_skill_md_is_informational() {
+        let scanner = SecurityScanner::new();
+        let report = scanner
+            .scan_file(
+                "Run `apt-get install imagemagick` before use.",
+                "SKILL.md",
+                "en",
+            )
+            .unwrap();
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| issue.rule_id.as_deref() == Some("TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL"))
+            .expect("SKILL.md package instruction should remain visible");
+
+        assert_eq!(issue.severity, IssueSeverity::Info);
+        assert!(!report.blocked);
+    }
+
+    #[test]
+    fn test_issue_only_rescore_preserves_informational_zero_weight() {
+        let scanner = SecurityScanner::new();
+        let report = scanner
+            .scan_file(
+                "Run `apt-get install imagemagick` before use.",
+                "SKILL.md",
+                "en",
+            )
+            .unwrap();
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| issue.rule_id.as_deref() == Some("TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL"))
+            .expect("package-install instruction should remain visible");
+
+        assert_eq!(issue.effective_weight, Some(0));
+        assert_eq!(
+            SecurityScanner::score_from_issues(&report.issues, report.blocked),
+            report.score
+        );
+        assert_eq!(report.score, 100);
     }
 
     #[test]

@@ -12,7 +12,6 @@ import { IssuesList } from "./overview/IssuesList";
 import { appToast } from "@/lib/toast";
 import { GroupCard, GroupCardItem } from "./ui/GroupCard";
 import type { SecurityReport } from "@/types/security";
-import { openPath } from "@tauri-apps/plugin-opener";
 import { useClaudeMarketplaces, usePlugins } from "@/hooks/usePlugins";
 import { useInstalledSkills } from "@/hooks/useSkills";
 import { getScanConcurrency } from "@/lib/storage";
@@ -485,11 +484,7 @@ export function OverviewPage() {
       } else {
         const path = item.local_path;
         if (path) {
-          try {
-            await api.openSkillDirectory(path);
-          } catch {
-            await openPath(path);
-          }
+          await api.openSkillDirectory(path);
         } else {
           appToast.error(t("skills.folder.pluginPathNotFound"), {
             duration: 4000,

@@ -64,9 +64,6 @@ vi.mock("../lib/toast", () => ({
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (k: string) => k, i18n: { language: "en" } }) }));
 
-vi.mock("@tauri-apps/plugin-opener", () => ({
-  openPath: vi.fn(),
-}));
 
 vi.mock("@/lib/agent-tools", () => ({
   AGENT_TOOLS_KEY: ["agent-tools"],

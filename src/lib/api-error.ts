@@ -1,4 +1,5 @@
 import { translateError } from "./error-codes";
+import type { ZodType } from "zod";
 
 /**
  * 结构化 API 错误类型。
@@ -19,9 +20,7 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.rawMessage = rawMessage;
     // 尝试从原始消息中提取错误码
-    const codeMatch = rawMessage.match(
-      /^\[([A-Z][A-Z0-9_]+)\]|^([A-Z][A-Z0-9_]+)(?::|\s|$)/
-    );
+    const codeMatch = rawMessage.match(/^\[([A-Z][A-Z0-9_]+)\]|^([A-Z][A-Z0-9_]+)(?::|\s|$)/);
     this.code = codeMatch?.[1] ?? codeMatch?.[2] ?? "";
   }
 }
@@ -34,8 +33,22 @@ export class ApiError extends Error {
  */
 export function safeInvoke<T>(promise: Promise<T>): Promise<T> {
   return promise.catch((err: unknown) => {
-    const message =
-      err instanceof Error ? err.message : err != null ? String(err) : "";
+    const message = err instanceof Error ? err.message : err != null ? String(err) : "";
     throw new ApiError(message);
   });
+}
+
+/** 对来自 Rust IPC 的安全关键响应做运行时结构校验，避免错误数据静默进入 UI。 */
+export async function safeInvokeValidated<T>(
+  promise: Promise<unknown>,
+  schema: ZodType<T>
+): Promise<T> {
+  const value = await safeInvoke(promise);
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) {
+    throw new ApiError(
+      `[IPC_RESPONSE_INVALID] ${parsed.error.issues[0]?.message ?? "Invalid response"}`
+    );
+  }
+  return parsed.data;
 }

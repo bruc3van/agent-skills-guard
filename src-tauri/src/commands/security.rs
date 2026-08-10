@@ -181,6 +181,7 @@ fn scan_installed_skills_blocking(
                             .as_ref()
                             .and_then(|m| m.finding_kind)
                             .map(|k| k.as_str().to_string()),
+                        effective_weight: None,
                     })
                     .collect();
                 result.report.issues.extend(cross_issues);

@@ -101,6 +101,10 @@ impl Plugin {
     /// 新发现的字段（如 description、version）保留 self 的值，
     /// 已有的安装状态和安全数据从 existing 复制。
     pub fn merge_existing(&mut self, existing: &Plugin) {
+        // repository_url normalization can change the deterministic id generated for
+        // a newly discovered plugin. Treat persisted ids as opaque and stable so the
+        // merge replaces the existing row instead of creating a duplicate.
+        self.id = existing.id.clone();
         // 用户配置的命令始终以 existing 为准
         self.marketplace_add_command = existing.marketplace_add_command.clone();
         self.plugin_install_command = existing.plugin_install_command.clone();

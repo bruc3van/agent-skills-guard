@@ -418,7 +418,7 @@ impl SkillContext {
             } else {
                 Vec::new()
             };
-            let is_binary = sample.contains(&0u8);
+            let is_binary = crate::security::SecurityScanner::is_binary_sample(&sample);
             if file_type == SkillFileType::Unknown && !is_binary && sample.starts_with(b"#!") {
                 file_type = SkillFileType::Script;
             }
