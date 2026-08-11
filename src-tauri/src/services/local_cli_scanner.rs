@@ -2233,6 +2233,14 @@ mod tests {
         }
     }
 
+    fn test_executable_name(name: &str) -> String {
+        if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.to_string()
+        }
+    }
+
     #[cfg(not(windows))]
     struct PathEnvGuard {
         original_path: Option<std::ffi::OsString>,
@@ -2907,16 +2915,16 @@ esac
         fs::create_dir_all(&bin_dir).unwrap();
         fs::create_dir_all(&cellar_bin).unwrap();
 
-        let ffmpeg_bin = cellar_bin.join("ffmpeg");
-        let ffplay_bin = cellar_bin.join("ffplay");
-        let ffprobe_bin = cellar_bin.join("ffprobe");
+        let ffmpeg_bin = cellar_bin.join(test_executable_name("ffmpeg"));
+        let ffplay_bin = cellar_bin.join(test_executable_name("ffplay"));
+        let ffprobe_bin = cellar_bin.join(test_executable_name("ffprobe"));
         write_executable(&ffmpeg_bin, b"#!/bin/sh\n");
         write_executable(&ffplay_bin, b"#!/bin/sh\n");
         write_executable(&ffprobe_bin, b"#!/bin/sh\n");
 
-        let ffmpeg_link = bin_dir.join("ffmpeg");
-        let ffplay_link = bin_dir.join("ffplay");
-        let ffprobe_link = bin_dir.join("ffprobe");
+        let ffmpeg_link = bin_dir.join(test_executable_name("ffmpeg"));
+        let ffplay_link = bin_dir.join(test_executable_name("ffplay"));
+        let ffprobe_link = bin_dir.join(test_executable_name("ffprobe"));
 
         #[cfg(unix)]
         {
