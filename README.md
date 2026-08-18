@@ -450,7 +450,7 @@ pnpm build
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=bruc3van/agent-skills-guard&type=Date)](https://star-history.com/#bruc3van/agent-skills-guard&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=bruc3van/agent-skills-guard&type=Date)](https://star-history.dera.page/#bruc3van/agent-skills-guard&Date)
 
 ---
 
