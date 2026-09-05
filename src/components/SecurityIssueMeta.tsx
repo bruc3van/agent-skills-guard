@@ -16,7 +16,8 @@ export function SecurityIssueMeta({ issue, compact = false }: SecurityIssueMetaP
     }
     return (
       <span className="ml-2 text-[11px] text-muted-foreground">
-        ({t(`security.detail.confidence.${issue.confidence}`)})
+        ({t(`security.detail.confidence.${issue.confidence}`)}
+        {issue.effective_weight === 0 ? ` · ${t("security.detail.noScoreImpact")}` : ""})
       </span>
     );
   }
@@ -25,9 +26,7 @@ export function SecurityIssueMeta({ issue, compact = false }: SecurityIssueMetaP
     return null;
   }
 
-  const confidenceKey = issue.confidence
-    ? `security.detail.confidence.${issue.confidence}`
-    : null;
+  const confidenceKey = issue.confidence ? `security.detail.confidence.${issue.confidence}` : null;
 
   return (
     <div className="mt-2 space-y-1.5 text-xs text-muted-foreground">
@@ -53,11 +52,10 @@ export function SecurityIssueMeta({ issue, compact = false }: SecurityIssueMetaP
           )}
         </div>
       )}
+      {issue.effective_weight === 0 && <div>{t("security.detail.noScoreImpact")}</div>}
       {issue.remediation && (
         <div>
-          <span className="font-medium text-foreground">
-            {t("security.detail.remediation")}:{" "}
-          </span>
+          <span className="font-medium text-foreground">{t("security.detail.remediation")}: </span>
           {issue.remediation}
         </div>
       )}

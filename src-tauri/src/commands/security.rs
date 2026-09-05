@@ -2,7 +2,6 @@ use crate::commands::{clamp_scan_parallelism, scan_thread_pool, AppState};
 use crate::i18n::validate_locale;
 use crate::models::security::{SecurityLevel, SecurityReport, SkillScanResult};
 use crate::models::Skill;
-use crate::security::cross_skill::{self, SkillScanContext};
 use crate::security::{ScanOptions, SecurityScanner};
 use anyhow::Result;
 use rayon::prelude::*;
@@ -104,7 +103,7 @@ fn scan_installed_skills_blocking(
                     &skill.id,
                     &locale_owned,
                     ScanOptions {
-                        skip_readme: true,
+                        skip_readme: false,
                         ..Default::default()
                     },
                     None,
@@ -138,77 +137,13 @@ fn scan_installed_skills_blocking(
             .collect::<Vec<(usize, SkillScanResult)>>()
     });
 
-    // ── 跨 Skill 协同攻击检测 ──
-    let cross_skill_contexts: Vec<SkillScanContext> = installed_skills
-        .iter()
-        .filter_map(|skill| {
-            let local_path = skill.local_path.as_ref()?;
-            let path = PathBuf::from(local_path);
-            if !path.exists() || !path.is_dir() {
-                return None;
-            }
-            cross_skill::build_scan_context_from_skill_dir(
-                skill.id.clone(),
-                skill.name.clone(),
-                skill.description.clone().unwrap_or_default(),
-                &path,
-            )
-        })
-        .collect();
-
-    if cross_skill_contexts.len() >= 2 {
-        let cross_findings = cross_skill::analyze_skill_set(&cross_skill_contexts);
-        if !cross_findings.is_empty() {
-            // 将 cross-skill findings 追加到所有已扫描 skill 的 report 中
-            for (_, result) in &mut results {
-                let cross_issues: Vec<_> = cross_findings
-                    .iter()
-                    .map(|f| crate::models::security::SecurityIssue {
-                        severity: f.severity,
-                        category: f.category.to_issue_category(),
-                        description: f.description.clone(),
-                        line_number: None,
-                        code_snippet: None,
-                        file_path: None,
-                        rule_id: Some(f.rule_id.clone()),
-                        confidence: f.metadata.as_ref().and_then(|m| m.confidence.clone()),
-                        remediation: f.remediation.clone(),
-                        cwe_id: f.metadata.as_ref().and_then(|m| m.cwe_id.clone()),
-                        threat_category: Some(f.category.as_str().to_string()),
-                        same_path_other_rule_ids: None,
-                        finding_kind: f
-                            .metadata
-                            .as_ref()
-                            .and_then(|m| m.finding_kind)
-                            .map(|k| k.as_str().to_string()),
-                        effective_weight: None,
-                    })
-                    .collect();
-                result.report.issues.extend(cross_issues);
-                let new_score = SecurityScanner::score_from_issues(
-                    &result.report.issues,
-                    result.report.blocked,
-                );
-                result.score = new_score;
-                result.report.score = new_score;
-                result.level = SecurityLevel::from_score(new_score).as_str().to_string();
-                result.report.level = SecurityLevel::from_score(new_score);
-
-                // 单体扫描结果在 cross-skill 分析前已经落库；追加协同攻击 finding
-                // 后必须再次保存，否则 IPC 当次显示的分数会在重启/切页后消失。
-                if let Some(original) = installed_skills
-                    .iter()
-                    .find(|skill| skill.id == result.skill_id)
-                {
-                    if let Err(error) = persist_skill_scan_report(&db, original, &result.report) {
-                        log::warn!(
-                            "Failed to persist cross-skill findings for '{}': {}",
-                            original.name,
-                            error
-                        );
-                    }
-                }
-            }
+    let reports = crate::services::skill_reports::refresh_cross_skill_reports(&db)
+        .map_err(|e| e.to_string())?;
+    for (_, result) in &mut results {
+        if let Some(report) = reports.get(&result.skill_id) {
+            result.report = report.clone();
+            result.score = report.score;
+            result.level = report.level.as_str().to_string();
         }
     }
 
@@ -261,6 +196,8 @@ fn scan_installed_skill_blocking(
         if let Err(e) = db.save_skill(&skill) {
             log::warn!("Failed to update stale skill '{}': {}", skill.name, e);
         }
+        crate::services::skill_reports::refresh_cross_skill_reports(&db)
+            .map_err(|e| e.to_string())?;
         return Err(format!(
             "[SKILL_DIR_NOT_FOUND] Skill directory does not exist: {}",
             local_path
@@ -274,7 +211,7 @@ fn scan_installed_skill_blocking(
             &skill.id,
             locale,
             ScanOptions {
-                skip_readme: true,
+                skip_readme: false,
                 ..Default::default()
             },
             None,
@@ -291,6 +228,10 @@ fn scan_installed_skill_blocking(
 
     db.save_skill(&skill)
         .map_err(|e| format!("Failed to save skill: {}", e))?;
+
+    let reports = crate::services::skill_reports::refresh_cross_skill_reports(&db)
+        .map_err(|e| e.to_string())?;
+    let report = reports.get(&skill.id).cloned().unwrap_or(report);
 
     Ok(SkillScanResult {
         skill_id: skill.id.clone(),

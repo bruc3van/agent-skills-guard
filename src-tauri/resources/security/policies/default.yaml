@@ -62,8 +62,6 @@ file_classification:
     - ".tiff"
     - ".heic"
     - ".heif"
-    - ".pyc"
-    - ".pyo"
     - ".db"
     - ".sqlite"
     - ".sqlite3"
@@ -82,7 +80,6 @@ rule_scoping:
     - "fixtures"
     - "samples"
     - "demo"
-    - "skills"
   # skip_in_docs: 这些规则在文档路径中直接跳过（docs/、examples/、test/ 等目录）
   # 适用场景：仅示例/教程中出现的低风险模式
   skip_in_docs:

@@ -624,8 +624,11 @@
         "critical": "严重问题",
         "high": "高风险问题",
         "medium": "中风险问题",
-        "low": "低风险问题"
-      }
+        "low": "低风险问题",
+        "info": "信息提示"
+      },
+      "noScoreImpact": "仅作提示，不扣分",
+      "scoreExplanation": "分数仅反映已扫描内容。相同规则在同一文件内不重复扣分；跨文件命中递减计分。扫描不完整时，高分不代表已确认安全。"
     }
   },
   "overview": {
@@ -677,7 +680,7 @@
     },
     "riskFilters": {
       "Severe": "严重风险",
-      "MidHigh": "中高风险",
+      "MidHigh": "风险或扫描未完整",
       "Safe": "安全"
     },
     "issues": {

@@ -266,8 +266,8 @@ fn default_keyword_baiting_threshold() -> usize {
 fn default_inert_extensions() -> HashSet<String> {
     [
         ".ttf", ".otf", ".woff", ".woff2", ".eot", ".png", ".jpg", ".jpeg", ".gif", ".webp",
-        ".avif", ".bmp", ".ico", ".icns", ".tif", ".tiff", ".heic", ".heif", ".pyc", ".pyo", ".db",
-        ".sqlite", ".sqlite3",
+        ".avif", ".bmp", ".ico", ".icns", ".tif", ".tiff", ".heic", ".heif", ".db", ".sqlite",
+        ".sqlite3",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -287,7 +287,6 @@ fn default_doc_path_indicators() -> HashSet<String> {
         "fixtures",
         "samples",
         "demo",
-        "skills",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -514,10 +513,51 @@ impl ScanPolicy {
             .any(|d| domain.contains(d.as_str()))
     }
 
+    /// Only prose gets documentation downgrades. Executable files retain the
+    /// same checks regardless of whether their directory is called docs/tests.
+    pub fn is_documentation_file(&self, path: &str) -> bool {
+        let normalized = path.replace('\\', "/").to_lowercase();
+        let path = std::path::Path::new(&normalized);
+        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+        matches!(ext, "md" | "mdx" | "txt" | "rst" | "adoc")
+            && (self.is_doc_path(&normalized)
+                || path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|name| name == "readme" || name.starts_with("readme.")))
+    }
+
     /// 计算策略指纹（用于报告追溯）
     pub fn fingerprint(&self) -> String {
         use sha2::{Digest, Sha256};
-        let serialized = serde_json::to_string(self).unwrap_or_default();
+        // HashSet serialization order is not stable across process launches.
+        // Sort only set-valued fields; ordered override lists keep their order.
+        fn canonicalize(value: &mut serde_json::Value) {
+            if let serde_json::Value::Object(map) = value {
+                for (key, value) in map {
+                    if matches!(
+                        key.as_str(),
+                        "disabled_rules"
+                            | "score_kinds"
+                            | "inert_extensions"
+                            | "doc_path_indicators"
+                            | "skip_in_docs"
+                            | "known_installer_domains"
+                            | "known_test_values"
+                            | "allowed_extensions"
+                            | "allowed_subdirs"
+                    ) {
+                        if let serde_json::Value::Array(items) = value {
+                            items.sort_by_key(|item| item.as_str().unwrap_or("").to_string());
+                        }
+                    }
+                    canonicalize(value);
+                }
+            }
+        }
+        let mut value = serde_json::to_value(self).expect("serializable scan policy");
+        canonicalize(&mut value);
+        let serialized = serde_json::to_string(&value).expect("serializable scan policy");
         let mut hasher = Sha256::new();
         hasher.update(serialized.as_bytes());
         format!("{:x}", hasher.finalize())[..16].to_string()

@@ -2,7 +2,11 @@ import { ReactNode, useMemo } from "react";
 import { AlertTriangle, CheckCircle, Loader2, XCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { SecurityReport } from "@/types/security";
-import { countIssuesBySeverity, countIssuesByKind, groupIssuesBySignature } from "@/lib/security-utils";
+import {
+  countIssuesBySeverity,
+  countIssuesByKind,
+  groupIssuesBySignature,
+} from "@/lib/security-utils";
 import { SecurityIssueMeta } from "@/components/SecurityIssueMeta";
 import {
   AlertDialog,
@@ -57,7 +61,10 @@ export function SkillSecurityDialog({
     [report]
   );
   const kindCounts = useMemo(
-    () => (report ? (report.kind_counts ?? countIssuesByKind(report.issues)) : { security: 0, auditability: 0, structure: 0 }),
+    () =>
+      report
+        ? (report.kind_counts ?? countIssuesByKind(report.issues))
+        : { security: 0, auditability: 0, structure: 0 },
     [report]
   );
   const groupedIssues = useMemo(
@@ -122,7 +129,7 @@ export function SkillSecurityDialog({
           <AlertDialogTitle className="flex items-center gap-2">
             {isHighRisk ? (
               <XCircle className="w-5 h-5 text-destructive" />
-            ) : isMediumRisk ? (
+            ) : isMediumRisk || hasPartialScan ? (
               <AlertTriangle className="w-5 h-5 text-warning" />
             ) : (
               <CheckCircle className="w-5 h-5 text-success" />
@@ -148,16 +155,20 @@ export function SkillSecurityDialog({
               <span className="text-sm">{t("skills.marketplace.install.securityScore")}:</span>
               <span
                 className={`text-2xl font-semibold ${
-                  report.score >= 70
-                    ? "text-success"
-                    : report.score >= 50
-                      ? "text-warning"
-                      : "text-destructive"
+                  hasPartialScan
+                    ? "text-warning"
+                    : report.score >= 70
+                      ? "text-success"
+                      : report.score >= 50
+                        ? "text-warning"
+                        : "text-destructive"
                 }`}
               >
                 {report.score}
               </span>
             </div>
+
+            <p className="text-xs text-muted-foreground">{t("security.detail.scoreExplanation")}</p>
 
             {leadContent}
 
@@ -212,19 +223,13 @@ export function SkillSecurityDialog({
                 {/* Kind 计数 */}
                 <div className="flex gap-4 text-xs text-muted-foreground">
                   {kindCounts.security > 0 && (
-                    <span className="text-destructive">
-                      Security: {kindCounts.security}
-                    </span>
+                    <span className="text-destructive">Security: {kindCounts.security}</span>
                   )}
                   {kindCounts.auditability > 0 && (
-                    <span className="text-warning">
-                      Auditability: {kindCounts.auditability}
-                    </span>
+                    <span className="text-warning">Auditability: {kindCounts.auditability}</span>
                   )}
                   {kindCounts.structure > 0 && (
-                    <span className="text-muted-foreground">
-                      Structure: {kindCounts.structure}
-                    </span>
+                    <span className="text-muted-foreground">Structure: {kindCounts.structure}</span>
                   )}
                 </div>
               </div>

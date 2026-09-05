@@ -81,7 +81,14 @@ pub fn mask_secrets(snippet: &str) -> String {
         let prefix = &secret_val[..4];
         let masked = "*".repeat(secret_val.len() - 4);
         let secret_start = caps.get(1).unwrap().start() - caps.get(0).unwrap().start();
-        format!("{}\"{}{}\"", &full[..secret_start], prefix, masked)
+        let secret_end = secret_start + secret_val.len();
+        format!(
+            "{}{}{}{}",
+            &full[..secret_start],
+            prefix,
+            masked,
+            &full[secret_end..]
+        )
     });
 
     // 7. Stripe live key: 保留前 8 字符 + 后 4 位

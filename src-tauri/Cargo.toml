@@ -60,6 +60,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # 正则表达式
 regex = "1.11"
 lazy-regex = "3"
+shell-words = "1.1"
 
 # UUID
 uuid = { version = "1.11", features = ["v4"] }
@@ -94,3 +95,6 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 # 仅开发模式启用（pnpm dev）；发布构建勿带此 feature
 devtools = ["tauri/devtools"]
+
+[target."cfg(windows)".dependencies]
+junction = "2"

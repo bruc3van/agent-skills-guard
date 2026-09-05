@@ -111,58 +111,14 @@ pub fn remove_dir_link(link: &Path) -> Result<()> {
 
 #[cfg(windows)]
 fn create_link_impl(source: &Path, link: &Path) -> Result<()> {
-    use std::process::Command;
-
-    let source_str = source.to_str().context("源路径包含无效字符")?;
-    let link_str = link.to_str().context("链接路径包含无效字符")?;
-
-    let run_mklink = || -> Result<std::process::Output> {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "mklink", "/J", link_str, source_str]);
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            command.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        command.output().context("无法执行 mklink 命令")
-    };
-
-    let mut output = run_mklink()?;
-
-    // cmd.exe /C 即使内部命令失败也可能返回 0，需要验证 junction 实际创建成功
-    if output.status.success() && link.exists() {
-        log::info!("创建 Junction: {:?} -> {:?}", link, source);
-        return Ok(());
-    }
-
-    if link.symlink_metadata().is_ok() {
-        log::warn!(
-            "mklink /J 后目标路径仍存在，清理后重试一次: {:?} -> {:?}",
-            link,
-            source
-        );
-        prepare_link_destination(link)?;
-        output = run_mklink()?;
-        if output.status.success() && link.exists() {
-            log::info!("创建 Junction: {:?} -> {:?}", link, source);
-            return Ok(());
+    match junction::create(source, link) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            log::warn!("无法创建 Junction，将尝试目录拷贝: {}", error);
+            prepare_link_destination(link)?;
+            copy_dir_fallback(source, link)
         }
     }
-
-    // Junction 失败时降级为目录拷贝（ReFS、跨卷等场景）
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    log::warn!(
-        "mklink /J 失败（exit={}, stderr={}, stdout={}），降级为目录拷贝: {:?} -> {:?}",
-        output.status.code().unwrap_or(-1),
-        stderr.trim(),
-        stdout.trim(),
-        source,
-        link
-    );
-    prepare_link_destination(link)?;
-    copy_dir_fallback(source, link)
 }
 
 #[cfg(not(windows))]
@@ -222,6 +178,21 @@ fn copy_dir_fallback(source: &Path, dst: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[cfg(windows)]
+    #[test]
+    fn junction_handles_shell_metacharacters_as_literal_path_names() {
+        let temp = tempdir().unwrap();
+        let source = temp.path().join("source&literal%name");
+        let link = temp.path().join("link&literal%name");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("sentinel"), "keep").unwrap();
+        create_dir_link(&source, &link).unwrap();
+        assert!(junction::exists(&link).unwrap());
+        assert!(link.join("sentinel").exists());
+        remove_dir_link(&link).unwrap();
+        assert!(source.join("sentinel").exists());
+    }
 
     #[test]
     fn test_create_and_remove_link() {

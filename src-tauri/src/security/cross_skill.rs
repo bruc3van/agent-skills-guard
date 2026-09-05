@@ -1,6 +1,8 @@
-//! 跨 Skill 协同攻击检测
+//! 跨 Skill 关联线索检测
 //!
-//! 检测多个 Skill 之间的协调攻击模式：
+//! 这些启发式只证明文本特征共现，不能证明数据传递或协调攻击。
+//! 因此保留为零权重提示；实际危险行为由单技能分析器独立检测。
+//! 关联线索包括：
 //! - 数据中继链（一个 Skill 收集凭据，另一个 Skill 外传）
 //! - 共享外部 URL（多个 Skill 引用同一非常见域名）
 //! - 互补触发器（collector + sender 描述对）
@@ -19,6 +21,19 @@ pub struct SkillScanContext {
     pub skill_name: String,
     pub description: String,
     pub file_contents: HashMap<String, String>, // rel_path → content
+}
+
+/// A finding carries exact participants; unrelated skills must not inherit it.
+#[derive(Debug)]
+pub struct CrossSkillFinding {
+    pub finding: Finding,
+    pub skill_ids: Vec<String>,
+}
+impl std::ops::Deref for CrossSkillFinding {
+    type Target = Finding;
+    fn deref(&self) -> &Finding {
+        &self.finding
+    }
 }
 
 const ANALYZER_NAME: &str = "cross_skill";
@@ -259,7 +274,7 @@ static RE_DOMAIN: Lazy<Regex> = lazy_regex!(r"https?://([^/\s:]+)");
 // ── 检测器 ──
 
 /// 检测数据中继链：一个 Skill 收集凭据，另一个 Skill 外传
-fn detect_data_relay(skills: &[SkillScanContext]) -> Vec<Finding> {
+fn detect_data_relay(skills: &[SkillScanContext]) -> Vec<CrossSkillFinding> {
     let mut findings = Vec::new();
 
     let mut collectors: Vec<&str> = Vec::new();
@@ -288,14 +303,18 @@ fn detect_data_relay(skills: &[SkillScanContext]) -> Vec<Finding> {
             .iter()
             .any(|c| exfiltrators.iter().any(|e| e != c));
         if has_distinct_pair {
-            findings.push(make_cross_skill_finding(
+            findings.push(make_cross_skill_advisory(
+                &collectors
+                    .iter()
+                    .chain(exfiltrators.iter())
+                    .copied()
+                    .collect::<Vec<_>>(),
                 "CROSS_SKILL_DATA_RELAY",
                 ThreatCategory::Network,
-                IssueSeverity::High,
-                "Data relay chain detected across skills",
+                "Potential data-handling relationship across skills",
                 &format!(
-                    "Skills [{:?}] collect sensitive data while [{:?}] exfiltrate data. \
-                     This may indicate a coordinated credential-stealing attack.",
+                    "Skills {:?} mention sensitive-data terms while {:?} contain network-related text. \
+                     No data transfer between these skills has been established; this is a review hint only.",
                     collectors, exfiltrators
                 ),
             ));
@@ -306,7 +325,7 @@ fn detect_data_relay(skills: &[SkillScanContext]) -> Vec<Finding> {
 }
 
 /// 检测共享外部 URL：多个 Skill 引用同一非常见域名
-fn detect_shared_urls(skills: &[SkillScanContext]) -> Vec<Finding> {
+fn detect_shared_urls(skills: &[SkillScanContext]) -> Vec<CrossSkillFinding> {
     let mut findings = Vec::new();
     let mut domain_skills: HashMap<String, Vec<&str>> = HashMap::new();
 
@@ -330,14 +349,14 @@ fn detect_shared_urls(skills: &[SkillScanContext]) -> Vec<Finding> {
 
     for (domain, skill_ids) in &domain_skills {
         if skill_ids.len() >= 2 {
-            findings.push(make_cross_skill_finding(
+            findings.push(make_cross_skill_advisory(
+                skill_ids,
                 "CROSS_SKILL_SHARED_URL",
                 ThreatCategory::Obfuscation,
-                IssueSeverity::Medium,
                 "Shared external URL across skills",
                 &format!(
                     "Skills {:?} all reference domain '{}'. \
-                     Shared external endpoints may indicate coordinated C2 or data collection.",
+                     A shared domain may be a documentation or schema reference; this alone does not establish coordinated behavior.",
                     skill_ids, domain
                 ),
             ));
@@ -348,7 +367,7 @@ fn detect_shared_urls(skills: &[SkillScanContext]) -> Vec<Finding> {
 }
 
 /// 检测互补触发器：collector + sender 描述对共享上下文词
-fn detect_complementary_triggers(skills: &[SkillScanContext]) -> Vec<Finding> {
+fn detect_complementary_triggers(skills: &[SkillScanContext]) -> Vec<CrossSkillFinding> {
     let mut findings = Vec::new();
 
     let mut collectors: Vec<(&str, Vec<String>)> = Vec::new();
@@ -362,8 +381,12 @@ fn detect_complementary_triggers(skills: &[SkillScanContext]) -> Vec<Finding> {
             .map(|w| w.to_string())
             .collect();
 
-        let is_collector = COLLECTOR_WORDS.iter().any(|w| desc_lower.contains(w));
-        let is_sender = SENDER_WORDS.iter().any(|w| desc_lower.contains(w));
+        let is_collector = COLLECTOR_WORDS
+            .iter()
+            .any(|w| words.iter().any(|word| word == w));
+        let is_sender = SENDER_WORDS
+            .iter()
+            .any(|w| words.iter().any(|word| word == w));
 
         if is_collector {
             collectors.push((&skill.skill_id, words.clone()));
@@ -383,14 +406,14 @@ fn detect_complementary_triggers(skills: &[SkillScanContext]) -> Vec<Finding> {
                 .filter(|w| sender_words.contains(w))
                 .collect();
             if shared.len() >= 2 {
-                findings.push(make_cross_skill_finding(
+                findings.push(make_cross_skill_advisory(
+                    &[*collector_id, *sender_id],
                     "CROSS_SKILL_COMPLEMENTARY_TRIGGERS",
                     ThreatCategory::SocialEngineering,
-                    IssueSeverity::Low,
                     "Complementary trigger descriptions across skills",
                     &format!(
                         "Skill '{}' (collector) and '{}' (sender) share context words: {:?}. \
-                         Complementary descriptions may indicate coordinated social engineering.",
+                         Similar descriptions alone do not establish coordinated behavior.",
                         collector_id, sender_id, shared
                     ),
                 ));
@@ -402,7 +425,7 @@ fn detect_complementary_triggers(skills: &[SkillScanContext]) -> Vec<Finding> {
 }
 
 /// 检测共享可疑模式：多个 Skill 包含相同混淆/执行模式
-fn detect_shared_patterns(skills: &[SkillScanContext]) -> Vec<Finding> {
+fn detect_shared_patterns(skills: &[SkillScanContext]) -> Vec<CrossSkillFinding> {
     let mut findings = Vec::new();
     let mut pattern_skills: HashMap<&str, Vec<&str>> = HashMap::new();
 
@@ -420,14 +443,14 @@ fn detect_shared_patterns(skills: &[SkillScanContext]) -> Vec<Finding> {
 
     for (pattern_name, skill_ids) in &pattern_skills {
         if skill_ids.len() >= 2 {
-            findings.push(make_cross_skill_finding(
+            findings.push(make_cross_skill_advisory(
+                skill_ids,
                 "CROSS_SKILL_SHARED_PATTERN",
                 ThreatCategory::Obfuscation,
-                IssueSeverity::Medium,
                 "Shared suspicious pattern across skills",
                 &format!(
                     "Skills {:?} all contain the '{}' pattern. \
-                     Shared obfuscation techniques may indicate coordinated malicious behavior.",
+                     These constructs also have legitimate uses; their coexistence alone does not establish malicious behavior.",
                     skill_ids, pattern_name
                 ),
             ));
@@ -440,7 +463,7 @@ fn detect_shared_patterns(skills: &[SkillScanContext]) -> Vec<Finding> {
 // ── 公共接口 ──
 
 /// 对一组 Skill 执行跨 Skill 协同攻击检测
-pub fn analyze_skill_set(skills: &[SkillScanContext]) -> Vec<Finding> {
+pub fn analyze_skill_set(skills: &[SkillScanContext]) -> Vec<CrossSkillFinding> {
     if skills.len() < 2 {
         return Vec::new(); // 至少需要 2 个 Skill
     }
@@ -450,6 +473,7 @@ pub fn analyze_skill_set(skills: &[SkillScanContext]) -> Vec<Finding> {
     findings.extend(detect_shared_urls(skills));
     findings.extend(detect_complementary_triggers(skills));
     findings.extend(detect_shared_patterns(skills));
+    findings.sort_by(|a, b| (&a.rule_id, &a.id).cmp(&(&b.rule_id, &b.id)));
     findings
 }
 
@@ -478,33 +502,40 @@ fn extract_domain(url: &str) -> Option<String> {
         .map(|m| m.as_str().to_lowercase())
 }
 
-fn make_cross_skill_finding(
+fn make_cross_skill_advisory(
+    skill_ids: &[&str],
     rule_id: &str,
     category: ThreatCategory,
-    severity: IssueSeverity,
     title: &str,
     description: &str,
-) -> Finding {
-    finding_builder::make_finding(FindingSpec {
+) -> CrossSkillFinding {
+    let mut finding = finding_builder::make_finding(FindingSpec {
         rule_id,
         category,
-        severity,
+        severity: IssueSeverity::Info,
         title,
         description: description.to_string(),
         file_path: None,
         line_number: None,
         snippet: None,
         remediation: Some(
-            "Review the coordinated behavior across skills for potential security risks."
+            "Check whether these skills actually exchange data; shared text alone does not establish a security risk."
                 .to_string(),
         ),
         analyzer: ANALYZER_NAME,
         finding_kind: FindingKind::Security,
         rule_source: None,
         cwe_id: None,
-        confidence: Some("Medium".to_string()),
+        confidence: Some("Low".to_string()),
         id_salt: Some(description),
-    })
+    });
+    // Explicit zero survives conversion and report persistence. Info alone still
+    // has a default score penalty, so severity is not sufficient here.
+    finding.metadata.as_mut().expect("finding metadata").weight = Some(0);
+    let mut skill_ids: Vec<_> = skill_ids.iter().map(|s| s.to_string()).collect();
+    skill_ids.sort();
+    skill_ids.dedup();
+    CrossSkillFinding { finding, skill_ids }
 }
 
 /// 从已安装 Skill 目录构建跨 Skill 分析上下文（递归读取可扫描文本文件）
@@ -556,6 +587,54 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn correlation_without_data_flow_is_informational_and_does_not_reduce_score() {
+        use crate::security::SecurityScanner;
+        let contexts = [
+            make_ctx("formatter", "Read and collect document reports", vec![("SKILL.md",
+                "Token budget and cookie examples. https://schemas.example.invalid/doc base64.b64decode(data)")]),
+            make_ctx("exporter", "Export and send document reports", vec![("reference.md",
+                "Example requests.post('https://schemas.example.invalid/doc'); base64.b64decode(data)")]),
+        ];
+        let findings = analyze_skill_set(&contexts);
+        for id in [
+            "CROSS_SKILL_DATA_RELAY",
+            "CROSS_SKILL_SHARED_URL",
+            "CROSS_SKILL_COMPLEMENTARY_TRIGGERS",
+            "CROSS_SKILL_SHARED_PATTERN",
+        ] {
+            assert!(findings.iter().any(|f| f.rule_id == id), "{id}");
+        }
+        let issues: Vec<_> = findings
+            .iter()
+            .map(|f| SecurityScanner::issue_from_finding(f))
+            .collect();
+        assert!(issues
+            .iter()
+            .all(|i| i.severity == IssueSeverity::Info && i.effective_weight == Some(0)));
+        assert_eq!(SecurityScanner::score_from_issues(&issues, false), 100);
+        // A real destructive command must still block, even alongside advisory findings.
+        let mut report = SecurityScanner::new()
+            .scan_file("rm -rf /*", "scripts/run.sh", "en")
+            .unwrap();
+        assert!(report.blocked);
+        let score = report.score;
+        report.issues.extend(issues);
+        assert_eq!(
+            SecurityScanner::score_from_issues(&report.issues, report.blocked),
+            score
+        );
+    }
+
+    #[test]
+    fn descriptions_match_words_not_substrings() {
+        let contexts = [
+            make_ctx("a", "thread local database analytics", vec![]),
+            make_ctx("b", "postgres local database analytics", vec![]),
+        ];
+        assert!(analyze_skill_set(&contexts).is_empty());
     }
 
     #[test]

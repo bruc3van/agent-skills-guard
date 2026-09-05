@@ -1,3 +1,4 @@
+import { hasIncompleteScan } from "@/lib/security-utils";
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -196,7 +197,13 @@ export function SecurityDashboard() {
                       <ScoreDisplay score={result.score} />
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <SecurityBadge level={result.level} />
+                      {hasIncompleteScan(result.report) ? (
+                        <span className="text-sm text-warning">
+                          {t("security.detail.partialScan")}
+                        </span>
+                      ) : (
+                        <SecurityBadge level={result.level} />
+                      )}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <div className="flex items-center justify-center gap-2 text-xs">

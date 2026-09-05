@@ -18,6 +18,56 @@ use std::sync::Arc;
 use std::time::Duration;
 use which::which;
 
+fn require_prepared_plugin(plugin: &Plugin) -> Result<()> {
+    if plugin.install_status.as_deref() == Some("blocked") {
+        anyhow::bail!("PLUGIN_SECURITY_BLOCKED: 请重新扫描插件");
+    }
+    if plugin.install_status.as_deref() != Some("prepared") || plugin.staging_path.is_none() {
+        anyhow::bail!("PLUGIN_NOT_PREPARED: 请先扫描插件");
+    }
+    ensure_plugin_report_installable(
+        plugin
+            .security_report
+            .as_ref()
+            .context("PLUGIN_NOT_PREPARED")?,
+    )
+}
+
+fn ensure_plugin_report_installable(report: &SecurityReport) -> Result<()> {
+    if report.blocked || !report.hard_trigger_issues.is_empty() {
+        anyhow::bail!("PLUGIN_SECURITY_BLOCKED: 安全扫描发现高危操作");
+    }
+    if report.partial_scan || !report.skipped_files.is_empty() {
+        anyhow::bail!("PLUGIN_PARTIAL_SCAN: 插件未被完整扫描，已停止安装");
+    }
+    Ok(())
+}
+
+fn selected_plugin_source(root: &Path, plugin: &Plugin) -> Result<PathBuf> {
+    validate_marketplace_name(&plugin.name)?;
+    validate_marketplace_name(&plugin.marketplace_name)?;
+    let manifest = read_marketplace_manifest(root)?.context("PLUGIN_MANIFEST_MISSING")?;
+    if manifest.name != plugin.marketplace_name {
+        anyhow::bail!("PLUGIN_MARKETPLACE_CHANGED");
+    }
+    let mut entries = manifest.plugins.iter().filter(|p| p.name == plugin.name);
+    let entry = entries.next().context("PLUGIN_SOURCE_CHANGED")?;
+    if entries.next().is_some() {
+        anyhow::bail!("PLUGIN_SOURCE_AMBIGUOUS");
+    }
+    let local = entry
+        .source
+        .local_path_source()
+        .context("PLUGIN_REMOTE_SOURCE_UNSCANNED: 该插件使用独立远程来源，尚无法验证安装内容")?;
+    let source = resolve_source_path(root, &local)?
+        .canonicalize()
+        .context("PLUGIN_SOURCE_MISSING")?;
+    if !source.starts_with(root.canonicalize()?) {
+        anyhow::bail!("PLUGIN_SOURCE_OUTSIDE_MARKETPLACE");
+    }
+    Ok(source)
+}
+
 /// IPC may select the Claude launcher name for compatibility with Windows, but it must
 /// never supply an arbitrary path/executable. Resolution remains delegated to PATH.
 fn resolve_claude_command(requested: Option<String>) -> Result<Option<String>> {
@@ -131,7 +181,6 @@ impl AuthorField {
 #[derive(Debug)]
 struct ResolvedPlugin {
     plugin: Plugin,
-    source_path: PathBuf,
 }
 
 #[derive(Debug, Serialize)]
@@ -1161,11 +1210,15 @@ impl PluginManager {
             .context("未找到该插件")?;
 
         let repositories = self.db.get_repositories()?;
-        let repo = repositories
-            .iter()
-            .find(|r| r.url == plugin.repository_url)
-            .context("未找到对应的仓库记录")?
-            .clone();
+        let repo = match repositories.iter().find(|r| r.url == plugin.repository_url) {
+            Some(repo) => repo.clone(),
+            None => {
+                let url = Repository::normalize_github_url(&plugin.repository_url)?;
+                let repo = Repository::new(url, plugin.marketplace_name.clone());
+                self.db.add_repository(&repo)?;
+                repo
+            }
+        };
 
         let cache_path = if let Some(existing_cache_path) = &repo.cache_path {
             let cache_path_buf = PathBuf::from(existing_cache_path);
@@ -1181,44 +1234,16 @@ impl PluginManager {
         };
 
         let repo_root = find_repo_root(&cache_path)?;
-        let mut resolved_plugins = resolve_marketplace_plugins(
-            &repo_root,
-            &plugin.repository_url,
-            false, // 不强制要求 plugin.json 存在
+        let source_path = selected_plugin_source(&repo_root, &plugin)?;
+        let marketplace_name = plugin.marketplace_name.clone();
+        let report = self.scanner.scan_directory_with_options(
+            source_path.to_str().context("插件目录路径无效")?,
+            &plugin.id,
+            locale,
+            ScanOptions::default(),
+            None,
         )?;
-
-        if resolved_plugins.is_empty() {
-            anyhow::bail!("未发现可安装的插件");
-        }
-
-        let existing_plugins = self.db.get_plugins().unwrap_or_default();
-
-        for resolved in &mut resolved_plugins {
-            if let Some(existing) = find_existing_plugin(&existing_plugins, &resolved.plugin) {
-                resolved.plugin.merge_existing(existing);
-            }
-        }
-
-        let marketplace_name = resolved_plugins
-            .first()
-            .map(|p| p.plugin.marketplace_name.clone())
-            .unwrap_or_else(|| plugin.marketplace_name.clone());
-        validate_existing_marketplace_name(&marketplace_name)?;
-
-        let mut reports = Vec::new();
-        for resolved in &resolved_plugins {
-            let report = self.scanner.scan_directory_with_options(
-                resolved.source_path.to_str().context("插件目录路径无效")?,
-                &resolved.plugin.id,
-                locale,
-                ScanOptions {
-                    skip_readme: true,
-                    ..Default::default()
-                },
-                None,
-            )?;
-            reports.push((resolved.plugin.clone(), report));
-        }
+        let reports = vec![(plugin.clone(), report)];
 
         // 聚合发生在剥离之前：merge_reports 需要各插件的 scanned_files
         // 来拼装跨插件的文件清单
@@ -1236,9 +1261,7 @@ impl PluginManager {
             updated.security_report = Some(report.clone());
             updated.scanned_at = Some(now);
             updated.staging_path = Some(repo_root.to_string_lossy().to_string());
-            if blocked && !updated.installed {
-                updated.install_status = Some("blocked".to_string());
-            }
+            updated.install_status = Some(if blocked { "blocked" } else { "prepared" }.to_string());
             self.db.save_plugin(&updated)?;
         }
 
@@ -1267,20 +1290,39 @@ impl PluginManager {
             .find(|p| p.id == plugin_id)
             .context("未找到该插件")?;
 
-        let marketplace_repo = plugin
-            .marketplace_add_command
-            .as_deref()
-            .and_then(extract_marketplace_repo_from_command)
-            .or_else(|| {
-                Repository::from_github_url(&plugin.repository_url)
-                    .ok()
-                    .map(|(owner, repo_name)| format!("{}/{}", owner, repo_name))
-            })
-            .context("无法解析 marketplace repo")?;
+        require_prepared_plugin(&plugin)?;
+        let staged_root = PathBuf::from(
+            plugin
+                .staging_path
+                .as_ref()
+                .context("PLUGIN_NOT_PREPARED")?,
+        );
+        let staged_source = selected_plugin_source(&staged_root, &plugin)?;
+        let report = self.scanner.scan_directory_with_options(
+            staged_source.to_str().context("INVALID_PLUGIN_PATH")?,
+            &plugin.id,
+            "zh",
+            ScanOptions::default(),
+            None,
+        )?;
+        if let Err(error) = ensure_plugin_report_installable(&report) {
+            let mut rejected = plugin.clone();
+            rejected.security_score = Some(report.score);
+            rejected.security_level = Some(report.level.as_str().to_string());
+            rejected.security_issues = Some(report.issues.clone());
+            rejected.security_report = Some(report.without_scanned_file_list());
+            rejected.install_status = Some("blocked".into());
+            rejected.staging_path = None;
+            rejected.scanned_at = Some(Utc::now());
+            self.db.save_plugin(&rejected)?;
+            return Err(error);
+        }
+        let (owner, repo) = Repository::from_github_url(&plugin.repository_url)?;
+        let marketplace_repo = format!("{owner}/{repo}");
         let marketplace_name = plugin.marketplace_name.clone();
         validate_existing_marketplace_name(&marketplace_name)?;
 
-        let Some(cli_command) = resolve_claude_command(claude_command)? else {
+        let Some(cli_command) = resolve_claude_command(claude_command.clone())? else {
             let mut message = "未找到 Claude Code CLI".to_string();
             if which("codex").is_ok() {
                 message.push_str("\n检测到 Codex，但该流程仅支持 Claude Code Plugin。");
@@ -1293,18 +1335,12 @@ impl PluginManager {
         let claude_cli = ClaudeCli::new(cli_command);
 
         // 构建命令：1. marketplace add，2. 只安装选中的单个 plugin
-        let add_args = plugin
-            .marketplace_add_command
-            .as_deref()
-            .and_then(parse_slash_command_args)
-            .unwrap_or_else(|| {
-                vec![
-                    "plugin".to_string(),
-                    "marketplace".to_string(),
-                    "add".to_string(),
-                    marketplace_repo.clone(),
-                ]
-            });
+        let add_args = vec![
+            "plugin".into(),
+            "marketplace".into(),
+            "add".into(),
+            marketplace_repo.clone(),
+        ];
 
         let add_result = claude_cli.run(&[ClaudeCommand {
             args: add_args,
@@ -1348,17 +1384,39 @@ impl PluginManager {
             }
         }
 
-        let install_args = plugin
-            .plugin_install_command
-            .as_deref()
-            .and_then(parse_slash_command_args)
-            .unwrap_or_else(|| {
-                vec![
-                    "plugin".to_string(),
-                    "install".to_string(),
-                    plugin.plugin_spec(),
-                ]
-            });
+        if !marketplace_outcome.success {
+            anyhow::bail!("PLUGIN_MARKETPLACE_ADD_FAILED: {}", marketplace_output);
+        }
+        // Scan the marketplace actually used by Claude, not merely our older cache.
+        let actual_root = self
+            .get_claude_marketplaces(claude_command.clone())
+            .await?
+            .into_iter()
+            .find(|m| m.name == marketplace_name)
+            .and_then(|m| m.install_location)
+            .context("PLUGIN_INSTALL_SOURCE_UNKNOWN: 无法确认 Claude 使用的本地来源")?;
+        let actual_source = selected_plugin_source(Path::new(&actual_root), &plugin)?;
+        let actual_report = self.scanner.scan_directory_with_options(
+            actual_source.to_str().context("INVALID_PLUGIN_PATH")?,
+            &plugin.id,
+            "zh",
+            ScanOptions::default(),
+            None,
+        )?;
+        let mut checked = plugin.clone();
+        checked.security_score = Some(actual_report.score);
+        checked.security_level = Some(actual_report.level.as_str().to_string());
+        checked.security_issues = Some(actual_report.issues.clone());
+        checked.security_report = Some(actual_report.clone().without_scanned_file_list());
+        checked.scanned_at = Some(Utc::now());
+        if ensure_plugin_report_installable(&actual_report).is_err() {
+            checked.install_status = Some("blocked".into());
+            checked.staging_path = None;
+            self.db.save_plugin(&checked)?;
+            ensure_plugin_report_installable(&actual_report)?;
+        }
+        let plugin = checked;
+        let install_args = vec!["plugin".into(), "install".into(), plugin.plugin_spec()];
 
         // 只安装选中的单个 plugin
         let install_result = claude_cli.run(&[ClaudeCommand {
@@ -1720,27 +1778,6 @@ fn clear_plugin_installation_state(plugin: &mut Plugin) {
     plugin.claude_enabled = None;
     plugin.claude_install_path = None;
     plugin.claude_last_updated = None;
-}
-
-fn parse_slash_command_args(command: &str) -> Option<Vec<String>> {
-    let trimmed = command.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
-    let parts: Vec<String> = trimmed.split_whitespace().map(|s| s.to_string()).collect();
-    if parts.first().map(|s| s.as_str()) != Some("plugin") {
-        return None;
-    }
-    Some(parts)
-}
-
-fn extract_marketplace_repo_from_command(command: &str) -> Option<String> {
-    let parts = parse_slash_command_args(command)?;
-    if parts.len() >= 4 && parts[0] == "plugin" && parts[1] == "marketplace" && parts[2] == "add" {
-        return Some(parts[3].clone());
-    }
-    None
 }
 
 fn apply_exit_success_to_outcome(
@@ -2815,10 +2852,7 @@ fn resolve_marketplace_plugins(
             .and_then(|m| m.author.as_ref().and_then(|a| a.to_display()))
             .or(entry.author.as_ref().and_then(|a| a.to_display()));
 
-        resolved.push(ResolvedPlugin {
-            plugin,
-            source_path,
-        });
+        resolved.push(ResolvedPlugin { plugin });
     }
 
     Ok(resolved)
@@ -2900,5 +2934,126 @@ fn author_to_display(author: &FeaturedMarketplaceOwner) -> Option<String> {
         (Some(name), None) => Some(name.clone()),
         (None, Some(email)) => Some(email.clone()),
         (None, None) => None,
+    }
+}
+
+#[cfg(test)]
+mod install_gate_tests {
+    use super::*;
+
+    fn fixture() -> (
+        tempfile::TempDir,
+        Arc<Database>,
+        PluginManager,
+        Plugin,
+        PathBuf,
+    ) {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("db.sqlite")).unwrap());
+        let root = temp.path().join("cache/market");
+        std::fs::create_dir_all(root.join(".claude-plugin")).unwrap();
+        std::fs::create_dir_all(root.join("plugins/test/scripts")).unwrap();
+        std::fs::write(
+            root.join(".claude-plugin/marketplace.json"),
+            r#"{"name":"market","plugins":[{"name":"test","source":"./plugins/test"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("plugins/test/SKILL.md"), "---\nname: test\ndescription: Format local files when requested.\nlicense: MIT\n---\nFormat local files.").unwrap();
+        let plugin = Plugin::new(
+            "test".into(),
+            "https://github.com/example/market".into(),
+            "market".into(),
+            "./plugins/test".into(),
+        );
+        db.save_plugin(&plugin).unwrap();
+        let mut repo = Repository::new(plugin.repository_url.clone(), "market".into());
+        repo.cache_path = Some(root.parent().unwrap().to_string_lossy().into_owned());
+        db.add_repository(&repo).unwrap();
+        let manager = PluginManager::new(db.clone());
+        (temp, db, manager, plugin, root)
+    }
+
+    #[tokio::test]
+    async fn unprepared_and_blocked_are_rejected_before_cli_resolution() {
+        let (_temp, db, manager, mut plugin, _) = fixture();
+        for state in [None, Some("blocked")] {
+            plugin.install_status = state.map(str::to_string);
+            db.save_plugin(&plugin).unwrap();
+            let error = manager
+                .confirm_plugin_installation(&plugin.id, Some("untrusted-executable".into()))
+                .await
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(
+                error.contains("PLUGIN_NOT_PREPARED") || error.contains("PLUGIN_SECURITY_BLOCKED"),
+                "{error}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn prepared_content_is_rescanned_before_any_cli_execution() {
+        let (_temp, _db, manager, plugin, root) = fixture();
+        manager
+            .prepare_plugin_installation(&plugin.id, "en")
+            .await
+            .unwrap();
+        std::fs::write(root.join("plugins/test/scripts/changed.sh"), "rm -rf /*").unwrap();
+        let error = manager
+            .confirm_plugin_installation(&plugin.id, Some("untrusted-executable".into()))
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("PLUGIN_SECURITY_BLOCKED"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn prepare_cannot_substitute_marketplace_for_remote_plugin_source() {
+        let (_temp, _db, manager, plugin, root) = fixture();
+        std::fs::write(root.join(".claude-plugin/marketplace.json"), r#"{"name":"market","plugins":[{"name":"test","source":{"source":"github","repo":"other/remote"}}]}"#).unwrap();
+        let error = manager
+            .prepare_plugin_installation(&plugin.id, "en")
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("PLUGIN_REMOTE_SOURCE_UNSCANNED"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn incomplete_prepare_cannot_be_confirmed() {
+        let (_temp, _db, manager, plugin, root) = fixture();
+        std::fs::write(
+            root.join("plugins/test/payload.zip"),
+            b"PK\x03\x04\0payload",
+        )
+        .unwrap();
+        let report = manager
+            .prepare_plugin_installation(&plugin.id, "en")
+            .await
+            .unwrap();
+        assert!(report.partial_scan);
+        let error = manager
+            .confirm_plugin_installation(&plugin.id, Some("untrusted-executable".into()))
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("PLUGIN_PARTIAL_SCAN"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn clean_prepare_and_cancel_update_authorization() {
+        let (_temp, db, manager, plugin, _) = fixture();
+        manager
+            .prepare_plugin_installation(&plugin.id, "en")
+            .await
+            .unwrap();
+        let prepared = db.get_plugins().unwrap().pop().unwrap();
+        require_prepared_plugin(&prepared).unwrap();
+        manager.cancel_plugin_installation(&plugin.id).unwrap();
+        assert!(require_prepared_plugin(&db.get_plugins().unwrap().pop().unwrap()).is_err());
     }
 }

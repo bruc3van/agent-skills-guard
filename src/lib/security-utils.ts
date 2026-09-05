@@ -1,7 +1,9 @@
-import type { SecurityIssue, KindCounts } from "@/types/security";
+import type { SecurityIssue, KindCounts, SecurityReport } from "@/types/security";
 
 export function hasIssueMetadata(issue: SecurityIssue): boolean {
-  return Boolean(issue.confidence || issue.remediation || issue.rule_id);
+  return Boolean(
+    issue.confidence || issue.remediation || issue.rule_id || issue.effective_weight === 0
+  );
 }
 
 const severityOrder: Record<string, number> = {
@@ -87,4 +89,17 @@ export function groupIssuesBySignature(issues: SecurityIssue[]): GroupedSecurity
   }
 
   return Array.from(grouped.values());
+}
+
+export function hasIncompleteScan(report?: Partial<SecurityReport> | null): boolean {
+  return Boolean(report?.partial_scan || report?.skipped_files?.length);
+}
+
+export function scanReviewGroup(
+  level: string,
+  report?: Partial<SecurityReport> | null
+): "Severe" | "MidHigh" | "Safe" {
+  if (report?.blocked || level === "Critical") return "Severe";
+  if (hasIncompleteScan(report) || level === "High" || level === "Medium") return "MidHigh";
+  return "Safe";
 }

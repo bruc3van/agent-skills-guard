@@ -189,6 +189,15 @@ pub async fn delete_repository(state: State<'_, AppState>, repo_id: String) -> R
 
     let repository_url = repo.url.clone();
     let cache_path = repo.cache_path.clone();
+    // Validate before changing any database rows or deleting filesystem objects.
+    if let Some(path) = cache_path.as_deref().filter(|p| Path::new(p).exists()) {
+        let base = dirs::cache_dir()
+            .ok_or("CACHE_ROOT_UNAVAILABLE")?
+            .join("agent-skills-guard")
+            .join("repositories");
+        crate::services::github::repository_cache_cleanup_target(Path::new(path), &base)
+            .map_err(|e| e.to_string())?;
+    }
 
     // 2. 删除未安装的技能（使用事务）
     let deleted_skills_count = state

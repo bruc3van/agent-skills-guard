@@ -137,6 +137,48 @@ export function MarketplacePage({
   const [selectedRepository, setSelectedRepository] = useState("all");
   const [activeTypeTab, setActiveTypeTab] = useState<"all" | "skills" | "plugins">("all");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [pendingPluginInstall, setPendingPluginInstall] = useState<{
+    plugin: Plugin;
+    report: SecurityReport;
+  } | null>(null);
+  const completePluginInstallation = async (plugin: Plugin) => {
+    setPendingPluginInstall(null);
+    try {
+      setInstallStatus((prev) => ({
+        ...prev,
+        installingPluginId: plugin.id,
+      }));
+      const result = await api.confirmPluginInstallation(plugin.id);
+      await queryClient.refetchQueries({ queryKey: ["plugins"] });
+      const hasFailed =
+        result.marketplace_status === "failed" ||
+        result.plugin_statuses.some((status) => status.status === "failed");
+      if (hasFailed) {
+        const detail = summarizePluginInstallFailure(result);
+        appToast.error(
+          detail
+            ? `${t("plugins.toast.installFailed")}: ${detail}`
+            : t("plugins.toast.installFailed")
+        );
+      } else if (getPluginScanPromptEnabled()) {
+        setInstallStatus((prev) => ({
+          ...prev,
+          scanPromptPlugin: plugin,
+        }));
+      } else {
+        appToast.success(t("plugins.toast.installed"));
+      }
+    } catch (error: any) {
+      appToast.error(`${t("plugins.toast.installFailed")}: ${error.message || error}`);
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ["plugins"] });
+      setInstallStatus((prev) => ({
+        ...prev,
+        installingPluginId: null,
+      }));
+    }
+  };
+
   const [logPlugin, setLogPlugin] = useState<Plugin | null>(null);
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
   const listContainerRef = useRef<HTMLDivElement | null>(null);
@@ -516,43 +558,21 @@ export function MarketplacePage({
                     }
                     onViewLog={() => setLogPlugin(entry.item)}
                     onInstall={async () => {
-                      if (entry.item.install_status === "unsupported") {
-                        return;
-                      }
+                      if (entry.item.install_status === "unsupported") return;
+                      setInstallStatus((prev) => ({ ...prev, installingPluginId: entry.item.id }));
                       try {
-                        setInstallStatus((prev) => ({
-                          ...prev,
-                          installingPluginId: entry.item.id,
-                        }));
-                        const result = await api.confirmPluginInstallation(entry.item.id);
-                        await queryClient.refetchQueries({ queryKey: ["plugins"] });
-                        const hasFailed =
-                          result.marketplace_status === "failed" ||
-                          result.plugin_statuses.some((status) => status.status === "failed");
-                        if (hasFailed) {
-                          const detail = summarizePluginInstallFailure(result);
-                          appToast.error(
-                            detail
-                              ? `${t("plugins.toast.installFailed")}: ${detail}`
-                              : t("plugins.toast.installFailed")
-                          );
-                        } else if (getPluginScanPromptEnabled()) {
-                          setInstallStatus((prev) => ({
-                            ...prev,
-                            scanPromptPlugin: entry.item,
-                          }));
-                        } else {
-                          appToast.success(t("plugins.toast.installed"));
-                        }
+                        const report = await api.preparePluginInstallation(
+                          entry.item.id,
+                          i18n.language
+                        );
+                        setPendingPluginInstall({ plugin: entry.item, report });
                       } catch (error: any) {
                         appToast.error(
                           `${t("plugins.toast.installFailed")}: ${error.message || error}`
                         );
                       } finally {
-                        setInstallStatus((prev) => ({
-                          ...prev,
-                          installingPluginId: null,
-                        }));
+                        await queryClient.invalidateQueries({ queryKey: ["plugins"] });
+                        setInstallStatus((prev) => ({ ...prev, installingPluginId: null }));
                       }
                     }}
                   />
@@ -662,9 +682,7 @@ export function MarketplacePage({
               await queryClient.refetchQueries({ queryKey: ["skills"] });
               await queryClient.refetchQueries({ queryKey: ["skills", "installed"] });
               await queryClient.refetchQueries({ queryKey: ["scanResults"] });
-              appToast.warning(
-                `${t("skills.toast.installedWithSyncWarning")}: ${message}`
-              );
+              appToast.warning(`${t("skills.toast.installedWithSyncWarning")}: ${message}`);
             } else {
               appToast.error(`${t("skills.toast.installFailed")}: ${message}`);
             }
@@ -677,6 +695,39 @@ export function MarketplacePage({
         }}
         report={pendingInstall?.report || null}
         skillName={pendingInstall?.skill.name || ""}
+      />
+
+      <SkillSecurityDialog
+        open={pendingPluginInstall !== null}
+        onOpenChange={(open) => {
+          if (!open && pendingPluginInstall) {
+            void api.cancelPluginInstallation(pendingPluginInstall.plugin.id).catch(console.error);
+            setPendingPluginInstall(null);
+          }
+        }}
+        title={t("skills.marketplace.install.scanResult")}
+        skillName={pendingPluginInstall?.plugin.name ?? ""}
+        preparingLabel={t("skills.marketplace.install.preparingInstall")}
+        report={pendingPluginInstall?.report ?? null}
+        footer={
+          <>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <SkillSecurityDialogConfirmButton
+              label={t("plugins.install")}
+              loadingLabel={t("plugins.installing")}
+              disabled={
+                !pendingPluginInstall ||
+                pendingPluginInstall.report.blocked ||
+                pendingPluginInstall.report.partial_scan ||
+                pendingPluginInstall.report.skipped_files.length > 0
+              }
+              onClick={() => {
+                if (pendingPluginInstall)
+                  void completePluginInstallation(pendingPluginInstall.plugin);
+              }}
+            />
+          </>
+        }
       />
 
       <PluginLogDialog
@@ -965,9 +1016,18 @@ function PluginCard({
         </div>
 
         <div className="flex gap-2">
+          {isBlocked && !plugin.installed && (
+            <button
+              onClick={onInstall}
+              disabled={isAnyOperationPending}
+              className="apple-button-secondary text-xs"
+            >
+              {t("overview.rescan")}
+            </button>
+          )}
           <button
             onClick={onInstall}
-            disabled={isAnyOperationPending || plugin.installed || isUnsupported}
+            disabled={isAnyOperationPending || plugin.installed || isUnsupported || isBlocked}
             aria-label={
               plugin.installed
                 ? `${t("market.installed")}: ${plugin.name}`

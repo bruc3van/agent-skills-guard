@@ -75,7 +75,7 @@ pub fn assess(ctx: &SkillContext) -> AnalyzabilityResult {
 
     // 文件数检查
     let max_files = ctx.scan_policy.file_limits.max_files;
-    if ctx.files.len() > max_files {
+    if ctx.file_inventory_truncated || ctx.files.len() > max_files {
         findings.push(make_excessive_file_count_finding(ctx));
     }
 
@@ -178,12 +178,10 @@ fn is_inert_asset(file: &crate::security::skill_context::SkillFile) -> bool {
         ".ttf" | ".otf" | ".woff" | ".woff2" | ".eot"
             | ".png" | ".jpg" | ".jpeg" | ".gif" | ".webp" | ".avif" | ".bmp"
             | ".ico" | ".icns" | ".tif" | ".tiff" | ".heic" | ".heif"
-            | ".pyc" | ".pyo"
             | ".db" | ".sqlite" | ".sqlite3"
             // 其他已知二进制资产
             | ".mp3" | ".mp4" | ".wav" | ".ogg" | ".webm" | ".flac" | ".aac"
             | ".pdf" | ".doc" | ".docx" | ".xls" | ".xlsx" | ".ppt" | ".pptx"
-            | ".zip" | ".gz" | ".tar" | ".rar" | ".7z" | ".bz2" | ".xz"
             | ".class" | ".o" | ".so" | ".dll" | ".dylib"
             | ".exe" | ".msi" | ".dmg"
             // 已知二进制类型
@@ -255,7 +253,7 @@ fn make_low_analyzability_finding(score: f64) -> Finding {
 
 /// 创建 EXCESSIVE_FILE_COUNT finding（带 type_breakdown）
 fn make_excessive_file_count_finding(ctx: &SkillContext) -> Finding {
-    let count = ctx.files.len();
+    let count = ctx.files.len() + usize::from(ctx.file_inventory_truncated);
     let max = ctx.scan_policy.file_limits.max_files;
 
     // 按 SkillFileType 统计文件数
@@ -281,10 +279,10 @@ fn make_excessive_file_count_finding(ctx: &SkillContext) -> Finding {
     finding_builder::make_finding(FindingSpec {
         rule_id: "EXCESSIVE_FILE_COUNT",
         category: ThreatCategory::PolicyViolation,
-        severity: IssueSeverity::Info,
+        severity: IssueSeverity::High,
         title: "Excessive file count",
         description: format!(
-            "Skill contains {} files, exceeding the policy limit of {}. \
+            "Skill contains at least {} files, exceeding the policy limit of {}. \
              Some files may not be fully scanned. Breakdown: {}",
             count, max, breakdown_str
         ),
@@ -531,7 +529,7 @@ mod tests {
             1,
             "Should produce exactly one EXCESSIVE_FILE_COUNT finding"
         );
-        assert!(matches!(excessive[0].severity, IssueSeverity::Info));
+        assert!(matches!(excessive[0].severity, IssueSeverity::High));
     }
 
     #[test]

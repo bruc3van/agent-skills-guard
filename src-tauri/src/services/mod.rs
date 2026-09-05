@@ -6,8 +6,11 @@ pub mod link_fs;
 pub mod local_cli_scanner;
 pub mod local_cli_updater;
 pub mod migration;
+pub mod package_name;
 pub mod plugin_manager;
 pub mod skill_manager;
+pub mod skill_reports;
+pub mod windows_command;
 
 pub use agent_tools::{AgentTool, AgentToolInfo};
 pub use database::Database;

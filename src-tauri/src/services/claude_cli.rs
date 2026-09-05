@@ -84,6 +84,16 @@ impl ClaudeCli {
     }
 
     fn run_command(&self, command: &ClaudeCommand) -> Result<(String, bool)> {
+        #[cfg(windows)]
+        {
+            let resolved = resolve_command_path(&self.command);
+            if is_cmd_script(&resolved) {
+                super::windows_command::validate_cmd_argument(&resolved.to_string_lossy())?;
+                for arg in &command.args {
+                    super::windows_command::validate_cmd_argument(arg)?;
+                }
+            }
+        }
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {

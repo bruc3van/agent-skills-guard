@@ -170,6 +170,8 @@ pub struct SkillContext {
     pub instruction_body: Option<String>,
     /// 所有文件列表
     pub files: Vec<SkillFile>,
+    /// Enumeration stopped at its budget; files beyond it are not analyzable.
+    pub file_inventory_truncated: bool,
     /// 引用的文件（在 skill.md 中被提及的文件）
     pub referenced_files: Vec<PathBuf>,
     /// 脚本文件路径列表
@@ -192,6 +194,7 @@ impl SkillContext {
             manifest: None,
             instruction_body: None,
             files: Vec::new(),
+            file_inventory_truncated: false,
             referenced_files: Vec::new(),
             script_files: Vec::new(),
             asset_files: Vec::new(),
@@ -332,6 +335,7 @@ impl SkillContext {
             manifest,
             instruction_body,
             files,
+            file_inventory_truncated: false,
             referenced_files: Vec::new(),
             script_files,
             asset_files: Vec::new(),
@@ -355,8 +359,10 @@ impl SkillContext {
         let mut asset_files = Vec::new();
 
         let mut file_count = 0usize;
+        let mut file_inventory_truncated = false;
         let mut iter = WalkDir::new(path)
             .follow_links(false)
+            .sort_by_key(scan_entry_priority)
             .max_depth(policy.file_limits.max_depth)
             .into_iter();
 
@@ -376,6 +382,7 @@ impl SkillContext {
             }
 
             if file_count >= policy.file_limits.max_files {
+                file_inventory_truncated = true;
                 break;
             }
 
@@ -470,6 +477,7 @@ impl SkillContext {
             manifest,
             instruction_body,
             files,
+            file_inventory_truncated,
             referenced_files,
             script_files,
             asset_files,
@@ -477,6 +485,28 @@ impl SkillContext {
             file_contents: HashMap::new(),
         })
     }
+}
+
+/// Prioritize executable content consistently in scanner and context enumeration.
+pub(crate) fn scan_entry_priority(entry: &walkdir::DirEntry) -> (u8, String) {
+    let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+    let ext = entry
+        .path()
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let rank = if name == "skill.md" {
+        0
+    } else if entry.file_type().is_symlink() || name == "scripts" {
+        1
+    } else if SkillFileType::from_extension(ext) == SkillFileType::Script {
+        2
+    } else if entry.file_type().is_dir() {
+        3
+    } else {
+        4
+    };
+    (rank, name)
 }
 
 #[cfg(test)]

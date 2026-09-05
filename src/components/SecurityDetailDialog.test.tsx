@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SkillScanResult } from "@/types/security";
 import { SecurityDetailDialog } from "./SecurityDetailDialog";
@@ -77,6 +77,38 @@ afterEach(() => {
 });
 
 describe("SecurityDetailDialog", () => {
+  it("显示零扣分信息提示，并且不把扫描不完整报告标为安全", () => {
+    const result: SkillScanResult = {
+      ...scanResult,
+      score: 100,
+      level: "Safe",
+      report: {
+        ...scanResult.report,
+        score: 100,
+        level: "Safe",
+        blocked: false,
+        partial_scan: true,
+        issues: [
+          {
+            severity: "Info",
+            category: "network",
+            description: "Shared documentation reference",
+            rule_id: "CROSS_SKILL_SHARED_URL",
+            effective_weight: 0,
+            confidence: "Low",
+          },
+        ],
+        recommendations: [],
+      },
+    };
+    render(<SecurityDetailDialog result={result} open onClose={vi.fn()} />);
+    expect(screen.queryByText("security.levels.safe")).toBeNull();
+    expect(screen.getAllByText("security.detail.partialScan").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByText("security.detail.issues.info"));
+    expect(screen.getByText("Shared documentation reference")).toBeTruthy();
+    expect(screen.getByText("security.detail.noScoreImpact")).toBeTruthy();
+  });
+
   it("固定标题和底部操作区，仅中间详情区域滚动", () => {
     render(<SecurityDetailDialog result={scanResult} open onClose={vi.fn()} />);
 

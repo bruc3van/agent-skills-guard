@@ -535,7 +535,13 @@ fn spawn_command_timeout(
             .to_lowercase();
         if ext == "cmd" || ext == "bat" {
             let mut cmd = Command::new("cmd");
-            cmd.arg("/c").arg(&resolved).args(args);
+            super::windows_command::validate_cmd_argument(&resolved.to_string_lossy())
+                .and_then(|_| {
+                    args.iter()
+                        .try_for_each(|arg| super::windows_command::validate_cmd_argument(arg))
+                })
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+            cmd.arg("/d").arg("/c").arg(&resolved).args(args);
             return command_output_timeout(cmd, timeout);
         }
         let mut cmd = Command::new(resolved);

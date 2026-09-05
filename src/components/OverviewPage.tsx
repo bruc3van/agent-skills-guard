@@ -1,3 +1,4 @@
+import { scanReviewGroup } from "@/lib/security-utils";
 import { useState, useMemo, startTransition } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -383,15 +384,11 @@ export function OverviewPage() {
   const issuesByLevel = useMemo(() => {
     const result: Record<string, number> = { Severe: 0, MidHigh: 0, Safe: 0 };
     uniqueScanResults.forEach((r) => {
-      if (r.level === "Critical") result.Severe++;
-      else if (r.level === "High" || r.level === "Medium") result.MidHigh++;
-      else if (r.level === "Safe" || r.level === "Low") result.Safe++;
+      result[scanReviewGroup(r.level, r.report)]++;
     });
     plugins.forEach((p) => {
       if (!p.installed || p.security_level == null) return;
-      if (p.security_level === "Critical") result.Severe++;
-      else if (p.security_level === "High" || p.security_level === "Medium") result.MidHigh++;
-      else if (p.security_level === "Safe" || p.security_level === "Low") result.Safe++;
+      result[scanReviewGroup(p.security_level, p.security_report)]++;
     });
     return result;
   }, [plugins, uniqueScanResults]);
@@ -408,13 +405,13 @@ export function OverviewPage() {
 
   const issueCount = useMemo(() => {
     const skillIssues = uniqueScanResults.filter(
-      (r) => r.level !== "Safe" && r.level !== "Low"
+      (r) => scanReviewGroup(r.level, r.report) !== "Safe"
     ).length;
     const pluginIssues = plugins.filter((p) => {
       if (!p.installed) return false;
       const level = p.security_level;
       if (!level) return false;
-      return level !== "Safe" && level !== "Low";
+      return scanReviewGroup(level, p.security_report) !== "Safe";
     }).length;
     return skillIssues + pluginIssues;
   }, [plugins, uniqueScanResults]);
@@ -453,17 +450,15 @@ export function OverviewPage() {
   const filteredIssues = useMemo(() => {
     return combinedIssues
       .filter((result) => {
-        if (!filterLevel) return result.level !== "Safe" && result.level !== "Low";
-        if (filterLevel === "Severe") return result.level === "Critical";
-        if (filterLevel === "MidHigh") return result.level === "Medium" || result.level === "High";
-        if (filterLevel === "Safe") return result.level === "Safe" || result.level === "Low";
-        return false;
+        const group = scanReviewGroup(result.level, result.report);
+        if (!filterLevel) return group !== "Safe";
+        return group === filterLevel;
       })
       .sort((a, b) => {
         const levelOrder = { Critical: 0, High: 1, Medium: 2, Low: 3, Safe: 4 };
         return (
-          (levelOrder[a.level as keyof typeof levelOrder] || 999) -
-          (levelOrder[b.level as keyof typeof levelOrder] || 999)
+          (levelOrder[a.level as keyof typeof levelOrder] ?? 999) -
+          (levelOrder[b.level as keyof typeof levelOrder] ?? 999)
         );
       });
   }, [combinedIssues, filterLevel]);

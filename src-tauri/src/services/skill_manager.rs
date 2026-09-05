@@ -181,6 +181,35 @@ fn normalize_path_for_compare(path: &Path) -> String {
     normalized
 }
 
+// Compare the directory entry, never the final symlink target. Deleting a registered
+// link must not authorize deleting the directory to which it points.
+fn registered_uninstall_path(skill: &Skill, requested: &Path) -> Result<PathBuf> {
+    fn entry_key(path: &Path) -> Option<String> {
+        if !path.is_absolute()
+            || path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return None;
+        }
+        let name = path.file_name()?;
+        let parent = path.parent()?.canonicalize().ok()?;
+        Some(normalize_path_for_compare(&parent.join(name)))
+    }
+    let key = entry_key(requested).context("UNAUTHORIZED_PATH_REMOVAL: 无效的安装路径")?;
+    for recorded in skill
+        .local_path
+        .iter()
+        .chain(skill.local_paths.iter().flatten())
+    {
+        let path = Path::new(recorded);
+        if entry_key(path).as_deref() == Some(key.as_str()) {
+            return Ok(path.to_path_buf());
+        }
+    }
+    anyhow::bail!("UNAUTHORIZED_PATH_REMOVAL: 目标路径不属于该技能")
+}
+
 fn paths_point_to_same_location(left: &Path, right: &Path) -> bool {
     if normalize_path_for_compare(left) == normalize_path_for_compare(right) {
         return true;
@@ -737,7 +766,7 @@ impl SkillManager {
             skill_id,
             &locale,
             ScanOptions {
-                skip_readme: true,
+                skip_readme: false,
                 ..Default::default()
             },
             None,
@@ -878,7 +907,7 @@ impl SkillManager {
             &skill.id,
             locale,
             ScanOptions {
-                skip_readme: true,
+                skip_readme: false,
                 ..Default::default()
             },
             None,
@@ -1365,6 +1394,7 @@ impl SkillManager {
             skill.staging_path = None;
             Self::apply_scan_report(&mut skill, &scan_report);
             self.db.save_skill(&skill)?;
+            super::skill_reports::refresh_cross_skill_reports(&self.db)?;
             self.invalidate_installed_cache();
             let detail = if link_failures.is_empty() {
                 non_agent_tools
@@ -1400,6 +1430,7 @@ impl SkillManager {
         Self::apply_scan_report(&mut skill, &scan_report);
 
         self.db.save_skill(&skill)?;
+        super::skill_reports::refresh_cross_skill_reports(&self.db)?;
 
         log::info!("Skill installation confirmed: {}", skill.name);
         self.invalidate_installed_cache();
@@ -1678,6 +1709,7 @@ impl SkillManager {
         skill.is_local_only = false;
 
         self.db.save_skill(&skill).context("更新数据库失败")?;
+        super::skill_reports::refresh_cross_skill_reports(&self.db)?;
 
         log::info!("Skill uninstalled successfully: {}", skill.name);
         self.invalidate_installed_cache();
@@ -1699,7 +1731,7 @@ impl SkillManager {
 
         // 删除指定路径的文件：链接用 remove_dir_link，真实目录用 remove_dir_all
         let mut errors: Vec<String> = Vec::new();
-        let path = PathBuf::from(path_to_remove);
+        let path = registered_uninstall_path(&skill, Path::new(path_to_remove))?;
         if link_fs::is_dir_link(&path) {
             if let Err(e) = link_fs::remove_dir_link(&path) {
                 errors.push(format!("无法删除技能链接: {}", e));
@@ -1739,6 +1771,7 @@ impl SkillManager {
                         .delete_skill(&skill.id)
                         .context("删除技能记录失败")?;
                     log::info!("已删除本地技能记录: {}", skill.name);
+                    super::skill_reports::refresh_cross_skill_reports(&self.db)?;
                     return Ok(());
                 }
                 // 市场技能：标记为未安装
@@ -1754,6 +1787,7 @@ impl SkillManager {
         }
 
         self.db.save_skill(&skill).context("更新数据库失败")?;
+        super::skill_reports::refresh_cross_skill_reports(&self.db)?;
 
         log::info!(
             "Skill path uninstalled: {} from {}",
@@ -2208,7 +2242,7 @@ impl SkillManager {
                                         &existing_skill.id,
                                         &locale,
                                         ScanOptions {
-                                            skip_readme: true,
+                                            skip_readme: false,
                                             ..Default::default()
                                         },
                                         None,
@@ -2267,7 +2301,7 @@ impl SkillManager {
                                         &existing_skill.id,
                                         &locale,
                                         ScanOptions {
-                                            skip_readme: true,
+                                            skip_readme: false,
                                             ..Default::default()
                                         },
                                         None,
@@ -2332,7 +2366,7 @@ impl SkillManager {
                                 &skill_id,
                                 &locale,
                                 ScanOptions {
-                                    skip_readme: true,
+                                    skip_readme: false,
                                     ..Default::default()
                                 },
                                 None,
@@ -2401,6 +2435,12 @@ impl SkillManager {
             stale_count,
             refreshed_count
         );
+        let reports = super::skill_reports::refresh_cross_skill_reports(&self.db)?;
+        for skill in &mut scanned_skills {
+            if let Some(report) = reports.get(&skill.id) {
+                Self::apply_scan_report(skill, report);
+            }
+        }
         Ok(scanned_skills)
     }
 
@@ -2659,7 +2699,7 @@ impl SkillManager {
             &skill.id,
             locale,
             ScanOptions {
-                skip_readme: true,
+                skip_readme: false,
                 ..Default::default()
             },
             None,
@@ -2710,6 +2750,7 @@ impl SkillManager {
         skill_update.staging_path = Some(staging_skill_dir.to_string_lossy().to_string());
 
         self.db.save_skill(&skill_update)?;
+        super::skill_reports::refresh_cross_skill_reports(&self.db)?;
 
         Ok((scan_report, modified_files))
     }
@@ -2966,38 +3007,21 @@ impl SkillManager {
                                 if let Err(e) = std::fs::create_dir_all(&repo_cache_dir) {
                                     log::warn!("无法创建仓库缓存目录，将跳过缓存同步: {}", e);
                                 } else {
-                                    if extracted_dest.exists() {
-                                        let _ = std::fs::remove_dir_all(&extracted_dest);
+                                    let sync_result = (|| -> Result<()> {
+                                        let temp = tempfile::Builder::new()
+                                            .prefix(".cache-sync-")
+                                            .tempdir_in(&repo_cache_dir)?;
+                                        let prepared = temp.path().join("extracted");
+                                        self.copy_dir_recursive(&extract_dir, &prepared, &mut 0)?;
+                                        super::github::promote_prepared_directory(
+                                            &prepared,
+                                            &extracted_dest,
+                                        )
+                                    })();
+                                    if let Err(error) = &sync_result {
+                                        log::warn!("仓库缓存同步失败，保留旧缓存: {}", error);
                                     }
-
-                                    match rename_with_retry(&extract_dir, &extracted_dest) {
-                                        Ok(()) => {
-                                            log::info!(
-                                                "已同步仓库缓存(移动): {:?}",
-                                                extracted_dest
-                                            );
-                                        }
-                                        Err(rename_err) => {
-                                            log::warn!(
-                                                "无法移动 staging 缓存到仓库缓存，将尝试复制: {}",
-                                                rename_err
-                                            );
-                                            if let Err(copy_err) = self.copy_dir_recursive(
-                                                &extract_dir,
-                                                &extracted_dest,
-                                                &mut 0,
-                                            ) {
-                                                log::warn!("同步仓库缓存(复制)失败: {}", copy_err);
-                                            } else {
-                                                log::info!(
-                                                    "已同步仓库缓存(复制): {:?}",
-                                                    extracted_dest
-                                                );
-                                            }
-                                        }
-                                    }
-
-                                    if extracted_dest.exists() {
+                                    if sync_result.is_ok() {
                                         if let Ok(repositories) = self.db.get_repositories() {
                                             if let Some(repo) = repositories
                                                 .iter()
@@ -3027,6 +3051,7 @@ impl SkillManager {
 
                 skill.installed_at = Some(Utc::now());
                 self.db.save_skill(&skill)?;
+                super::skill_reports::refresh_cross_skill_reports(&self.db)?;
 
                 log::info!("技能更新确认完成: {}", skill.name);
                 Ok(())

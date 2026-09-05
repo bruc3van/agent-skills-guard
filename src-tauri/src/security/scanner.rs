@@ -1,6 +1,6 @@
 use crate::i18n::validate_locale;
 use crate::models::security::*;
-use crate::security::rules::pattern_engine::{match_yaml_rule, match_yaml_rule_multiline};
+use crate::security::rules::pattern_engine::{match_yaml_rule, match_yaml_rule_multiline_all};
 use crate::security::rules::{Category, Confidence};
 use crate::security::skill_context::SkillContext;
 use crate::security::strict_structure;
@@ -321,7 +321,12 @@ impl SecurityScanner {
             threat_category: Some(finding.category.as_str().to_string()),
             same_path_other_rule_ids: same_path,
             finding_kind: Some(finding_kind.as_str().to_string()),
-            effective_weight: None,
+            // An explicit zero denotes an informational analyzer finding. Other
+            // metadata weights are raw weights, not calibrated score overrides.
+            effective_weight: finding
+                .metadata
+                .as_ref()
+                .and_then(|m| m.weight.filter(|w| *w == 0)),
         }
     }
 
@@ -336,6 +341,11 @@ impl SecurityScanner {
     }
 
     fn finalize_issues(issues: &mut Vec<SecurityIssue>) {
+        for issue in issues.iter_mut() {
+            if let Some(snippet) = &mut issue.code_snippet {
+                *snippet = crate::security::secret_masking::mask_secrets(snippet);
+            }
+        }
         // 先去重再标注共现：否则被 dedupe 删除的 rule_id 可能残留在保留项的
         // same_path_other_rule_ids 中，向用户展示实际不存在的“同路径其他规则”。
         Self::dedupe_issues(issues);
@@ -351,20 +361,40 @@ impl SecurityScanner {
                 .unwrap_or(false)
     }
 
-    fn apply_finding_blocking(
-        finding: &crate::models::security::Finding,
+    fn push_analyzer_finding(
+        original: &Finding,
+        policy: &crate::security::policy::ScanPolicy,
+        issues: &mut Vec<SecurityIssue>,
         blocked: &mut bool,
         hard_trigger_issues: &mut Vec<String>,
     ) {
-        if !Self::finding_should_block(finding) {
+        if policy.is_rule_disabled(&original.rule_id)
+            || !Self::should_include_context_finding(original, policy)
+        {
             return;
         }
-
-        *blocked = true;
-        let message = format!("{}: {}", finding.rule_id, finding.description);
-        if !hard_trigger_issues.iter().any(|item| item == &message) {
-            hard_trigger_issues.push(message);
+        let mut finding = original.clone();
+        if let Some(severity) = policy.get_severity_override(&finding.rule_id) {
+            finding.severity = match severity {
+                "Critical" => IssueSeverity::Critical,
+                "High" => IssueSeverity::High,
+                "Medium" => IssueSeverity::Medium,
+                "Low" => IssueSeverity::Low,
+                "Info" => IssueSeverity::Info,
+                _ => finding.severity,
+            };
         }
+        let should_block = policy
+            .get_hard_trigger_override(&finding.rule_id)
+            .unwrap_or_else(|| Self::finding_should_block(&finding));
+        if should_block {
+            *blocked = true;
+            let message = format!("{}: {}", finding.rule_id, finding.description);
+            if !hard_trigger_issues.contains(&message) {
+                hard_trigger_issues.push(message);
+            }
+        }
+        issues.push(Self::issue_from_finding(&finding));
     }
 
     fn annotate_issue_cooccurrence(issues: &mut [SecurityIssue]) {
@@ -697,6 +727,15 @@ impl SecurityScanner {
         content: &str,
         file_path: &str,
     ) -> bool {
+        if rule_id == "PY_EVAL"
+            && Self::is_script_source_file(file_path)
+            && Self::line_at(content, line_number)
+                .trim_start()
+                .starts_with('#')
+        {
+            return true;
+        }
+
         if rule_id == "TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL" {
             if Self::is_markdown_file(file_path) {
                 // 普通文档/示例继续抑制；SKILL.md 是实际会交给 agent 执行的指令，
@@ -820,19 +859,34 @@ impl SecurityScanner {
         let mut scan_lines = Vec::with_capacity(physical_lines.len());
         let mut current = String::new();
         let mut start_line = 1usize;
+        let mut shell_join = false;
 
         for (line_number, line) in &physical_lines {
             if current.is_empty() {
                 start_line = *line_number;
                 current = line.clone();
+            } else if shell_join {
+                // A shell backslash-newline removes exactly those two bytes;
+                // inserting a space changes r\\\nm into a different command.
+                current.push_str(line);
             } else {
                 current.push(' ');
                 current.push_str(line.trim_start());
             }
+            shell_join = false;
+            if Self::is_shell_ext(ext)
+                && current.ends_with('\\')
+                && current.chars().rev().take_while(|c| *c == '\\').count() % 2 == 1
+            {
+                current.pop();
+                shell_join = true;
+                continue;
+            }
 
             let trimmed = current.trim_end();
-            let backslash_cont =
-                Self::supports_backslash_continuation(ext) && trimmed.ends_with('\\');
+            let backslash_cont = !Self::is_shell_ext(ext)
+                && Self::supports_backslash_continuation(ext)
+                && trimmed.ends_with('\\');
             let backtick_cont = Self::supports_backtick_continuation(ext) && trimmed.ends_with('`');
             let plus_cont =
                 Self::supports_plus_continuation(ext) && STRING_PLUS_CONTINUATION.is_match(trimmed);
@@ -890,7 +944,7 @@ impl SecurityScanner {
         file_path: &str,
         policy: &crate::security::policy::ScanPolicy,
     ) {
-        if !policy.is_doc_path(file_path) {
+        if !policy.is_documentation_file(file_path) {
             return;
         }
 
@@ -1080,8 +1134,7 @@ impl SecurityScanner {
             }
 
             // 跨行 pattern 第二遍（整段内容）
-            if let Some((line_number, snippet)) = match_yaml_rule_multiline(compiled_rule, content)
-            {
+            for (line_number, snippet) in match_yaml_rule_multiline_all(compiled_rule, content) {
                 if Self::should_suppress_match(&compiled_rule.id, line_number, content, file_path) {
                     continue;
                 }
@@ -1157,8 +1210,13 @@ impl SecurityScanner {
     ) {
         if let Some(buf) = buf_for_magic {
             if let Some(magic_finding) = crate::security::file_magic::check_magic(file_path, buf) {
-                Self::apply_finding_blocking(&magic_finding, blocked, hard_trigger_issues);
-                all_issues.push(Self::issue_from_finding(&magic_finding));
+                Self::push_analyzer_finding(
+                    &magic_finding,
+                    policy,
+                    all_issues,
+                    blocked,
+                    hard_trigger_issues,
+                );
             }
         }
 
@@ -1166,14 +1224,18 @@ impl SecurityScanner {
         // 这些文件通常由 Office 生成，包含大量 Unicode 字符，容易产生误报
         if !Self::is_office_xml_internal_path(file_path) {
             for finding in crate::security::homoglyph::check(content, file_path) {
-                Self::apply_finding_blocking(&finding, blocked, hard_trigger_issues);
-                all_issues.push(Self::issue_from_finding(&finding));
+                Self::push_analyzer_finding(
+                    &finding,
+                    policy,
+                    all_issues,
+                    blocked,
+                    hard_trigger_issues,
+                );
             }
         }
 
         for finding in crate::security::asset_checks::check_content(content, file_path) {
-            Self::apply_finding_blocking(&finding, blocked, hard_trigger_issues);
-            all_issues.push(Self::issue_from_finding(&finding));
+            Self::push_analyzer_finding(&finding, policy, all_issues, blocked, hard_trigger_issues);
         }
 
         for match_result in self.collect_matches_for_content(content, file_path, policy) {
@@ -1214,16 +1276,14 @@ impl SecurityScanner {
             if !Self::should_include_context_finding(&finding, policy) {
                 continue;
             }
-            Self::apply_finding_blocking(&finding, blocked, hard_trigger_issues);
-            all_issues.push(Self::issue_from_finding(&finding));
+            Self::push_analyzer_finding(&finding, policy, all_issues, blocked, hard_trigger_issues);
         }
 
         for finding in crate::security::pipeline::analyze(skill_ctx) {
             if !Self::should_include_context_finding(&finding, policy) {
                 continue;
             }
-            Self::apply_finding_blocking(&finding, blocked, hard_trigger_issues);
-            all_issues.push(Self::issue_from_finding(&finding));
+            Self::push_analyzer_finding(&finding, policy, all_issues, blocked, hard_trigger_issues);
         }
 
         let analyzability_result = crate::security::analyzability::assess(skill_ctx);
@@ -1231,8 +1291,7 @@ impl SecurityScanner {
             if !Self::should_include_context_finding(finding, policy) {
                 continue;
             }
-            Self::apply_finding_blocking(finding, blocked, hard_trigger_issues);
-            all_issues.push(Self::issue_from_finding(finding));
+            Self::push_analyzer_finding(finding, policy, all_issues, blocked, hard_trigger_issues);
         }
         if analyzability_result.has_risky_unanalyzable_content {
             partial = true;
@@ -1488,12 +1547,21 @@ impl SecurityScanner {
             }
         };
 
+        if skill_ctx.file_inventory_truncated {
+            partial_scan = true;
+        }
+
         // 运行结构校验（仅 Directory 模式，且 strict_structure_enabled=true）
         if policy.strict_structure_enabled {
             let structure_findings = strict_structure::validate(&skill_ctx);
             for finding in &structure_findings {
-                Self::apply_finding_blocking(finding, &mut blocked, &mut total_hard_trigger_issues);
-                all_issues.push(Self::issue_from_finding(finding));
+                Self::push_analyzer_finding(
+                    finding,
+                    &policy,
+                    &mut all_issues,
+                    &mut blocked,
+                    &mut total_hard_trigger_issues,
+                );
             }
         }
 
@@ -1502,6 +1570,7 @@ impl SecurityScanner {
         // 使用策略中配置的深度限制，与 SkillContext::for_directory 保持一致
         let mut iter = WalkDir::new(path)
             .follow_links(false)
+            .sort_by_key(crate::security::skill_context::scan_entry_priority)
             .max_depth(policy.file_limits.max_depth)
             .into_iter();
 
@@ -1509,13 +1578,33 @@ impl SecurityScanner {
             let entry = match next {
                 Ok(e) => e,
                 Err(e) => {
-                    log::warn!("Failed to read directory entry under {:?}: {}", path, e);
+                    all_issues.push(make_scan_meta_issue(
+                        IssueSeverity::High,
+                        format!("Directory enumeration failed: {e}"),
+                        None,
+                    ));
+                    partial_scan = true;
                     continue;
                 }
             };
 
             // 跳过常见大目录
             if entry.file_type().is_dir() {
+                if entry.depth() >= policy.file_limits.max_depth {
+                    partial_scan = true;
+                    let rel = entry
+                        .path()
+                        .strip_prefix(path)
+                        .unwrap_or(entry.path())
+                        .to_string_lossy()
+                        .to_string();
+                    skipped_files.push(rel.clone());
+                    all_issues.push(make_scan_meta_issue(
+                        IssueSeverity::High,
+                        "Directory depth limit reached; contents were not scanned".into(),
+                        Some(rel),
+                    ));
+                }
                 if let Some(name) = entry.file_name().to_str() {
                     if Self::is_skip_dir(name) {
                         log::debug!("Skipping directory: {:?}", entry.path());
@@ -1567,13 +1656,17 @@ impl SecurityScanner {
                     path,
                     max_files
                 );
-                all_issues.push(make_scan_meta_issue(
-                    IssueSeverity::Low,
-                    format!(
-                        "Scan stopped early: exceeded max file limit ({max_files}). Some files were not scanned."
-                    ),
-                    None,
-                ));
+                let rel = entry
+                    .path()
+                    .strip_prefix(path)
+                    .unwrap_or(entry.path())
+                    .to_string_lossy()
+                    .to_string();
+                skipped_files.push(rel.clone());
+                let mut issue = make_scan_meta_issue(IssueSeverity::High,
+                    format!("Scan stopped at {max_files} files; this and subsequent files were not scanned."), Some(rel));
+                issue.rule_id = Some("EXCESSIVE_FILE_COUNT".into());
+                all_issues.push(issue);
                 partial_scan = true;
                 break;
             }
@@ -1590,12 +1683,13 @@ impl SecurityScanner {
                         if let Some(magic_finding) =
                             crate::security::file_magic::check_magic(&rel_str, &sample)
                         {
-                            Self::apply_finding_blocking(
+                            Self::push_analyzer_finding(
                                 &magic_finding,
+                                &policy,
+                                &mut all_issues,
                                 &mut blocked,
                                 &mut total_hard_trigger_issues,
                             );
-                            all_issues.push(Self::issue_from_finding(&magic_finding));
                         }
                     }
                 }
@@ -1675,12 +1769,13 @@ impl SecurityScanner {
                 if let Some(magic_finding) =
                     crate::security::file_magic::check_magic(&rel_str, &buf)
                 {
-                    Self::apply_finding_blocking(
+                    Self::push_analyzer_finding(
                         &magic_finding,
+                        &policy,
+                        &mut all_issues,
                         &mut blocked,
                         &mut total_hard_trigger_issues,
                     );
-                    all_issues.push(Self::issue_from_finding(&magic_finding));
                 }
                 skipped_files.push(rel_str.clone());
                 partial_scan = true;
@@ -1729,6 +1824,7 @@ impl SecurityScanner {
         }
 
         Self::finalize_issues(&mut all_issues);
+        Self::persist_score_weights(&mut all_issues, &policy);
 
         let score = Self::calculate_score_from_issues_with_policy(
             &all_issues,
@@ -1820,6 +1916,7 @@ impl SecurityScanner {
         }
 
         Self::finalize_issues(&mut all_issues);
+        Self::persist_score_weights(&mut all_issues, &policy);
 
         let score = Self::calculate_score_from_issues_with_policy(
             &all_issues,
@@ -1898,6 +1995,23 @@ impl SecurityScanner {
         let base = Self::severity_default_weight(issue.severity);
         let mult = Self::confidence_multiplier_from_str(issue.confidence.as_deref());
         ((base as f32) * mult).round() as i32
+    }
+
+    fn persist_score_weights(
+        issues: &mut [SecurityIssue],
+        policy: &crate::security::policy::ScanPolicy,
+    ) {
+        let weights = HashMap::new();
+        for issue in issues {
+            let kind = issue.finding_kind.as_deref().unwrap_or("Security");
+            issue.effective_weight = Some(
+                if !policy.score_kinds.is_empty() && !policy.score_kinds.contains(kind) {
+                    0
+                } else {
+                    Self::issue_effective_weight(issue, &weights)
+                },
+            );
+        }
     }
 
     /// 统计各 FindingKind 的数量
@@ -4282,8 +4396,8 @@ subprocess.run(evil, shell=True)
         assert!(policy.is_doc_path("fixtures/sample.yaml"));
         assert!(policy.is_doc_path("samples/demo.py"));
         assert!(policy.is_doc_path("demo/preview.md"));
-        assert!(policy.is_doc_path("skills/claude-api/curl/managed-agents.md"));
-        assert!(policy.is_doc_path("skills/web-artifacts-builder/scripts/init-artifact.sh"));
+        assert!(!policy.is_doc_path("skills/claude-api/curl/managed-agents.md"));
+        assert!(!policy.is_doc_path("skills/web-artifacts-builder/scripts/init-artifact.sh"));
 
         // 不应误匹配子串
         assert!(!policy.is_doc_path("document.txt"));
@@ -4351,7 +4465,7 @@ subprocess.run(evil, shell=True)
             .unwrap();
 
         let doc_report = scanner
-            .scan_file(content, "docs/api-usage.sh", "en")
+            .scan_file(content, "docs/api-usage.md", "en")
             .unwrap();
 
         let skill_ids: std::collections::HashSet<&str> = skill_report
@@ -4397,7 +4511,7 @@ subprocess.run(evil, shell=True)
     }
 
     #[test]
-    fn test_nested_example_markdown_skips_curl_post_noise() {
+    fn test_nested_example_markdown_retains_curl_post_detection() {
         let scanner = SecurityScanner::new();
         let content = "curl -X POST https://api.example.com/v1/messages -d '{\"hello\":\"world\"}'";
         let report = scanner
@@ -4405,11 +4519,11 @@ subprocess.run(evil, shell=True)
             .unwrap();
 
         assert!(
-            !report
+            report
                 .issues
                 .iter()
                 .any(|i| i.rule_id.as_deref() == Some("CURL_POST")),
-            "curl POST examples in nested example Markdown should be skipped, got: {:?}",
+            "curl POST examples in nested example Markdown must remain scanned, got: {:?}",
             report.issues
         );
     }
@@ -4496,7 +4610,7 @@ relations:
     }
 
     #[test]
-    fn test_nested_example_script_skips_system_install_noise() {
+    fn test_nested_example_script_retains_system_install_detection() {
         let scanner = SecurityScanner::new();
         let content = "#!/usr/bin/env bash\npip install web-artifacts-builder\n";
         let report = scanner
@@ -4508,17 +4622,17 @@ relations:
             .unwrap();
 
         assert!(
-            !report
+            report
                 .issues
                 .iter()
                 .any(|i| i.rule_id.as_deref() == Some("TOOL_ABUSE_SYSTEM_PACKAGE_INSTALL")),
-            "system install examples in nested example scripts should be skipped, got: {:?}",
+            "system install examples in nested example scripts must remain scanned, got: {:?}",
             report.issues
         );
     }
 
     #[test]
-    fn test_nested_example_eval_runner_skips_eval_noise() {
+    fn test_nested_eval_assignment_is_detected() {
         let scanner = SecurityScanner::new();
         let content = "result = eval(expression, {\"__builtins__\": {}}, context)\n";
 
@@ -4528,11 +4642,11 @@ relations:
         ] {
             let report = scanner.scan_file(content, path, "en").unwrap();
             assert!(
-                !report
+                report
                     .issues
                     .iter()
                     .any(|i| i.rule_id.as_deref() == Some("PY_EVAL")),
-                "eval runner examples should skip PY_EVAL in {path}, got: {:?}",
+                "actual eval calls must retain PY_EVAL in {path}, got: {:?}",
                 report.issues
             );
         }
@@ -4556,7 +4670,7 @@ relations:
     }
 
     #[test]
-    fn test_nested_example_python_loop_is_downgraded() {
+    fn test_nested_skill_python_loop_is_not_downgraded() {
         let scanner = SecurityScanner::new();
         let content = "while True:\n    keep_waiting()\n";
         let report = scanner
@@ -4568,7 +4682,7 @@ relations:
             .iter()
             .find(|i| i.rule_id.as_deref() == Some("RESOURCE_ABUSE_INFINITE_LOOP"))
             .expect("potential infinite loop should still be reported in nested example code");
-        assert_eq!(issue.severity, IssueSeverity::Low);
+        assert_eq!(issue.severity, IssueSeverity::Medium);
     }
 
     #[test]
@@ -4647,9 +4761,9 @@ relations:
     }
 
     #[test]
-    fn test_doc_path_skip_in_docs_skips_py_eval() {
+    fn test_example_scripts_keep_py_eval() {
         let scanner = SecurityScanner::new();
-        // PY_EVAL 在 skip_in_docs 中，在 doc 路径应被完全跳过
+        // 可执行脚本不因 examples 目录名而豁免
         let content = "result=eval(user_input)";
         let report = scanner
             .scan_file(content, "examples/demo.py", "en")
@@ -4661,8 +4775,8 @@ relations:
             .any(|i| i.rule_id.as_deref() == Some("PY_EVAL"));
 
         assert!(
-            !has_py_eval,
-            "PY_EVAL should be completely skipped in doc paths (skip_in_docs)"
+            has_py_eval,
+            "PY_EVAL must remain enabled for executable scripts in example directories"
         );
     }
 }

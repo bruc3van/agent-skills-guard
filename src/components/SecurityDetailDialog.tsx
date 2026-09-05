@@ -48,13 +48,14 @@ function groupIssuesForDisplay(issues: SecurityIssue[]): IssueGroup[] {
 export function SecurityDetailDialog({ result, open, onClose }: SecurityDetailDialogProps) {
   const { t } = useTranslation();
 
-  const { criticalIssues, highIssues, mediumIssues, lowIssues } = useMemo(() => {
+  const { criticalIssues, highIssues, mediumIssues, lowIssues, infoIssues } = useMemo(() => {
     if (!result) {
       return {
         criticalIssues: [],
         highIssues: [],
         mediumIssues: [],
         lowIssues: [],
+        infoIssues: [],
       };
     }
 
@@ -65,6 +66,7 @@ export function SecurityDetailDialog({ result, open, onClose }: SecurityDetailDi
       highIssues: sortedIssues.filter((i) => i.severity === "High"),
       mediumIssues: sortedIssues.filter((i) => i.severity === "Medium"),
       lowIssues: sortedIssues.filter((i) => i.severity === "Low"),
+      infoIssues: sortedIssues.filter((i) => i.severity === "Info"),
     };
   }, [result]);
 
@@ -92,7 +94,10 @@ export function SecurityDetailDialog({ result, open, onClose }: SecurityDetailDi
             </div>
           </AlertDialogTitle>
           <AlertDialogDescription className="sr-only">
-            {t("security.detail.securityScore")} {result.score}, {result.level}
+            {t("security.detail.securityScore")} {result.score},{" "}
+            {showPartial
+              ? t("security.detail.partialScan")
+              : t(`security.levels.${result.level.toLowerCase()}`)}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -108,13 +113,15 @@ export function SecurityDetailDialog({ result, open, onClose }: SecurityDetailDi
               </div>
               <div
                 className={`text-5xl font-bold ${
-                  result.score >= 90
-                    ? "text-success"
-                    : result.score >= 70
-                      ? "text-warning"
-                      : result.score >= 50
-                        ? "text-orange-500"
-                        : "text-destructive"
+                  showPartial
+                    ? "text-warning"
+                    : result.score >= 90
+                      ? "text-success"
+                      : result.score >= 70
+                        ? "text-warning"
+                        : result.score >= 50
+                          ? "text-orange-500"
+                          : "text-destructive"
                 }`}
               >
                 {result.score}
@@ -123,21 +130,27 @@ export function SecurityDetailDialog({ result, open, onClose }: SecurityDetailDi
             <div>
               <span
                 className={`px-4 py-2 rounded-lg text-lg font-medium border ${
-                  result.level === "Safe"
-                    ? "bg-success/10 text-success border-success/30"
-                    : result.level === "Low"
-                      ? "bg-primary/10 text-primary border-primary/30"
-                      : result.level === "Medium"
-                        ? "bg-warning/10 text-warning border-warning/30"
-                        : result.level === "High"
-                          ? "bg-orange-500/10 text-orange-500 border-orange-500/30"
-                          : "bg-destructive/10 text-destructive border-destructive/30"
+                  showPartial
+                    ? "bg-warning/10 text-warning border-warning/30"
+                    : result.level === "Safe"
+                      ? "bg-success/10 text-success border-success/30"
+                      : result.level === "Low"
+                        ? "bg-primary/10 text-primary border-primary/30"
+                        : result.level === "Medium"
+                          ? "bg-warning/10 text-warning border-warning/30"
+                          : result.level === "High"
+                            ? "bg-orange-500/10 text-orange-500 border-orange-500/30"
+                            : "bg-destructive/10 text-destructive border-destructive/30"
                 }`}
               >
-                {result.level}
+                {showPartial
+                  ? t("security.detail.partialScan")
+                  : t(`security.levels.${result.level.toLowerCase()}`)}
               </span>
             </div>
           </div>
+
+          <p className="text-xs text-muted-foreground">{t("security.detail.scoreExplanation")}</p>
 
           {showPartial && (
             <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg text-sm">
@@ -197,6 +210,16 @@ export function SecurityDetailDialog({ result, open, onClose }: SecurityDetailDi
             )}
           </div>
 
+          {infoIssues.length > 0 && (
+            <IssueSection
+              title={t("security.detail.issues.info")}
+              icon={<Info className="w-5 h-5 text-muted-foreground" />}
+              issues={infoIssues}
+              color="blue"
+              defaultCollapsed
+            />
+          )}
+
           {/* 建议区域 */}
           {report.recommendations.length > 0 && (
             <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg">
@@ -204,12 +227,14 @@ export function SecurityDetailDialog({ result, open, onClose }: SecurityDetailDi
                 {t("security.detail.recommendations")}：
               </div>
               <ul className="space-y-1 text-sm">
-                {report.recommendations.map((rec, idx) => (
-                  <li key={idx} className="flex items-start gap-2">
-                    <span className="text-warning">▸</span>
-                    <span>{rec}</span>
-                  </li>
-                ))}
+                {report.recommendations
+                  .filter((rec) => !rec.startsWith("[policy:"))
+                  .map((rec, idx) => (
+                    <li key={idx} className="flex items-start gap-2">
+                      <span className="text-warning">▸</span>
+                      <span>{rec.startsWith("security.") ? t(rec) : rec}</span>
+                    </li>
+                  ))}
               </ul>
             </div>
           )}

@@ -231,6 +231,9 @@ impl LocalCliUpdater {
 }
 
 async fn fetch_latest_for_tool(tool: &LocalCliTool, pkg_name: &str) -> Result<String> {
+    if !super::package_name::valid_package_name(&tool.manager, pkg_name) {
+        anyhow::bail!("INVALID_PACKAGE_NAME: 不支持的包名");
+    }
     match tool.manager {
         PackageManager::Npm => fetch_node_latest_with_manager(tool, "npm", pkg_name).await,
         PackageManager::Pnpm => fetch_node_latest_with_manager(tool, "pnpm", pkg_name).await,
@@ -494,6 +497,10 @@ async fn run_command_output(
         .unwrap_or_default()
         .to_ascii_lowercase();
     let mut command = if cfg!(windows) && matches!(extension.as_str(), "cmd" | "bat") {
+        super::windows_command::validate_cmd_argument(&executable.to_string_lossy())?;
+        for arg in args {
+            super::windows_command::validate_cmd_argument(arg)?;
+        }
         let mut command = tokio::process::Command::new("cmd.exe");
         command.arg("/d").arg("/c").arg(executable).args(args);
         command

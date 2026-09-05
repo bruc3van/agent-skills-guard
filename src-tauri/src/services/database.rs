@@ -611,6 +611,18 @@ impl Database {
         Ok(exists)
     }
 
+    /// Update report fields only; do not overwrite concurrent installation metadata.
+    pub fn update_skill_security_report(
+        &self,
+        id: &str,
+        report: &crate::models::SecurityReport,
+    ) -> Result<()> {
+        let conn = self.lock_conn();
+        conn.execute("UPDATE skills SET security_score=?1, security_level=?2, security_issues=?3, security_report=?4 WHERE id=?5",
+            params![report.score, report.level.as_str(), serde_json::to_string(&report.issues)?, serde_json::to_string(report)?, id])?;
+        Ok(())
+    }
+
     /// 保存 skill
     pub fn save_skill(&self, skill: &Skill) -> Result<()> {
         let conn = self.lock_conn();

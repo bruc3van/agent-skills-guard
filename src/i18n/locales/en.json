@@ -624,8 +624,11 @@
         "critical": "Critical Issues",
         "high": "High Risk Issues",
         "medium": "Medium Risk Issues",
-        "low": "Low Risk Issues"
-      }
+        "low": "Low Risk Issues",
+        "info": "Information"
+      },
+      "noScoreImpact": "Informational; no score deduction",
+      "scoreExplanation": "The score reflects scanned content only. Repeated matches of the same rule in one file count once; additional files have diminishing impact. A high score does not establish safety when the scan is incomplete."
     }
   },
   "overview": {
@@ -677,7 +680,7 @@
     },
     "riskFilters": {
       "Severe": "SEVERE_RISK",
-      "MidHigh": "MID_RISK",
+      "MidHigh": "Risk or incomplete scan",
       "Safe": "SAFE"
     },
     "issues": {

@@ -40,8 +40,18 @@ fn is_safe_path(path: &Path, base: &Path) -> bool {
     normalize(path).starts_with(normalize(base))
 }
 
+/// Cache cleanup may only remove a descendant of the dedicated repository cache.
+pub(crate) fn repository_cache_cleanup_target(path: &Path, base: &Path) -> Result<PathBuf> {
+    let base = base.canonicalize().context("CACHE_ROOT_UNAVAILABLE")?;
+    let path = path.canonicalize().context("CACHE_PATH_UNAVAILABLE")?;
+    if path == base || !path.starts_with(&base) {
+        anyhow::bail!("UNAUTHORIZED_CACHE_REMOVAL: 路径不属于仓库缓存目录");
+    }
+    Ok(path)
+}
+
 /// 用同一文件系统中的 rename 提升已完整准备好的目录，并在失败时恢复旧目录。
-fn promote_prepared_directory(prepared_dir: &Path, final_dir: &Path) -> Result<()> {
+pub(crate) fn promote_prepared_directory(prepared_dir: &Path, final_dir: &Path) -> Result<()> {
     let parent = final_dir.parent().context("无效的缓存目录")?;
     fs::create_dir_all(parent).context("无法创建缓存父目录")?;
     let backup_dir = parent.join(format!(
@@ -1240,6 +1250,38 @@ mod tests {
             writer.write_all(content).unwrap();
         }
         writer.finish().unwrap();
+    }
+
+    #[test]
+    fn cache_cleanup_rejects_root_and_external_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("repositories");
+        let owned = base.join("owner_repo/extracted");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&owned).unwrap();
+        fs::create_dir(&outside).unwrap();
+        assert!(repository_cache_cleanup_target(&owned, &base).is_ok());
+        assert!(repository_cache_cleanup_target(&base, &base).is_err());
+        assert!(repository_cache_cleanup_target(&outside, &base).is_err());
+        #[cfg(unix)]
+        {
+            let link = base.join("escape");
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            assert!(repository_cache_cleanup_target(&link, &base).is_err());
+        }
+    }
+
+    #[test]
+    fn failed_cache_promotion_restores_old_tree() {
+        let temp = tempfile::tempdir().unwrap();
+        let final_dir = temp.path().join("extracted");
+        fs::create_dir(&final_dir).unwrap();
+        fs::write(final_dir.join("old.txt"), "keep").unwrap();
+        assert!(promote_prepared_directory(&temp.path().join("missing"), &final_dir).is_err());
+        assert_eq!(
+            fs::read_to_string(final_dir.join("old.txt")).unwrap(),
+            "keep"
+        );
     }
 
     #[test]

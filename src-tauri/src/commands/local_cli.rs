@@ -12,6 +12,9 @@ use tauri::State;
 
 pub fn build_pty_update_args(tool: &LocalCliTool) -> Option<(String, Vec<String>)> {
     let pkg = tool.package_name.as_deref()?;
+    if !crate::services::package_name::valid_package_name(&tool.manager, pkg) {
+        return None;
+    }
     let (bin, args) = match tool.manager {
         PackageManager::Npm => (
             resolve_package_manager_command(tool, &package_manager_names("npm")),
@@ -143,6 +146,9 @@ fn update_command_succeeded(
 
 pub fn build_pty_uninstall_args(tool: &LocalCliTool) -> Option<(String, Vec<String>)> {
     let pkg = tool.package_name.as_deref()?;
+    if !crate::services::package_name::valid_package_name(&tool.manager, pkg) {
+        return None;
+    }
     let (bin, args) = match tool.manager {
         PackageManager::Npm => (
             resolve_package_manager_command(tool, &package_manager_names("npm")),

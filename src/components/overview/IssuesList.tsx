@@ -1,3 +1,4 @@
+import { hasIncompleteScan } from "@/lib/security-utils";
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -66,7 +67,10 @@ const getScoreColor = (score: number) => {
   return "text-red-600";
 };
 
-export const IssuesList = React.memo(function IssuesList({ issues, onOpenDirectory }: IssuesListProps) {
+export const IssuesList = React.memo(function IssuesList({
+  issues,
+  onOpenDirectory,
+}: IssuesListProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
@@ -129,7 +133,8 @@ export const IssuesList = React.memo(function IssuesList({ issues, onOpenDirecto
     <div className="divide-y divide-border/60">
       {issues.map((issue) => {
         const isExpanded = expandedSkills.has(issue.skill_id);
-        const config = levelConfig[normalizeLevel(issue.level)];
+        const incomplete = hasIncompleteScan(issue.report);
+        const config = levelConfig[incomplete ? "Medium" : normalizeLevel(issue.level)];
         const LevelIcon = config.icon;
 
         const issueStats = issue.report.issues.reduce(
@@ -175,13 +180,17 @@ export const IssuesList = React.memo(function IssuesList({ issues, onOpenDirecto
                     className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${config.bg} ${config.color}`}
                   >
                     <LevelIcon className="w-3 h-3" strokeWidth={2.5} />
-                    {t(`overview.riskLevels.${issue.level.toLowerCase()}`)}
+                    {incomplete
+                      ? t("security.detail.partialScan")
+                      : t(`overview.riskLevels.${issue.level.toLowerCase()}`)}
                   </span>
                 </div>
               </div>
 
               <div className="flex-shrink-0">
-                <div className={`text-sm ${getScoreColor(issue.score)}`}>
+                <div
+                  className={`text-sm ${incomplete ? "text-warning" : getScoreColor(issue.score)}`}
+                >
                   <span className="text-muted-foreground">{t("skills.securityScore")}</span>
                   <span className="text-xl font-semibold ml-2">{issue.score}</span>
                 </div>

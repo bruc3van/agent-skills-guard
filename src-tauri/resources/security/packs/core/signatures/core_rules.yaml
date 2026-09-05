@@ -35,7 +35,7 @@ rules:
   confidence: High
   hard_trigger: true
   patterns:
-  - rm\s+(?:-[a-zA-Z]*\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:-[a-zA-Z]*\s+)*/(?:$|\s|;|\|)|/\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*(?:\s|;|\||$))
+  - \brm\s+(?:(?:[^\s;|&]+\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(?:\s+[^\s;|&]+)*?\s+["']?/+(?:\.{1,2}/+)*(?:\.{1,2}|\*)?["']?(?:$|[\s;|&])|(?:[^\s;|&]+\s+)*["\']?/+(?:\.{1,2}/+)*(?:\.{1,2}|\*)?["\']?\s+(?:[^\s;|&]+\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(?:$|[\s;|&]))
   description: rm -rf / 删除根目录
   remediation: 检查命令参数，避免操作根目录或使用通配符
   cwe_id: CWE-78
@@ -151,7 +151,7 @@ rules:
   confidence: High
   hard_trigger: true
   patterns:
-  - wget\s+[^|]*?\|\s*(ba)?sh
+  - (?i)wget\s+[^|]*?\|\s*(?:(?:env|sudo)\s+(?:-[a-zA-Z]+\s+|[A-Za-z_][A-Za-z0-9_]*=[^\s;|&]+\s+)*|busybox\s+)*(?:/(?:[\w.-]+/)*)?(?:ba)?sh\b
   description: wget | sh 远程执行
   remediation: 避免直接执行远程脚本，应先下载后检查
   cwe_id: CWE-78
@@ -166,7 +166,7 @@ rules:
   confidence: High
   hard_trigger: true
   patterns:
-  - base64\s+(?:-d|--decode)[^|]*?\|\s*(ba)?sh
+  - (?i)base64\s+(?:-d|--decode)[^|]*?\|\s*(?:(?:env|sudo)\s+(?:-[a-zA-Z]+\s+|[A-Za-z_][A-Za-z0-9_]*=[^\s;|&]+\s+)*|busybox\s+)*(?:/(?:[\w.-]+/)*)?(?:ba)?sh\b
   description: base64 解码后执行
   remediation: 避免执行Base64编码的命令，可能隐藏恶意代码
   cwe_id: CWE-506
@@ -1272,8 +1272,10 @@ rules:
   confidence: High
   hard_trigger: true
   patterns:
-  - (?i)(?:^\s*curl\s+[^|]*?\|\s*(?:ba)?sh\b|\b(?:execSync|exec|spawnSync|spawn|execFileSync|execFile|os\.system|subprocess\.|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|exec\.Command|Command::new)\b[^\r\n]{0,200}?curl\s+[^|]*?\|\s*(?:ba)?sh\b)
+  - (?i)(?:^\s*curl\s+[^|]*?\|\s*(?:(?:env|sudo)\s+(?:-[a-zA-Z]+\s+|[A-Za-z_][A-Za-z0-9_]*=[^\s;|&]+\s+)*|busybox\s+)*(?:/(?:[\w.-]+/)*)?(?:ba)?sh\b|\b(?:execSync|exec|spawnSync|spawn|execFileSync|execFile|os\.system|subprocess\.|Runtime\.getRuntime\(\)\.exec|ProcessBuilder|exec\.Command|Command::new)\b[^\r\n]{0,200}?curl\s+[^|]*?\|\s*(?:(?:env|sudo)\s+(?:-[a-zA-Z]+\s+|[A-Za-z_][A-Za-z0-9_]*=[^\s;|&]+\s+)*|busybox\s+)*(?:/(?:[\w.-]+/)*)?(?:ba)?sh\b)
   file_types:
+  - .md
+  - .txt
   - .sh
   - .bash
   - .zsh
@@ -1392,7 +1394,7 @@ rules:
   confidence: Low
   hard_trigger: false
   patterns:
-  - (?:^|[\w.])eval\s*\(
+  - (?:^|[^\w.])(?:builtins\.)?eval\s*\(
   file_types:
   - .py
   - .pyw

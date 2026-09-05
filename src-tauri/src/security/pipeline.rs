@@ -33,7 +33,7 @@ static RE_FETCH: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:curl|wget|iwr|Invoke-WebRe
 
 // 管道执行：| bash / | sh / | python / | IEX 等
 static RE_PIPE_EXEC: Lazy<Regex> = lazy_regex!(
-    r"(?i)\|\s*(?:bash|sh|zsh|ksh|dash|python[23]?|ruby|perl|node|pwsh|powershell|IEX)\b"
+    r"(?i)\|\s*(?:(?:env|sudo)\s+(?:-[a-zA-Z]+\s+|[A-Za-z_][A-Za-z0-9_]*=[^\s;|&]+\s+)*|busybox\s+)*(?:/(?:[\w.-]+/)*)?(?:bash|sh|zsh|ksh|dash|python[23]?|ruby|perl|node|pwsh|powershell|IEX)\b"
 );
 
 // 执行命令：bash xxx.sh / sh xxx / ./xxx / python xxx
@@ -52,9 +52,98 @@ static EXEC_CONTEXT_RE: Lazy<Regex> = lazy_regex!(
 // 基础的 curl/wget 行（同一行包含 fetch 和 URL）
 static RE_FETCH_LINE: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:curl|wget)\s+[^\n]*https?://");
 
-// curl -o / wget -O 输出到文件
-static RE_FETCH_TO_FILE: Lazy<Regex> =
-    lazy_regex!(r"(?i)\b(?:curl\s+-[oO]|wget\s+(?:-[oO]\s+|[^\s]*-[oO]))\s+\S+");
+// Resolve a literal download destination instead of correlating unrelated nearby commands.
+fn download_target(line: &str) -> Option<String> {
+    let words = shell_words::split(line).ok()?;
+    let command = std::path::Path::new(words.first()?).file_name()?.to_str()?;
+    let flag = match command {
+        "curl" => "-o",
+        "wget" => "-O",
+        _ => return None,
+    };
+    if !words
+        .iter()
+        .any(|s| s.starts_with("https://") || s.starts_with("http://"))
+    {
+        return None;
+    }
+    for (i, word) in words.iter().enumerate().skip(1) {
+        if word == flag
+            || (command == "curl" && word == "--output")
+            || (command == "wget" && word == "--output-document")
+            || word == ">"
+        {
+            return words.get(i + 1).cloned();
+        }
+        if let Some(path) = word.strip_prefix(flag).filter(|p| !p.is_empty()) {
+            return Some(path.to_string());
+        }
+        let long = if command == "curl" {
+            "--output="
+        } else {
+            "--output-document="
+        };
+        if let Some(path) = word.strip_prefix(long) {
+            return Some(path.to_string());
+        }
+    }
+    None
+}
+
+fn decoded_target(line: &str, target: &str) -> Option<String> {
+    let words = shell_words::split(line).ok()?;
+    if words.first()?.as_str() != "base64"
+        || !words.iter().any(|w| w == "-d" || w == "--decode")
+        || !words.iter().skip(1).any(|w| w == target)
+    {
+        return None;
+    }
+    let redirect = words.iter().position(|w| w == ">")?;
+    words.get(redirect + 1).cloned()
+}
+
+fn executes_target(line: &str, target: &str) -> bool {
+    let Ok(words) = shell_words::split(line) else {
+        return false;
+    };
+    let Some(command) = words.first() else {
+        return false;
+    };
+    let same = |word: &str| word.trim_start_matches("./") == target.trim_start_matches("./");
+    if same(command) {
+        return true;
+    }
+    let name = std::path::Path::new(command)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    if !matches!(
+        name,
+        "bash"
+            | "sh"
+            | "zsh"
+            | "ksh"
+            | "dash"
+            | "python"
+            | "python3"
+            | "python2"
+            | "node"
+            | "ruby"
+            | "perl"
+            | "pwsh"
+    ) {
+        return false;
+    }
+    for word in words.iter().skip(1) {
+        if word == "-c" || word == "-m" {
+            return false;
+        }
+        if !word.starts_with('-') {
+            return same(word);
+        }
+    }
+    false
+}
 
 // 敏感文件路径模式（concat!() 拼接，使用 LazyLock）
 static RE_SENSITIVE_FILE: LazyLock<Regex> = LazyLock::new(|| {
@@ -126,11 +215,6 @@ static RE_ENV_PRINT: Lazy<Regex> = lazy_regex!(r"(?i)\b(?:env|printenv)\b");
 // 敏感环境变量
 static RE_SENSITIVE_ENV: Lazy<Regex> =
     lazy_regex!(r"(?i)\b(?:env|printenv)\s+(?:\w*(?:SECRET|TOKEN|KEY|PASSWORD|CRED|AUTH|API)\w*)");
-
-// 裸脚本执行（./script.sh、/path/to/script.sh、script.sh 等，无解释器前缀）
-static RE_EXEC_BARE: Lazy<Regex> = lazy_regex!(
-    r"(?i)(?:^|[;&|]\s*)(?:\./|[a-zA-Z]:\\|~/|[^\s;|&]*\.(?:sh|bash|py|rb|pl|js|ts|ps1|bat|cmd))\b"
-);
 
 // 管道整体模式（concat!() 拼接，使用 LazyLock）
 static RE_SENSITIVE_PIPELINE: LazyLock<Regex> = LazyLock::new(|| {
@@ -767,14 +851,15 @@ fn check_fetch_execute_inner(content: &str, file_path: &str) -> Option<PipelineH
     // 场景 2：多行 fetch → exec（在合理行距内）
     let lines: Vec<&str> = content.lines().collect();
     for (i, line) in lines.iter().enumerate() {
-        if RE_FETCH.is_match(line) && RE_FETCH_TO_FILE.is_match(line) {
+        if let Some(target) = download_target(line) {
             // 在后续 20 行内查找执行命令
             let search_end = (i + 20).min(lines.len());
+            let mut current_target = target;
             for j in (i + 1)..search_end {
-                if RE_EXEC_COMMAND.is_match(lines[j])
-                    || RE_PIPE_EXEC.is_match(lines[j])
-                    || RE_EXEC_BARE.is_match(lines[j])
-                {
+                if let Some(decoded) = decoded_target(lines[j], &current_target) {
+                    current_target = decoded;
+                }
+                if executes_target(lines[j], &current_target) {
                     let snippet = Some(format!("{}\n  ...\n{}", line.trim(), lines[j].trim()));
                     let line_num = Some(i + 1);
                     return Some(PipelineHit {
@@ -817,20 +902,19 @@ fn check_download_chmod_exec(
 fn check_download_chmod_exec_inner(content: &str, file_path: &str) -> Option<PipelineHit> {
     let lines: Vec<&str> = content.lines().collect();
     for (i, line) in lines.iter().enumerate() {
-        if RE_FETCH.is_match(line)
-            && (RE_FETCH_TO_FILE.is_match(line) || RE_FETCH_LINE.is_match(line))
-        {
+        if let Some(target) = download_target(line) {
             // 在后续 20 行内查找 chmod +x
             let search_end = (i + 20).min(lines.len());
             for j in (i + 1)..search_end {
-                if RE_CHMOD_X.is_match(lines[j]) {
+                if RE_CHMOD_X.is_match(lines[j])
+                    && shell_words::split(lines[j])
+                        .ok()
+                        .is_some_and(|words| words.iter().skip(2).any(|word| word == &target))
+                {
                     // 在 chmod 后 10 行内查找执行
                     let exec_end = (j + 10).min(lines.len());
                     for k in (j + 1)..exec_end {
-                        if RE_EXEC_COMMAND.is_match(lines[k])
-                            || RE_PIPE_EXEC.is_match(lines[k])
-                            || RE_EXEC_BARE.is_match(lines[k])
-                        {
+                        if executes_target(lines[k], &target) {
                             let snippet = Some(format!(
                                 "{}\n  ...\n{}\n  ...\n{}",
                                 line.trim(),
@@ -1224,7 +1308,7 @@ pub fn analyze(ctx: &SkillContext) -> Vec<Finding> {
 
     for (file_path, content) in &scan_targets {
         // 跳过文档目录中的文件（SKILL.md 除外，它始终以完整规则扫描）
-        if policy.is_doc_path(file_path)
+        if policy.is_documentation_file(file_path)
             && !std::path::Path::new(file_path)
                 .file_name()
                 .and_then(|s| s.to_str())
