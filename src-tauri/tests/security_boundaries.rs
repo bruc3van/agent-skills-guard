@@ -190,7 +190,17 @@ fn file_limit_is_visible_and_scripts_get_priority() {
     assert!(report.blocked);
     assert!(report.partial_scan);
     assert!(!report.skipped_files.is_empty());
-    assert!(report.scanned_files.iter().any(|p| p == "scripts/z.sh"));
+    // Scan reports preserve native path separators, including backslashes on Windows.
+    let script_path = Path::new("scripts").join("z.sh");
+    assert!(
+        report
+            .scanned_files
+            .iter()
+            .any(|p| Path::new(p) == script_path),
+        "expected {} to be scanned, got {:?}",
+        script_path.display(),
+        report.scanned_files
+    );
     assert!(report
         .issues
         .iter()
