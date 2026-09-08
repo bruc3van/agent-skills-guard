@@ -2,7 +2,7 @@ use crate::commands::featured_marketplaces;
 use crate::commands::AppState;
 use crate::i18n::validate_locale;
 use crate::models::{Plugin, SecurityReport};
-use crate::security::{ScanOptions, SecurityScanner};
+use crate::security::{scan_directory, ScanOptions};
 use crate::services::plugin_manager::{
     ClaudeMarketplace, MarketplaceRemoveResult, MarketplaceUpdateResult, PluginInstallResult,
     PluginUninstallResult, PluginUpdateResult, SkillPluginUpgradeCandidate,
@@ -372,8 +372,7 @@ fn scan_installed_plugins_blocking(
                     return None;
                 }
 
-                let scanner = SecurityScanner::new();
-                let report = match scanner.scan_directory_with_options(
+                let report = match scan_directory(
                     path.to_str().unwrap_or(""),
                     &plugin.id,
                     &locale_owned,
@@ -381,7 +380,6 @@ fn scan_installed_plugins_blocking(
                         skip_readme: true,
                         ..Default::default()
                     },
-                    None,
                 ) {
                     Ok(report) => report,
                     Err(e) => {
@@ -479,21 +477,18 @@ fn scan_installed_plugin_blocking(
         ));
     }
 
-    let scanner = SecurityScanner::new();
-    let report = scanner
-        .scan_directory_with_options(
-            path.to_str().unwrap_or(""),
-            &plugin.id,
-            locale,
-            ScanOptions {
-                skip_readme: true,
-                ..Default::default()
-            },
-            None,
-        )
-        .map_err(|e| e.to_string())?
-        // 出站前剥离 scanned_files（前端不读，仅徒增 DB / IPC 体积）
-        .without_scanned_file_list();
+    let report = scan_directory(
+        path.to_str().unwrap_or(""),
+        &plugin.id,
+        locale,
+        ScanOptions {
+            skip_readme: true,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| e.to_string())?
+    // 出站前剥离 scanned_files（前端不读，仅徒增 DB / IPC 体积）
+    .without_scanned_file_list();
 
     plugin.security_score = Some(report.score);
     plugin.security_level = Some(report.level.as_str().to_string());

@@ -3,7 +3,7 @@ use crate::models::{
     FeaturedMarketplace, FeaturedMarketplaceOwner, FeaturedMarketplacesConfig, LocalizedText,
     Plugin, Repository, SecurityLevel, SecurityReport, Skill, LOCAL_REPOSITORY_URL,
 };
-use crate::security::{ScanOptions, SecurityScanner};
+use crate::security::{scan_directory, ScanOptions};
 use crate::services::claude_cli::{ClaudeCli, ClaudeCommand};
 use crate::services::{Database, GitHubService};
 use anyhow::{Context, Result};
@@ -304,7 +304,6 @@ struct ClaudePluginListWithAvailable {
 pub struct PluginManager {
     db: Arc<Database>,
     github: GitHubService,
-    scanner: SecurityScanner,
 }
 
 impl PluginManager {
@@ -312,7 +311,6 @@ impl PluginManager {
         Self {
             db,
             github: GitHubService::new(),
-            scanner: SecurityScanner::new(),
         }
     }
 
@@ -1236,12 +1234,11 @@ impl PluginManager {
         let repo_root = find_repo_root(&cache_path)?;
         let source_path = selected_plugin_source(&repo_root, &plugin)?;
         let marketplace_name = plugin.marketplace_name.clone();
-        let report = self.scanner.scan_directory_with_options(
+        let report = scan_directory(
             source_path.to_str().context("插件目录路径无效")?,
             &plugin.id,
             locale,
             ScanOptions::default(),
-            None,
         )?;
         let reports = vec![(plugin.clone(), report)];
 
@@ -1298,12 +1295,11 @@ impl PluginManager {
                 .context("PLUGIN_NOT_PREPARED")?,
         );
         let staged_source = selected_plugin_source(&staged_root, &plugin)?;
-        let report = self.scanner.scan_directory_with_options(
+        let report = scan_directory(
             staged_source.to_str().context("INVALID_PLUGIN_PATH")?,
             &plugin.id,
             "zh",
             ScanOptions::default(),
-            None,
         )?;
         if let Err(error) = ensure_plugin_report_installable(&report) {
             let mut rejected = plugin.clone();
@@ -1396,12 +1392,11 @@ impl PluginManager {
             .and_then(|m| m.install_location)
             .context("PLUGIN_INSTALL_SOURCE_UNKNOWN: 无法确认 Claude 使用的本地来源")?;
         let actual_source = selected_plugin_source(Path::new(&actual_root), &plugin)?;
-        let actual_report = self.scanner.scan_directory_with_options(
+        let actual_report = scan_directory(
             actual_source.to_str().context("INVALID_PLUGIN_PATH")?,
             &plugin.id,
             "zh",
             ScanOptions::default(),
-            None,
         )?;
         let mut checked = plugin.clone();
         checked.security_score = Some(actual_report.score);

@@ -440,7 +440,7 @@ const URL_PREFIXES: &[&str] = &["http://", "https://", "ftp://"];
 /// - 绝对路径（/）
 /// - 路径穿越（..）
 /// - 空字符串
-pub fn is_valid_file_ref(path: &str) -> bool {
+fn is_valid_file_ref(path: &str) -> bool {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return false;

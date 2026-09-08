@@ -16,7 +16,7 @@ static RE_PI_ROLE: Lazy<Regex> = lazy_regex!(r"(?i)you\s+are\s+now\s+");
 static RE_SUSPICIOUS_URL: Lazy<Regex> = lazy_regex!(r"(?i)https?://[^\s]+\.(?:tk|ml|ga|cf|gq)/");
 
 /// 路径是否位于 assets/references/templates/data 目录
-pub fn is_asset_path(file_path: &str) -> bool {
+fn is_asset_path(file_path: &str) -> bool {
     let lower = file_path.replace('\\', "/").to_lowercase();
     ASSET_DIR_SEGMENTS.iter().any(|seg| lower.contains(seg))
 }

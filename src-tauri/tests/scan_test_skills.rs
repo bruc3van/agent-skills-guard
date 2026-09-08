@@ -1,6 +1,6 @@
 //! Scan test-skills directory and output a JSON report
 
-use agent_skills_guard_lib::security::{ScanOptions, SecurityScanner};
+use agent_skills_guard_lib::security::{scan_directory, ScanOptions};
 use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
@@ -86,7 +86,6 @@ fn scan_all_test_skills() {
     let root = test_skills_root();
     assert!(root.is_dir(), "test-skills dir not found: {:?}", root);
 
-    let scanner = SecurityScanner::new();
     let skill_dirs = collect_skill_dirs(&root);
     let positive_count = skill_dirs
         .iter()
@@ -121,12 +120,11 @@ fn scan_all_test_skills() {
         let dir_str = dir.to_str().unwrap();
         println!("Scanning: {} ...", name);
 
-        match scanner.scan_directory_with_options(
+        match scan_directory(
             dir_str,
             &format!("test-{}", name.replace('/', "-").replace('\\', "-")),
             "en",
             ScanOptions::default(),
-            None,
         ) {
             Ok(report) => {
                 let level = &report.level;

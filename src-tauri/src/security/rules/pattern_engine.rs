@@ -7,7 +7,7 @@
 use super::loader::CompiledYamlRule;
 
 /// 检查 YAML 规则的 exclude_patterns 是否命中（单行）
-pub fn is_excluded(compiled_rule: &CompiledYamlRule, line: &str) -> bool {
+fn is_excluded(compiled_rule: &CompiledYamlRule, line: &str) -> bool {
     compiled_rule
         .compiled_exclude_patterns
         .iter()
@@ -15,7 +15,7 @@ pub fn is_excluded(compiled_rule: &CompiledYamlRule, line: &str) -> bool {
 }
 
 /// 模式是否需要对整段内容做第二遍扫描（跨行）
-pub fn pattern_requires_multiline_scan(pattern: &str) -> bool {
+fn pattern_requires_multiline_scan(pattern: &str) -> bool {
     if pattern.contains("(?s") || pattern.contains("(?is") || pattern.contains(r"[\s\S]") {
         return true;
     }
@@ -40,7 +40,7 @@ pub fn pattern_requires_multiline_scan(pattern: &str) -> bool {
 }
 
 /// 规则是否包含至少一个跨行 pattern
-pub fn rule_has_multiline_patterns(compiled_rule: &CompiledYamlRule) -> bool {
+fn rule_has_multiline_patterns(compiled_rule: &CompiledYamlRule) -> bool {
     compiled_rule
         .rule
         .patterns

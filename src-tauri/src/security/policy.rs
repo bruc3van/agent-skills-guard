@@ -23,9 +23,6 @@ pub struct ScanPolicy {
     /// 策略版本
     #[serde(default = "default_policy_version")]
     pub policy_version: String,
-    /// 预设基础
-    #[serde(default)]
-    pub preset_base: Option<String>,
 
     /// 禁用的规则 ID 列表
     #[serde(default)]
@@ -56,12 +53,6 @@ pub struct ScanPolicy {
     /// Pipeline 分析
     #[serde(default)]
     pub pipeline: PipelinePolicy,
-    /// 凭据检测
-    #[serde(default)]
-    pub credentials: CredentialPolicy,
-    /// Finding 输出
-    #[serde(default)]
-    pub finding_output: FindingOutputPolicy,
     /// 结构校验
     #[serde(default)]
     pub strict_structure: StrictStructurePolicy,
@@ -164,38 +155,6 @@ impl Default for PipelinePolicy {
     }
 }
 
-/// 凭据检测策略
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CredentialPolicy {
-    /// 已知测试凭据值（不作为真实泄露报告）
-    #[serde(default = "default_known_test_values")]
-    pub known_test_values: HashSet<String>,
-}
-
-impl Default for CredentialPolicy {
-    fn default() -> Self {
-        Self {
-            known_test_values: default_known_test_values(),
-        }
-    }
-}
-
-/// Finding 输出策略
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FindingOutputPolicy {
-    /// 是否去重
-    #[serde(default = "default_true")]
-    pub dedupe: bool,
-}
-
-impl Default for FindingOutputPolicy {
-    fn default() -> Self {
-        Self {
-            dedupe: default_true(),
-        }
-    }
-}
-
 /// 结构校验策略
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StrictStructurePolicy {
@@ -252,9 +211,6 @@ fn default_max_depth() -> usize {
 }
 fn default_max_scan_file_size_bytes() -> u64 {
     2 * 1024 * 1024 // 2 MiB
-}
-fn default_true() -> bool {
-    true
 }
 fn default_min_description_length() -> usize {
     10
@@ -328,21 +284,6 @@ fn default_known_installer_domains() -> HashSet<String> {
     .collect()
 }
 
-fn default_known_test_values() -> HashSet<String> {
-    [
-        "sk_test_",
-        "pk_test_",
-        "tok_test_",
-        "your-api-key-here",
-        "example-token",
-        "changeme",
-        "password123",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
-}
-
 fn default_allowed_extensions() -> HashSet<String> {
     [
         ".md",
@@ -408,11 +349,6 @@ static DEFAULT_POLICY: std::sync::LazyLock<ScanPolicy> = std::sync::LazyLock::ne
 });
 
 impl ScanPolicy {
-    /// 从 YAML 字符串解析策略
-    pub fn from_yaml(yaml: &str) -> Result<Self, serde_yaml::Error> {
-        serde_yaml::from_str(yaml)
-    }
-
     /// 获取内置默认策略
     pub fn builtin_default() -> &'static ScanPolicy {
         &DEFAULT_POLICY
@@ -505,14 +441,6 @@ impl ScanPolicy {
             })
     }
 
-    /// 检查域名是否为已知安装器
-    pub fn is_known_installer_domain(&self, domain: &str) -> bool {
-        self.pipeline
-            .known_installer_domains
-            .iter()
-            .any(|d| domain.contains(d.as_str()))
-    }
-
     /// Only prose gets documentation downgrades. Executable files retain the
     /// same checks regardless of whether their directory is called docs/tests.
     pub fn is_documentation_file(&self, path: &str) -> bool {
@@ -543,7 +471,6 @@ impl ScanPolicy {
                             | "doc_path_indicators"
                             | "skip_in_docs"
                             | "known_installer_domains"
-                            | "known_test_values"
                             | "allowed_extensions"
                             | "allowed_subdirs"
                     ) {

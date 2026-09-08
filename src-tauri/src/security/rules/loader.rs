@@ -35,7 +35,7 @@ fn compile_rule_regex(pattern: &str) -> Result<Regex> {
 }
 
 /// 加载并编译规则包
-pub fn load_rule_pack(yaml: &str) -> Result<Vec<CompiledYamlRule>> {
+fn load_rule_pack(yaml: &str) -> Result<Vec<CompiledYamlRule>> {
     let pack: RulePack =
         serde_yaml::from_str(yaml).with_context(|| "Failed to parse rule pack YAML")?;
 
@@ -43,7 +43,7 @@ pub fn load_rule_pack(yaml: &str) -> Result<Vec<CompiledYamlRule>> {
 }
 
 /// 编译规则包中的所有规则
-pub fn compile_rule_pack(pack: RulePack) -> Result<Vec<CompiledYamlRule>> {
+fn compile_rule_pack(pack: RulePack) -> Result<Vec<CompiledYamlRule>> {
     let mut compiled = Vec::with_capacity(pack.rules.len());
     let mut seen_ids = HashSet::new();
 

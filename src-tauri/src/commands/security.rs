@@ -2,7 +2,7 @@ use crate::commands::{clamp_scan_parallelism, scan_thread_pool, AppState};
 use crate::i18n::validate_locale;
 use crate::models::security::{SecurityLevel, SecurityReport, SkillScanResult};
 use crate::models::Skill;
-use crate::security::{ScanOptions, SecurityScanner};
+use crate::security::{scan_directory, ScanOptions};
 use anyhow::Result;
 use rayon::prelude::*;
 use std::path::PathBuf;
@@ -97,8 +97,7 @@ fn scan_installed_skills_blocking(
                     return None;
                 }
 
-                let scanner = SecurityScanner::new();
-                let report = match scanner.scan_directory_with_options(
+                let report = match scan_directory(
                     path.to_str().unwrap_or(""),
                     &skill.id,
                     &locale_owned,
@@ -106,7 +105,6 @@ fn scan_installed_skills_blocking(
                         skip_readme: false,
                         ..Default::default()
                     },
-                    None,
                 ) {
                     Ok(report) => report,
                     Err(e) => {
@@ -204,21 +202,18 @@ fn scan_installed_skill_blocking(
         ));
     }
 
-    let scanner = SecurityScanner::new();
-    let report = scanner
-        .scan_directory_with_options(
-            path.to_str().unwrap_or(""),
-            &skill.id,
-            locale,
-            ScanOptions {
-                skip_readme: false,
-                ..Default::default()
-            },
-            None,
-        )
-        .map_err(|e| e.to_string())?
-        // 出站前剥离 scanned_files（前端不读，仅徒增 DB / IPC 体积）
-        .without_scanned_file_list();
+    let report = scan_directory(
+        path.to_str().unwrap_or(""),
+        &skill.id,
+        locale,
+        ScanOptions {
+            skip_readme: false,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| e.to_string())?
+    // 出站前剥离 scanned_files（前端不读，仅徒增 DB / IPC 体积）
+    .without_scanned_file_list();
 
     skill.security_score = Some(report.score);
     skill.security_level = Some(report.level.as_str().to_string());
@@ -258,14 +253,12 @@ pub async fn count_scan_files(
             ));
         }
 
-        let scanner = SecurityScanner::new();
         let options = ScanOptions {
             skip_readme: skip_readme.unwrap_or(true),
             ..Default::default()
         };
 
-        scanner
-            .count_scan_files(path.to_str().unwrap_or(""), options)
+        crate::security::count_scan_files(path.to_str().unwrap_or(""), options)
             .map_err(|e| e.to_string())
     })
     .await

@@ -351,7 +351,7 @@ pub fn validate(ctx: &SkillContext) -> Vec<Finding> {
 /// - 长度 2-64
 /// - 不以连字符开头或结尾
 /// - 无连续连字符
-pub fn is_valid_name(name: &str) -> bool {
+fn is_valid_name(name: &str) -> bool {
     let len = name.len();
     if len < NAME_MIN_LEN || len > NAME_MAX_LEN {
         return false;
@@ -385,65 +385,6 @@ pub fn is_valid_name(name: &str) -> bool {
     true
 }
 
-/// 已知二进制扩展名
-pub fn is_known_binary_ext(ext: &str) -> bool {
-    matches!(
-        ext.to_lowercase().as_str(),
-        "exe"
-            | "dll"
-            | "so"
-            | "dylib"
-            | "bin"
-            | "dat"
-            | "db"
-            | "sqlite"
-            | "sqlite3"
-            | "wasm"
-            | "jar"
-            | "war"
-            | "ear"
-            | "pyc"
-            | "pyo"
-            | "class"
-            | "o"
-            | "msi"
-            | "dmg"
-            | "png"
-            | "jpg"
-            | "jpeg"
-            | "gif"
-            | "webp"
-            | "avif"
-            | "bmp"
-            | "ico"
-            | "icns"
-            | "tif"
-            | "tiff"
-            | "heic"
-            | "heif"
-            | "ttf"
-            | "otf"
-            | "woff"
-            | "woff2"
-            | "eot"
-            | "mp3"
-            | "mp4"
-            | "wav"
-            | "ogg"
-            | "webm"
-            | "flac"
-            | "aac"
-            | "pdf"
-            | "zip"
-            | "gz"
-            | "tar"
-            | "rar"
-            | "7z"
-            | "bz2"
-            | "xz"
-    )
-}
-
 /// 规范化路径分隔符（将反斜杠转换为正斜杠）
 fn normalize_path(path: &str) -> String {
     path.replace('\\', "/")
@@ -452,7 +393,7 @@ fn normalize_path(path: &str) -> String {
 /// 创建一个 Finding 实例
 ///
 /// 委托 finding_builder 生成稳定的 finding ID 并构造 Finding
-pub fn make_finding(
+fn make_finding(
     rule_id: &str,
     severity: IssueSeverity,
     description: String,

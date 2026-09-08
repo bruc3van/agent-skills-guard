@@ -6,7 +6,6 @@
 
 policy_name: default
 policy_version: "1.0"
-preset_base: balanced
 
 # 禁用的规则（空列表表示不禁用任何规则）
 disabled_rules: []
@@ -112,21 +111,6 @@ pipeline:
     - "install.python-poetry.org"
     - "rye.astral.sh"
     - "mise.jdx.dev"
-
-# 凭据检测
-credentials:
-  known_test_values:
-    - "sk_test_"
-    - "pk_test_"
-    - "tok_test_"
-    - "your-api-key-here"
-    - "example-token"
-    - "changeme"
-    - "password123"
-
-# Finding 输出
-finding_output:
-  dedupe: true
 
 # 结构校验
 strict_structure:

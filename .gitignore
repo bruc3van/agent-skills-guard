@@ -45,6 +45,7 @@ yarn-error.log*
 *.temp
 
 .claude/
+.zcode/
 reference/
 test/*
 !test/test-skills/

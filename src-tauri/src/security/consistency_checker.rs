@@ -278,7 +278,7 @@ pub fn check(ctx: &SkillContext) -> Vec<Finding> {
 /// 只扫描脚本文件（SkillFileType::Script），不扫描文档。
 /// 对每种能力：若该能力在 allowed_tools 中声明则跳过，
 /// 若不在声明中但代码匹配了对应模式则产生 finding。
-pub fn check_allowed_tools(ctx: &SkillContext) -> Vec<Finding> {
+fn check_allowed_tools(ctx: &SkillContext) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let allowed_tools = match ctx.manifest.as_ref() {
@@ -367,7 +367,7 @@ pub fn check_allowed_tools(ctx: &SkillContext) -> Vec<Finding> {
 }
 
 /// 检查 manifest 元数据与代码行为的一致性
-pub fn check_manifest_consistency(ctx: &SkillContext) -> Vec<Finding> {
+fn check_manifest_consistency(ctx: &SkillContext) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let manifest = match ctx.manifest.as_ref() {
@@ -431,7 +431,7 @@ pub fn check_manifest_consistency(ctx: &SkillContext) -> Vec<Finding> {
 }
 
 /// 检查 description 质量
-pub fn check_description_quality(ctx: &SkillContext) -> Vec<Finding> {
+fn check_description_quality(ctx: &SkillContext) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     let description = match ctx.manifest.as_ref() {

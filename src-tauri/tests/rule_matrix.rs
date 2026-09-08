@@ -1,7 +1,7 @@
 //! security rule matrix integration tests (manifest-driven fixtures)
 
 use agent_skills_guard_lib::security::policy::SeverityOverride;
-use agent_skills_guard_lib::security::{ScanOptions, ScanPolicy, SecurityScanner};
+use agent_skills_guard_lib::security::{scan_directory, ScanOptions, ScanPolicy};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -65,16 +65,13 @@ fn run_case(case: &RuleMatrixCase) {
         dir
     );
 
-    let scanner = SecurityScanner::new();
-    let report = scanner
-        .scan_directory_with_options(
-            dir.to_str().unwrap(),
-            &format!("rule-matrix-{}", case.id),
-            "en",
-            scan_options_for_case(case),
-            None,
-        )
-        .unwrap_or_else(|e| panic!("scan failed for {}: {}", case.id, e));
+    let report = scan_directory(
+        dir.to_str().unwrap(),
+        &format!("rule-matrix-{}", case.id),
+        "en",
+        scan_options_for_case(case),
+    )
+    .unwrap_or_else(|e| panic!("scan failed for {}: {}", case.id, e));
 
     let ids = rule_id_set(&report);
 
@@ -139,16 +136,8 @@ fn rule_matrix_report_metadata_has_policy_fingerprint() {
         .find(|c| c.id == "path_traversal_open")
         .expect("path_traversal_open case in manifest");
     let dir = fixture_root().join(&case.path);
-    let scanner = SecurityScanner::new();
-    let report = scanner
-        .scan_directory_with_options(
-            dir.to_str().unwrap(),
-            "meta",
-            "en",
-            ScanOptions::default(),
-            None,
-        )
-        .unwrap();
+    let report =
+        scan_directory(dir.to_str().unwrap(), "meta", "en", ScanOptions::default()).unwrap();
     let meta = report.metadata.expect("metadata should be set");
     assert!(meta.policy_fingerprint.is_some());
     assert_eq!(meta.policy_name.as_deref(), Some("default"));
@@ -163,16 +152,13 @@ fn rule_matrix_severity_override_demotes_issue() {
         reason: "test: demote for rule matrix".to_string(),
     });
     let dir = fixture_root().join("p0-signatures/curl-pipe");
-    let scanner = SecurityScanner::new();
-    let report = scanner
-        .scan_directory_with_options(
-            dir.to_str().unwrap(),
-            "severity-override-test",
-            "en",
-            ScanOptions::with_policy(policy),
-            None,
-        )
-        .expect("scan should succeed");
+    let report = scan_directory(
+        dir.to_str().unwrap(),
+        "severity-override-test",
+        "en",
+        ScanOptions::with_policy(policy),
+    )
+    .expect("scan should succeed");
 
     let curl_issue = report
         .issues

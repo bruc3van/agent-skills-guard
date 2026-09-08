@@ -58,7 +58,7 @@ pub enum ContentType {
 }
 
 impl ContentType {
-    pub fn as_str(&self) -> &'static str {
+    fn as_str(&self) -> &'static str {
         match self {
             ContentType::Pe => "PE executable",
             ContentType::Elf => "ELF executable",
@@ -86,7 +86,7 @@ impl ContentType {
 // ── Magic byte 检测 ──
 
 /// 检测文件内容类型（基于 magic bytes，仅检查前 512 字节）
-pub fn detect_content_type(data: &[u8]) -> ContentType {
+fn detect_content_type(data: &[u8]) -> ContentType {
     if data.is_empty() {
         return ContentType::Unknown;
     }

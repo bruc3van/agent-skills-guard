@@ -1,5 +1,5 @@
 use crate::models::{Skill, LOCAL_REPOSITORY_URL};
-use crate::security::{ScanOptions, SecurityScanner};
+use crate::security::{calculate_checksum, scan_directory, scan_file, ScanOptions};
 use crate::services::agent_tools::AgentTool;
 use crate::services::link_fs;
 use crate::services::migration::{MigrationManager, SkillAdoptionSummary, ToolSkillDir};
@@ -14,7 +14,6 @@ use std::sync::Arc;
 pub struct SkillManager {
     db: Arc<Database>,
     github: GitHubService,
-    scanner: SecurityScanner,
     skills_dir: PathBuf,
     cleanup_done: AtomicBool,
     installing: std::sync::Mutex<std::collections::HashSet<String>>,
@@ -609,7 +608,6 @@ impl SkillManager {
         Self {
             db,
             github: GitHubService::new(),
-            scanner: SecurityScanner::new(),
             skills_dir,
             cleanup_done: AtomicBool::new(false),
             installing: std::sync::Mutex::new(std::collections::HashSet::new()),
@@ -761,7 +759,7 @@ impl SkillManager {
         allow_partial_scan: bool,
     ) -> Result<crate::models::SecurityReport> {
         let locale = rust_i18n::locale();
-        let report = self.scanner.scan_directory_with_options(
+        let report = scan_directory(
             dir.to_str().context("INVALID_SKILL_DIR_PATH")?,
             skill_id,
             &locale,
@@ -769,7 +767,6 @@ impl SkillManager {
                 skip_readme: false,
                 ..Default::default()
             },
-            None,
         )?;
         self.enforce_installable_report(&report, "安装或更新技能", allow_partial_scan)?;
         Ok(report)
@@ -824,12 +821,12 @@ impl SkillManager {
         // 安全扫描（SingleFile 预检：仅 hard_trigger 时写入 DB，避免结构类误报落库）
         let content_str = String::from_utf8_lossy(&content);
         let locale = rust_i18n::locale();
-        let report = self.scanner.scan_file(&content_str, "SKILL.md", &locale)?;
+        let report = scan_file(&content_str, "SKILL.md", &locale, ScanOptions::default())?;
 
         if report.blocked {
             Self::apply_scan_report(skill, &report);
         }
-        skill.checksum = Some(self.scanner.calculate_checksum(&content));
+        skill.checksum = Some(calculate_checksum(&content));
 
         Ok((content, report))
     }
@@ -902,7 +899,7 @@ impl SkillManager {
         log::info!("在缓存中找到技能目录: {:?}", skill_cache_dir);
 
         // 直接扫描缓存中的技能目录
-        let scan_report = self.scanner.scan_directory_with_options(
+        let scan_report = scan_directory(
             skill_cache_dir.to_str().context("INVALID_SKILL_DIR_PATH")?,
             &skill.id,
             locale,
@@ -910,7 +907,6 @@ impl SkillManager {
                 skip_readme: false,
                 ..Default::default()
             },
-            None,
         )?;
 
         log::info!(
@@ -2138,8 +2134,7 @@ impl SkillManager {
                                         updated.description = skill_description;
                                         updated.file_path = path_str.clone();
                                     }
-                                    let checksum =
-                                        self.scanner.calculate_checksum(content.as_bytes());
+                                    let checksum = calculate_checksum(content.as_bytes());
                                     if updated.checksum.as_deref() != Some(checksum.as_str()) {
                                         updated.checksum = Some(checksum);
                                     }
@@ -2163,7 +2158,7 @@ impl SkillManager {
                     match std::fs::read_to_string(&skill_md_path) {
                         Ok(content) => {
                             // 计算 checksum
-                            let checksum = self.scanner.calculate_checksum(content.as_bytes());
+                            let checksum = calculate_checksum(content.as_bytes());
 
                             // 解析 frontmatter 获取元数据（用于展示/更新）
                             let (skill_name, skill_description) =
@@ -2237,7 +2232,7 @@ impl SkillManager {
                                         }
                                     };
                                     let locale = rust_i18n::locale();
-                                    let report = self.scanner.scan_directory_with_options(
+                                    let report = scan_directory(
                                         path_str,
                                         &existing_skill.id,
                                         &locale,
@@ -2245,7 +2240,6 @@ impl SkillManager {
                                             skip_readme: false,
                                             ..Default::default()
                                         },
-                                        None,
                                     )?;
 
                                     Self::apply_scan_report(&mut existing_skill, &report);
@@ -2296,7 +2290,7 @@ impl SkillManager {
                                         }
                                     };
                                     let locale = rust_i18n::locale();
-                                    let report = self.scanner.scan_directory_with_options(
+                                    let report = scan_directory(
                                         path_str,
                                         &existing_skill.id,
                                         &locale,
@@ -2304,7 +2298,6 @@ impl SkillManager {
                                             skip_readme: false,
                                             ..Default::default()
                                         },
-                                        None,
                                     )?;
                                     Self::apply_scan_report(&mut existing_skill, &report);
                                 }
@@ -2361,7 +2354,7 @@ impl SkillManager {
                                 }
                             };
                             let locale = rust_i18n::locale();
-                            let report = self.scanner.scan_directory_with_options(
+                            let report = scan_directory(
                                 path_str,
                                 &skill_id,
                                 &locale,
@@ -2369,7 +2362,6 @@ impl SkillManager {
                                     skip_readme: false,
                                     ..Default::default()
                                 },
-                                None,
                             )?;
 
                             log::info!(
@@ -2692,7 +2684,7 @@ impl SkillManager {
             self.locate_skill_in_cache(extract_dir.as_path(), &skill.file_path)?;
 
         // 扫描最新版本
-        let scan_report = self.scanner.scan_directory_with_options(
+        let scan_report = scan_directory(
             staging_skill_dir
                 .to_str()
                 .context("INVALID_SKILL_DIR_PATH")?,
@@ -2702,7 +2694,6 @@ impl SkillManager {
                 skip_readme: false,
                 ..Default::default()
             },
-            None,
         )?;
 
         log::info!(
@@ -3655,8 +3646,7 @@ mod tests {
         skill.source_path = Some(source.to_string_lossy().to_string());
         skill.local_path = Some(source.to_string_lossy().to_string());
         skill.local_paths = Some(vec![source.to_string_lossy().to_string()]);
-        skill.checksum =
-            Some(crate::security::SecurityScanner::new().calculate_checksum(b"same skill"));
+        skill.checksum = Some(crate::security::calculate_checksum(b"same skill"));
         skill.linked_tools = Vec::new();
 
         let refreshed = refresh_existing_tool_links_for_skill(
@@ -3685,7 +3675,7 @@ mod tests {
         std::fs::create_dir_all(&codex_existing).unwrap();
         std::fs::write(codex_existing.join("SKILL.md"), "same skill").unwrap();
 
-        let checksum = crate::security::SecurityScanner::new().calculate_checksum(b"same skill");
+        let checksum = crate::security::calculate_checksum(b"same skill");
         let mut skill = crate::models::Skill::new(
             "frontend-design".to_string(),
             crate::models::LOCAL_REPOSITORY_URL.to_string(),
@@ -4092,7 +4082,7 @@ mod tests {
         std::fs::create_dir_all(&codex_existing).unwrap();
         std::fs::write(codex_existing.join("SKILL.md"), "same skill").unwrap();
 
-        let checksum = crate::security::SecurityScanner::new().calculate_checksum(b"same skill");
+        let checksum = crate::security::calculate_checksum(b"same skill");
         let mut skill = crate::models::Skill::new(
             "example".to_string(),
             crate::models::LOCAL_REPOSITORY_URL.to_string(),
@@ -4147,8 +4137,7 @@ mod tests {
         std::fs::write(source.join("SKILL.md"), "source skill").unwrap();
         std::fs::write(target.join("SKILL.md"), "different skill").unwrap();
 
-        let source_checksum =
-            crate::security::SecurityScanner::new().calculate_checksum(b"source skill");
+        let source_checksum = crate::security::calculate_checksum(b"source skill");
 
         assert!(!tool_skill_path_is_compatible_with_source(
             &source,

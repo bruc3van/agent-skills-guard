@@ -1,6 +1,6 @@
 use crate::{
     models::SecurityReport,
-    security::{cross_skill, SecurityScanner},
+    security::{count_kinds, cross_skill, issue_from_finding, score_from_issues},
     services::Database,
 };
 use anyhow::Result;
@@ -38,14 +38,12 @@ pub fn refresh_cross_skill_reports(db: &Database) -> Result<HashMap<String, Secu
             .filter(|f| skill.installed && f.skill_ids.contains(&skill.id))
             .collect();
         if had_cross || !relevant.is_empty() {
-            report.issues.extend(
-                relevant
-                    .iter()
-                    .map(|f| SecurityScanner::issue_from_finding(&f.finding)),
-            );
-            report.score = SecurityScanner::score_from_issues(&report.issues, report.blocked);
+            report
+                .issues
+                .extend(relevant.iter().map(|f| issue_from_finding(&f.finding)));
+            report.score = score_from_issues(&report.issues, report.blocked);
             report.level = crate::models::SecurityLevel::from_score(report.score);
-            report.kind_counts = Some(SecurityScanner::count_kinds(&report.issues));
+            report.kind_counts = Some(count_kinds(&report.issues));
             db.update_skill_security_report(&skill.id, &report)?;
         }
         reports.insert(skill.id.clone(), report);

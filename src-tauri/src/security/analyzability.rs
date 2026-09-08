@@ -24,16 +24,8 @@ const LOW_ANALYZABILITY_THRESHOLD: f64 = 70.0;
 /// 可分析性评估结果
 #[derive(Debug, Clone)]
 pub struct AnalyzabilityResult {
-    /// 可分析性分数（0.0 - 100.0），可分析内容占比
-    pub score: f64,
     /// 所有发现
     pub findings: Vec<Finding>,
-    /// 总字节数
-    pub total_bytes: u64,
-    /// 可分析字节数
-    pub analyzable_bytes: u64,
-    /// 不可分析字节数
-    pub unanalyzable_bytes: u64,
     /// 是否存在可能影响扫描完整性的风险性不可分析内容
     pub has_risky_unanalyzable_content: bool,
 }
@@ -92,11 +84,7 @@ pub fn assess(ctx: &SkillContext) -> AnalyzabilityResult {
     }
 
     AnalyzabilityResult {
-        score,
         findings,
-        total_bytes,
-        analyzable_bytes,
-        unanalyzable_bytes: total_bytes - analyzable_bytes,
         has_risky_unanalyzable_content,
     }
 }
@@ -163,7 +151,9 @@ fn is_text_asset(file: &crate::security::skill_context::SkillFile) -> bool {
 
 /// 判断文件是否为已知惰性资产（低风险不可分析）
 ///
-/// 惰性资产扩展名来自 policy 的 inert_extensions 列表
+/// 注意：这是 policy `inert_extensions` 的超集——除静态图片/字体外，
+/// 还覆盖音视频、办公文档、字节码等二进制资产，用于可分析性统计口径；
+/// policy 列表只控制扫描阶段的文件跳过。两者职责不同，刻意不完全一致。
 fn is_inert_asset(file: &crate::security::skill_context::SkillFile) -> bool {
     let ext = file
         .absolute_path
@@ -172,7 +162,7 @@ fn is_inert_asset(file: &crate::security::skill_context::SkillFile) -> bool {
         .map(|e| format!(".{}", e.to_lowercase()))
         .unwrap_or_default();
 
-    // 已知惰性扩展名（与 default_inert_extensions 一致）
+    // 已知惰性扩展名（policy inert_extensions 的统计口径超集，见函数级说明）
     matches!(
         ext.as_str(),
         ".ttf" | ".otf" | ".woff" | ".woff2" | ".eot"
@@ -368,11 +358,7 @@ mod tests {
         let ctx = make_test_ctx(files);
         let result = assess(&ctx);
 
-        assert!((result.score - 100.0).abs() < f64::EPSILON);
         assert!(result.findings.is_empty());
-        assert_eq!(result.total_bytes, 1700);
-        assert_eq!(result.analyzable_bytes, 1700);
-        assert_eq!(result.unanalyzable_bytes, 0);
     }
 
     #[test]
@@ -393,7 +379,6 @@ mod tests {
             "Known inert .png should not produce UNANALYZABLE_BINARY finding"
         );
         // 惰性资产不参与可分析性分母，避免正常图片资源拉低覆盖率
-        assert!((result.score - 100.0).abs() < f64::EPSILON);
         assert!(
             !result
                 .findings
@@ -412,10 +397,6 @@ mod tests {
         let ctx = make_test_ctx(files);
         let result = assess(&ctx);
 
-        assert!((result.score - 100.0).abs() < f64::EPSILON);
-        assert_eq!(result.total_bytes, 4440);
-        assert_eq!(result.analyzable_bytes, 4440);
-        assert_eq!(result.unanalyzable_bytes, 0);
         assert!(
             !result
                 .findings
@@ -434,7 +415,6 @@ mod tests {
         let ctx = make_test_ctx(files);
         let result = assess(&ctx);
 
-        assert!((result.score - 100.0).abs() < f64::EPSILON);
         assert!(
             !result
                 .findings
@@ -547,8 +527,7 @@ mod tests {
         let ctx = make_test_ctx(files);
         let result = assess(&ctx);
 
-        // 可分析分数 = 10%
-        assert!(result.score < 70.0);
+        // 可分析分数 = 10%（< 70% 阈值）
         assert!(
             result
                 .findings
@@ -559,11 +538,10 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_directory_score_100() {
+    fn test_empty_directory_has_no_findings() {
         let ctx = make_test_ctx(Vec::new());
         let result = assess(&ctx);
 
-        assert!((result.score - 100.0).abs() < f64::EPSILON);
         assert!(result.findings.is_empty());
     }
 

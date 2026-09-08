@@ -29,12 +29,6 @@ pub struct CrossSkillFinding {
     pub finding: Finding,
     pub skill_ids: Vec<String>,
 }
-impl std::ops::Deref for CrossSkillFinding {
-    type Target = Finding;
-    fn deref(&self) -> &Finding {
-        &self.finding
-    }
-}
 
 const ANALYZER_NAME: &str = "cross_skill";
 
@@ -473,7 +467,9 @@ pub fn analyze_skill_set(skills: &[SkillScanContext]) -> Vec<CrossSkillFinding> 
     findings.extend(detect_shared_urls(skills));
     findings.extend(detect_complementary_triggers(skills));
     findings.extend(detect_shared_patterns(skills));
-    findings.sort_by(|a, b| (&a.rule_id, &a.id).cmp(&(&b.rule_id, &b.id)));
+    findings.sort_by(|a, b| {
+        (&a.finding.rule_id, &a.finding.id).cmp(&(&b.finding.rule_id, &b.finding.id))
+    });
     findings
 }
 
@@ -591,7 +587,7 @@ mod tests {
 
     #[test]
     fn correlation_without_data_flow_is_informational_and_does_not_reduce_score() {
-        use crate::security::SecurityScanner;
+        use crate::security::{issue_from_finding, scan_file, score_from_issues};
         let contexts = [
             make_ctx("formatter", "Read and collect document reports", vec![("SKILL.md",
                 "Token budget and cookie examples. https://schemas.example.invalid/doc base64.b64decode(data)")]),
@@ -605,27 +601,28 @@ mod tests {
             "CROSS_SKILL_COMPLEMENTARY_TRIGGERS",
             "CROSS_SKILL_SHARED_PATTERN",
         ] {
-            assert!(findings.iter().any(|f| f.rule_id == id), "{id}");
+            assert!(findings.iter().any(|f| f.finding.rule_id == id), "{id}");
         }
         let issues: Vec<_> = findings
             .iter()
-            .map(|f| SecurityScanner::issue_from_finding(f))
+            .map(|f| issue_from_finding(&f.finding))
             .collect();
         assert!(issues
             .iter()
             .all(|i| i.severity == IssueSeverity::Info && i.effective_weight == Some(0)));
-        assert_eq!(SecurityScanner::score_from_issues(&issues, false), 100);
+        assert_eq!(score_from_issues(&issues, false), 100);
         // A real destructive command must still block, even alongside advisory findings.
-        let mut report = SecurityScanner::new()
-            .scan_file("rm -rf /*", "scripts/run.sh", "en")
-            .unwrap();
+        let mut report = scan_file(
+            "rm -rf /*",
+            "scripts/run.sh",
+            "en",
+            crate::security::ScanOptions::default(),
+        )
+        .unwrap();
         assert!(report.blocked);
         let score = report.score;
         report.issues.extend(issues);
-        assert_eq!(
-            SecurityScanner::score_from_issues(&report.issues, report.blocked),
-            score
-        );
+        assert_eq!(score_from_issues(&report.issues, report.blocked), score);
     }
 
     #[test]
@@ -658,9 +655,12 @@ mod tests {
         assert!(
             findings
                 .iter()
-                .any(|f| f.rule_id == "CROSS_SKILL_DATA_RELAY"),
+                .any(|f| f.finding.rule_id == "CROSS_SKILL_DATA_RELAY"),
             "Should detect data relay chain, got: {:?}",
-            findings.iter().map(|f| &f.rule_id).collect::<Vec<_>>()
+            findings
+                .iter()
+                .map(|f| &f.finding.rule_id)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -704,7 +704,7 @@ mod tests {
         assert!(
             !findings
                 .iter()
-                .any(|f| f.rule_id == "CROSS_SKILL_DATA_RELAY"),
+                .any(|f| f.finding.rule_id == "CROSS_SKILL_DATA_RELAY"),
             "author text alone should not create a collector/exfiltrator pair"
         );
     }
@@ -733,9 +733,12 @@ mod tests {
         assert!(
             findings
                 .iter()
-                .any(|f| f.rule_id == "CROSS_SKILL_SHARED_URL"),
+                .any(|f| f.finding.rule_id == "CROSS_SKILL_SHARED_URL"),
             "Should detect shared URL, got: {:?}",
-            findings.iter().map(|f| &f.rule_id).collect::<Vec<_>>()
+            findings
+                .iter()
+                .map(|f| &f.finding.rule_id)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -760,9 +763,12 @@ mod tests {
         assert!(
             findings
                 .iter()
-                .any(|f| f.rule_id == "CROSS_SKILL_SHARED_PATTERN"),
+                .any(|f| f.finding.rule_id == "CROSS_SKILL_SHARED_PATTERN"),
             "Should detect shared base64 pattern, got: {:?}",
-            findings.iter().map(|f| &f.rule_id).collect::<Vec<_>>()
+            findings
+                .iter()
+                .map(|f| &f.finding.rule_id)
+                .collect::<Vec<_>>()
         );
     }
 

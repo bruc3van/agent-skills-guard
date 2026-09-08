@@ -38,7 +38,7 @@ pub struct FindingSpec<'a> {
 ///
 /// 使用 SHA256(rule_id|file_path|line_number|salt)[:16] 作为 ID，
 /// 确保相同位置的相同规则产生相同的 ID（幂等去重）。
-pub fn make_finding_id(
+fn make_finding_id(
     rule_id: &str,
     file_path: &str,
     line_number: Option<usize>,
