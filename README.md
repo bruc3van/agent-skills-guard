@@ -12,6 +12,10 @@
 
 [English](README_EN.md) | 简体中文
 
+<video src="https://github.com/bruc3van/agent-skills-guard/raw/main/assets/agent-skills-guard-promo.mp4" controls muted playsinline width="100%"></video>
+
+▶️ 无法播放？[点击观看宣传视频](assets/agent-skills-guard-promo.mp4)
+
 
 ### 🚀 更多开源项目
 
