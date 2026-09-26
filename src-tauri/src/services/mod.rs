@@ -22,3 +22,5 @@ pub use local_cli_updater::LocalCliUpdater;
 pub use migration::MigrationManager;
 pub use plugin_manager::PluginManager;
 pub use skill_manager::SkillManager;
+
+pub(crate) mod content_manifest;

@@ -45,6 +45,16 @@ describe("api", () => {
     });
   });
 
+  it("passes the selected locale to plugin confirmation", async () => {
+    invokeMock.mockResolvedValueOnce({});
+    await api.confirmPluginInstallation("plugin-a", undefined, "en");
+    expect(invokeMock).toHaveBeenCalledWith("confirm_plugin_installation", {
+      pluginId: "plugin-a",
+      claudeCommand: null,
+      locale: "en",
+    });
+  });
+
   it("rejects malformed security reports from IPC", async () => {
     invokeMock.mockResolvedValueOnce({ skill_id: "skill-a", score: "100" });
 

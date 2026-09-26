@@ -148,7 +148,7 @@ export function MarketplacePage({
         ...prev,
         installingPluginId: plugin.id,
       }));
-      const result = await api.confirmPluginInstallation(plugin.id);
+      const result = await api.confirmPluginInstallation(plugin.id, undefined, i18n.language);
       await queryClient.refetchQueries({ queryKey: ["plugins"] });
       const hasFailed =
         result.marketplace_status === "failed" ||

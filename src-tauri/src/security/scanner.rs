@@ -1482,6 +1482,7 @@ pub fn scan_directory(
     let mut partial_scan = false;
     let mut files_scanned = 0usize;
     let mut context_cache_bytes = 0usize;
+    let mut total_read_bytes = 0u64;
 
     // ── SkillContext 构建与结构校验 ──
     let policy = options
@@ -1671,8 +1672,26 @@ pub fn scan_directory(
             }
         };
 
+        let remaining = policy
+            .file_limits
+            .max_total_scan_bytes
+            .saturating_sub(total_read_bytes);
+        if remaining == 0 {
+            partial_scan = true;
+            skipped_files.push(rel_str.clone());
+            all_issues.push(make_scan_meta_issue(
+                IssueSeverity::High,
+                "Total scan byte budget exhausted".into(),
+                Some(rel_str),
+            ));
+            break;
+        }
+        let read_limit = max_bytes_per_file.min(remaining);
         let mut buf = Vec::new();
-        match file.take(max_bytes_per_file + 1).read_to_end(&mut buf) {
+        match file
+            .take(read_limit.saturating_add(1))
+            .read_to_end(&mut buf)
+        {
             Ok(_) => {}
             Err(e) => {
                 log::warn!("Failed to read file {:?}: {}", file_path, e);
@@ -1687,9 +1706,10 @@ pub fn scan_directory(
             }
         }
 
-        let truncated = (buf.len() as u64) > max_bytes_per_file;
+        total_read_bytes = total_read_bytes.saturating_add(buf.len() as u64);
+        let truncated = (buf.len() as u64) > read_limit;
         if truncated {
-            buf.truncate(max_bytes_per_file as usize);
+            buf.truncate(read_limit as usize);
             all_issues.push(make_scan_meta_issue(
                 IssueSeverity::Info,
                 format!(
@@ -1764,6 +1784,15 @@ pub fn scan_directory(
         &mut total_hard_trigger_issues,
     ) {
         partial_scan = true;
+    }
+
+    if skill_ctx.read_incomplete.get() {
+        partial_scan = true;
+        all_issues.push(make_scan_meta_issue(
+            IssueSeverity::High,
+            "Some analyzer inputs exceeded the read budget or could not be fully read".into(),
+            None,
+        ));
     }
 
     finalize_issues(&mut all_issues);

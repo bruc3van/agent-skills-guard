@@ -1,5 +1,18 @@
 {
   "errors": {
+    "INSTALL_TARGET_EXISTS": "The target directory belongs to another skill; choose another location",
+    "LOCAL_MODIFICATIONS": "Local changes exist or cannot be verified; confirm before overwriting",
+    "SCAN_RESULT_STALE": "Content or installation changed during scanning; scan again",
+    "PLUGIN_UPDATE_SOURCE_UNVERIFIED": "Plugin update stopped because its actual content cannot be verified; only verifiable local marketplaces are supported",
+    "PLUGIN_UPDATE_SOURCE_CHANGED": "Plugin source or installed content changed; check again",
+    "PLUGIN_UPDATE_FAILED_OR_SOURCE_CHANGED": "Plugin update failed or its source changed; check again",
+    "PLUGIN_SECURITY_BLOCKED": "Plugin security check blocked installation or update",
+    "PLUGIN_PARTIAL_SCAN": "Plugin scan is incomplete; installation or update was stopped",
+    "DOWNLOAD_SIZE_LIMIT": "Download exceeded the size limit",
+    "DOWNLOAD_STALLED": "Download stalled; try again",
+    "CONTENT_BYTE_LIMIT": "Content exceeds the verification size limit; operation stopped",
+    "CONTENT_INVENTORY_LIMIT": "File count or directory depth exceeds verification limits; operation stopped",
+    "UNAUTHORIZED_CACHE_REMOVAL": "Cache path is outside the allowed directory; cleanup refused",
     "SKILL_NOT_FOUND": "Skill not found",
     "SKILL_INSTALL_IN_PROGRESS": "Skill installation is in progress",
     "REPOSITORY_ROOT_NOT_FOUND": "Repository root directory not found",

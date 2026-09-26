@@ -14,13 +14,10 @@ fn persist_skill_scan_report(
     skill: &Skill,
     report: &SecurityReport,
 ) -> Result<()> {
-    let mut updated = skill.clone();
-    updated.security_score = Some(report.score);
-    updated.security_level = Some(report.level.as_str().to_string());
-    updated.security_issues = Some(report.issues.clone());
-    updated.security_report = Some(report.clone());
-    updated.scanned_at = Some(chrono::Utc::now());
-    db.save_skill(&updated)
+    if !db.update_skill_scan_if_current(skill, report)? {
+        anyhow::bail!("SCAN_RESULT_STALE: installation changed during scanning");
+    }
+    Ok(())
 }
 
 /// 扫描所有已安装的 skills
@@ -33,28 +30,17 @@ pub async fn scan_all_installed_skills(
     let locale = validate_locale(&locale).to_string();
     let skill_manager = Arc::clone(&state.skill_manager);
 
-    // 读取已安装列表本身也是重活（会遍历各工具目录、比对软链），
-    // 同样不能占用 async 工作线程。
-    let skills = tokio::task::spawn_blocking(move || {
-        let manager = skill_manager.blocking_lock();
-        manager.get_installed_skills().map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))??;
-
-    let installed_skills: Vec<Skill> = skills
-        .into_iter()
-        .filter(|s| s.installed && s.local_path.is_some())
-        .collect();
-
     let parallelism = clamp_scan_parallelism(scan_parallelism);
     let db = state.db.clone();
-
-    // 扫描是纯 CPU + 磁盘 IO 的同步任务。此前直接在 async 命令里
-    // `pool.install(...)`，会阻塞 tokio 工作线程直到全部扫完，期间其他 IPC
-    // 请求排队 —— 这正是扫描期间整个界面卡顿的原因。
     tokio::task::spawn_blocking(move || {
-        scan_installed_skills_blocking(db, installed_skills, locale, parallelism)
+        let manager = skill_manager.blocking_lock();
+        let installed = manager
+            .get_installed_skills()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|s| s.installed && s.local_path.is_some())
+            .collect();
+        scan_installed_skills_blocking(db, installed, locale, parallelism)
     })
     .await
     .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))?
@@ -84,19 +70,16 @@ fn scan_installed_skills_blocking(
                         "Skill directory does not exist, marking as uninstalled: {:?}",
                         path
                     );
-                    let mut updated = skill.clone();
-                    updated.installed = false;
-                    updated.installed_at = None;
-                    updated.local_path = None;
-                    updated.local_paths = None;
-                    updated.source_path = None;
-                    updated.linked_tools = Vec::new();
-                    if let Err(e) = db.save_skill(&updated) {
-                        log::warn!("Failed to update stale skill '{}': {}", skill.name, e);
-                    }
                     return None;
                 }
 
+                let identity = match crate::services::content_manifest::manifest(&path) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        log::warn!("Cannot establish scan identity: {error}");
+                        return None;
+                    }
+                };
                 let report = match scan_directory(
                     path.to_str().unwrap_or(""),
                     &skill.id,
@@ -116,8 +99,17 @@ fn scan_installed_skills_blocking(
                 // 出站前剥离 scanned_files（前端不读，仅徒增 DB / IPC 体积）
                 let report = report.without_scanned_file_list();
 
+                if crate::services::content_manifest::manifest(&path)
+                    .ok()
+                    .as_ref()
+                    != Some(&identity)
+                {
+                    log::warn!("Discarding scan of changed content: {}", skill.name);
+                    return None;
+                }
                 if let Err(e) = persist_skill_scan_report(&db, skill, &report) {
                     log::warn!("Failed to save skill {}: {}", skill.name, e);
+                    return None;
                 }
 
                 Some((
@@ -159,9 +151,13 @@ pub async fn scan_installed_skill(
     let locale = validate_locale(&locale).to_string();
     let db = state.db.clone();
 
-    tokio::task::spawn_blocking(move || scan_installed_skill_blocking(db, &skill_id, &locale))
-        .await
-        .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))?
+    let manager = Arc::clone(&state.skill_manager);
+    tokio::task::spawn_blocking(move || {
+        let _guard = manager.blocking_lock();
+        scan_installed_skill_blocking(db, &skill_id, &locale)
+    })
+    .await
+    .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))?
 }
 
 /// `scan_installed_skill` 的同步主体，必须在阻塞线程上运行。
@@ -170,7 +166,7 @@ fn scan_installed_skill_blocking(
     skill_id: &str,
     locale: &str,
 ) -> Result<SkillScanResult, String> {
-    let mut skill = db
+    let skill = db
         .get_skills()
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -184,24 +180,13 @@ fn scan_installed_skill_blocking(
     let local_path = skill.local_path.clone().unwrap_or_default();
     let path = PathBuf::from(&local_path);
     if !path.exists() || !path.is_dir() {
-        // Update DB: mark as uninstalled since directory is gone
-        skill.installed = false;
-        skill.installed_at = None;
-        skill.local_path = None;
-        skill.local_paths = None;
-        skill.source_path = None;
-        skill.linked_tools = Vec::new();
-        if let Err(e) = db.save_skill(&skill) {
-            log::warn!("Failed to update stale skill '{}': {}", skill.name, e);
-        }
-        crate::services::skill_reports::refresh_cross_skill_reports(&db)
-            .map_err(|e| e.to_string())?;
         return Err(format!(
             "[SKILL_DIR_NOT_FOUND] Skill directory does not exist: {}",
             local_path
         ));
     }
 
+    let identity = crate::services::content_manifest::manifest(&path).map_err(|e| e.to_string())?;
     let report = scan_directory(
         path.to_str().unwrap_or(""),
         &skill.id,
@@ -215,14 +200,14 @@ fn scan_installed_skill_blocking(
     // 出站前剥离 scanned_files（前端不读，仅徒增 DB / IPC 体积）
     .without_scanned_file_list();
 
-    skill.security_score = Some(report.score);
-    skill.security_level = Some(report.level.as_str().to_string());
-    skill.security_issues = Some(report.issues.clone());
-    skill.security_report = Some(report.clone());
-    skill.scanned_at = Some(chrono::Utc::now());
-
-    db.save_skill(&skill)
-        .map_err(|e| format!("Failed to save skill: {}", e))?;
+    if crate::services::content_manifest::manifest(&path)
+        .ok()
+        .as_ref()
+        != Some(&identity)
+    {
+        return Err("SCAN_RESULT_STALE: content changed during scanning".into());
+    }
+    persist_skill_scan_report(&db, &skill, &report).map_err(|e| e.to_string())?;
 
     let reports = crate::services::skill_reports::refresh_cross_skill_reports(&db)
         .map_err(|e| e.to_string())?;

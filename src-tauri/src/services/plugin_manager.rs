@@ -68,6 +68,66 @@ fn selected_plugin_source(root: &Path, plugin: &Plugin) -> Result<PathBuf> {
     Ok(source)
 }
 
+fn verified_local_update_source(
+    marketplace: &ClaudeMarketplace,
+    plugin: &Plugin,
+) -> Result<PathBuf> {
+    if !matches!(marketplace.source.as_deref(), Some("directory" | "local")) {
+        anyhow::bail!("PLUGIN_UPDATE_SOURCE_UNVERIFIED: 当前 CLI 无法固定远程更新内容，已停止更新");
+    }
+    let root = Path::new(
+        marketplace
+            .install_location
+            .as_deref()
+            .context("PLUGIN_UPDATE_SOURCE_UNVERIFIED")?,
+    );
+    let source = selected_plugin_source(root, plugin)?;
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(marketplace_manifest_path(root))?)?;
+    let entry = manifest["plugins"]
+        .as_array()
+        .and_then(|entries| {
+            entries
+                .iter()
+                .find(|e| e["name"].as_str() == Some(plugin.name.as_str()))
+        })
+        .context("PLUGIN_SOURCE_CHANGED")?;
+    let allowed = [
+        "name",
+        "source",
+        "description",
+        "version",
+        "author",
+        "homepage",
+        "repository",
+        "license",
+        "keywords",
+        "category",
+        "tags",
+    ];
+    if entry
+        .as_object()
+        .context("INVALID_PLUGIN_ENTRY")?
+        .keys()
+        .any(|k| !allowed.contains(&k.as_str()))
+    {
+        anyhow::bail!(
+            "PLUGIN_UPDATE_SOURCE_UNVERIFIED: marketplace entry contains unverified overrides"
+        );
+    }
+    let plugin_manifest = source.join(".claude-plugin/plugin.json");
+    if plugin_manifest.exists() {
+        let value: serde_json::Value = serde_json::from_slice(&std::fs::read(plugin_manifest)?)?;
+        if value
+            .get("dependencies")
+            .is_some_and(|v| v.as_array().is_none_or(|a| !a.is_empty()))
+        {
+            anyhow::bail!("PLUGIN_UPDATE_SOURCE_UNVERIFIED: dependency updates cannot be verified");
+        }
+    }
+    Ok(source)
+}
+
 /// IPC may select the Claude launcher name for compatibility with Windows, but it must
 /// never supply an arbitrary path/executable. Resolution remains delegated to PATH.
 fn resolve_claude_command(requested: Option<String>) -> Result<Option<String>> {
@@ -674,7 +734,27 @@ impl PluginManager {
         }
 
         let cli_command =
-            resolve_claude_command(claude_command)?.context("未找到 Claude Code CLI")?;
+            resolve_claude_command(claude_command.clone())?.context("未找到 Claude Code CLI")?;
+
+        let marketplace = self
+            .get_claude_marketplaces(claude_command.clone())
+            .await?
+            .into_iter()
+            .find(|m| m.name == plugin.marketplace_name)
+            .context("PLUGIN_UPDATE_SOURCE_UNVERIFIED: 无法确认更新来源")?;
+        let actual_source = verified_local_update_source(&marketplace, &plugin)?;
+        let identity = super::content_manifest::manifest(&actual_source)?;
+        let locale = rust_i18n::locale().to_string();
+        let report = scan_directory(
+            actual_source.to_str().context("INVALID_PLUGIN_PATH")?,
+            &plugin.id,
+            &locale,
+            ScanOptions::default(),
+        )?;
+        ensure_plugin_report_installable(&report)?;
+        if super::content_manifest::manifest(&actual_source)? != identity {
+            anyhow::bail!("PLUGIN_UPDATE_SOURCE_CHANGED");
+        }
 
         let scope = plugin
             .claude_scope
@@ -703,15 +783,53 @@ impl PluginManager {
             .first()
             .map(|o| o.output.clone())
             .unwrap_or_default();
-        let status = parse_plugin_update_output(&output);
+        let source_unchanged = super::content_manifest::manifest(&actual_source)
+            .ok()
+            .as_ref()
+            == Some(&identity);
+        let status = if cli_result.exit_success && source_unchanged {
+            parse_plugin_update_output(&output)
+        } else {
+            "failed".into()
+        };
 
         // 写回日志与状态；并再次同步以获取最新 installed_version 等字段
         let mut updated = plugin.clone();
+        // The previous installed-version report cannot describe a newly updated version.
+        updated.security_report = None;
+        updated.security_score = None;
+        updated.security_level = None;
+        updated.security_issues = None;
+        updated.scanned_at = None;
         updated.install_log = Some(cli_result.raw_log.clone());
         updated.install_status = Some(status.clone());
         self.db.save_plugin(&updated)?;
 
-        self.sync_claude_installed_state(None).await.ok();
+        if status == "failed" {
+            anyhow::bail!("PLUGIN_UPDATE_FAILED_OR_SOURCE_CHANGED: {}", output);
+        }
+        self.sync_claude_installed_state(claude_command).await?;
+        let mut installed = self
+            .db
+            .get_plugins()?
+            .into_iter()
+            .find(|p| p.id == plugin_id)
+            .context("PLUGIN_NOT_FOUND")?;
+        let installed_path = installed
+            .claude_install_path
+            .as_deref()
+            .context("PLUGIN_UPDATE_SOURCE_UNVERIFIED")?;
+        if !installed.installed
+            || super::content_manifest::manifest(Path::new(installed_path))? != identity
+        {
+            anyhow::bail!("PLUGIN_UPDATE_SOURCE_CHANGED");
+        }
+        installed.security_score = Some(report.score);
+        installed.security_level = Some(report.level.as_str().into());
+        installed.security_issues = Some(report.issues.clone());
+        installed.security_report = Some(report.without_scanned_file_list());
+        installed.scanned_at = Some(Utc::now());
+        self.db.save_plugin(&installed)?;
 
         Ok(PluginUpdateResult {
             plugin_id: updated.id,
@@ -1280,6 +1398,17 @@ impl PluginManager {
         plugin_id: &str,
         claude_command: Option<String>,
     ) -> Result<PluginInstallResult> {
+        let locale = rust_i18n::locale().to_string();
+        self.confirm_plugin_installation_in_locale(plugin_id, claude_command, &locale)
+            .await
+    }
+
+    pub async fn confirm_plugin_installation_in_locale(
+        &self,
+        plugin_id: &str,
+        claude_command: Option<String>,
+        locale: &str,
+    ) -> Result<PluginInstallResult> {
         let plugin = self
             .db
             .get_plugins()?
@@ -1298,7 +1427,7 @@ impl PluginManager {
         let report = scan_directory(
             staged_source.to_str().context("INVALID_PLUGIN_PATH")?,
             &plugin.id,
-            "zh",
+            validate_locale(locale),
             ScanOptions::default(),
         )?;
         if let Err(error) = ensure_plugin_report_installable(&report) {
@@ -1395,7 +1524,7 @@ impl PluginManager {
         let actual_report = scan_directory(
             actual_source.to_str().context("INVALID_PLUGIN_PATH")?,
             &plugin.id,
-            "zh",
+            validate_locale(locale),
             ScanOptions::default(),
         )?;
         let mut checked = plugin.clone();
@@ -3050,5 +3179,115 @@ mod install_gate_tests {
         require_prepared_plugin(&prepared).unwrap();
         manager.cancel_plugin_installation(&plugin.id).unwrap();
         assert!(require_prepared_plugin(&db.get_plugins().unwrap().pop().unwrap()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod review_regressions {
+    use super::*;
+    fn fixture(root: &Path) -> (Plugin, ClaudeMarketplace) {
+        std::fs::create_dir_all(root.join(".claude-plugin")).unwrap();
+        std::fs::create_dir_all(root.join("plugins/test")).unwrap();
+        std::fs::write(
+            root.join(".claude-plugin/marketplace.json"),
+            r#"{"name":"market","plugins":[{"name":"test","source":"./plugins/test"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("plugins/test/SKILL.md"), "---\nname: test\ndescription: Format local documents when requested.\n---\nFormat text.").unwrap();
+        let mut plugin = Plugin::new(
+            "test".into(),
+            "https://github.com/example/market".into(),
+            "market".into(),
+            "./plugins/test".into(),
+        );
+        plugin.installed = true;
+        let market = ClaudeMarketplace {
+            name: "market".into(),
+            source: Some("directory".into()),
+            repo: None,
+            repository_url: None,
+            install_location: Some(root.to_string_lossy().into_owned()),
+        };
+        (plugin, market)
+    }
+    #[test]
+    fn updates_reject_remote_markets_dependencies_and_inline_overrides() {
+        let temp = tempfile::tempdir().unwrap();
+        let (plugin, mut market) = fixture(temp.path());
+        assert!(verified_local_update_source(&market, &plugin).is_ok());
+        market.source = Some("github".into());
+        assert!(verified_local_update_source(&market, &plugin)
+            .unwrap_err()
+            .to_string()
+            .contains("PLUGIN_UPDATE_SOURCE_UNVERIFIED"));
+        market.source = Some("directory".into());
+        let manifest = temp.path().join("plugins/test/.claude-plugin");
+        std::fs::create_dir(&manifest).unwrap();
+        std::fs::write(
+            manifest.join("plugin.json"),
+            r#"{"name":"test","dependencies":["remote"]}"#,
+        )
+        .unwrap();
+        assert!(verified_local_update_source(&market, &plugin).is_err());
+        std::fs::remove_file(manifest.join("plugin.json")).unwrap();
+        std::fs::write(temp.path().join(".claude-plugin/marketplace.json"), r#"{"name":"market","plugins":[{"name":"test","source":"./plugins/test","hooks":{"command":"unverified"}}]}"#).unwrap();
+        assert!(verified_local_update_source(&market, &plugin).is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn update_cli_is_called_only_for_verified_clean_local_source() {
+        use std::os::unix::fs::PermissionsExt;
+        if std::env::var_os("ASG_REVIEW_UPDATE_CHILD").is_none() {
+            let temp = tempfile::tempdir().unwrap();
+            let bin = temp.path().join("bin");
+            std::fs::create_dir(&bin).unwrap();
+            let (plugin, market) = fixture(&temp.path().join("market"));
+            let entry = serde_json::json!([{ "name": "market", "source": "directory", "installLocation": market.install_location }]);
+            std::fs::write(temp.path().join("markets.json"), entry.to_string()).unwrap();
+            let installed = serde_json::json!([{ "id": plugin.plugin_spec(), "scope": "user", "version": "2", "installPath": temp.path().join("market/plugins/test").to_str().unwrap() }]);
+            std::fs::write(temp.path().join("installed.json"), installed.to_string()).unwrap();
+            let cli = bin.join("claude");
+            std::fs::write(&cli, "#!/bin/sh\ncase \"$2\" in\nmarketplace) /bin/cat \"$ASG_REVIEW_UPDATE_ROOT/markets.json\";;\nlist) /bin/cat \"$ASG_REVIEW_UPDATE_ROOT/installed.json\";;\nupdate) echo updated > \"$ASG_REVIEW_UPDATE_ROOT/called\"; echo 'successfully updated';;\nesac\n").unwrap();
+            std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let out = Command::new(std::env::current_exe().unwrap()).args(["--exact", "services::plugin_manager::review_regressions::update_cli_is_called_only_for_verified_clean_local_source", "--nocapture"])
+                .env("PATH", bin).env("ASG_REVIEW_UPDATE_CHILD", "1").env("ASG_REVIEW_UPDATE_ROOT", temp.path()).output().unwrap();
+            assert!(
+                out.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            return;
+        }
+        let root = PathBuf::from(std::env::var_os("ASG_REVIEW_UPDATE_ROOT").unwrap());
+        let (plugin, _) = fixture(&root.join("market"));
+        let db = Arc::new(Database::new(root.join("test.db")).unwrap());
+        db.save_plugin(&plugin).unwrap();
+        let manager = PluginManager::new(db.clone());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let script = root.join("market/plugins/test/run.sh");
+        std::fs::write(&script, "rm -rf /\n").unwrap();
+        let err = runtime
+            .block_on(manager.update_plugin(&plugin.id, None))
+            .unwrap_err();
+        assert!(err.to_string().contains("PLUGIN_SECURITY_BLOCKED"));
+        assert!(!root.join("called").exists());
+        std::fs::remove_file(script).unwrap();
+        assert_eq!(
+            runtime
+                .block_on(manager.update_plugin(&plugin.id, None))
+                .unwrap()
+                .status,
+            "updated"
+        );
+        assert!(root.join("called").exists());
+        assert!(db
+            .get_plugins()
+            .unwrap()
+            .iter()
+            .find(|p| p.id == plugin.id)
+            .unwrap()
+            .security_report
+            .is_some());
     }
 }

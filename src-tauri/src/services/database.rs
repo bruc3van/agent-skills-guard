@@ -231,8 +231,15 @@ impl Database {
              DELETE FROM plugins;
              DELETE FROM skills;
              DELETE FROM repositories;
+             DELETE FROM local_cli_tools;
+             DELETE FROM skill_preparations;
+             DELETE FROM skill_baselines;
              COMMIT;",
         );
+
+        if result.is_err() {
+            let _ = conn.execute_batch("ROLLBACK;");
+        }
 
         // Step 3: Always restore FK, even on error
         if let Err(e) = conn.execute_batch("PRAGMA foreign_keys=ON;") {
@@ -346,6 +353,13 @@ impl Database {
                     completed_at TEXT NOT NULL
                 )",
                 [],
+            )?;
+
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS skill_preparations (
+                skill_id TEXT PRIMARY KEY, candidate TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS skill_baselines (
+                skill_id TEXT PRIMARY KEY, manifest TEXT NOT NULL);",
             )?;
 
             // 执行数据库迁移（在同一个事务中）
@@ -621,6 +635,134 @@ impl Database {
         conn.execute("UPDATE skills SET security_score=?1, security_level=?2, security_issues=?3, security_report=?4 WHERE id=?5",
             params![report.score, report.level.as_str(), serde_json::to_string(&report.issues)?, serde_json::to_string(report)?, id])?;
         Ok(())
+    }
+
+    pub fn save_skill_preparation(&self, candidate: &Skill) -> Result<()> {
+        self.lock_conn().execute(
+            "INSERT OR REPLACE INTO skill_preparations VALUES (?1, ?2)",
+            params![candidate.id, serde_json::to_string(candidate)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_skill_preparation(&self, id: &str) -> Result<Option<Skill>> {
+        let json: Option<String> = self
+            .lock_conn_read()
+            .query_row(
+                "SELECT candidate FROM skill_preparations WHERE skill_id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        json.map(|j| serde_json::from_str(&j).map_err(Into::into))
+            .transpose()
+    }
+
+    pub fn clear_skill_preparation(&self, id: &str) -> Result<()> {
+        self.lock_conn()
+            .execute("DELETE FROM skill_preparations WHERE skill_id=?1", [id])?;
+        Ok(())
+    }
+
+    pub fn save_skill_baseline(
+        &self,
+        id: &str,
+        manifest: &std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        self.lock_conn().execute(
+            "INSERT OR REPLACE INTO skill_baselines VALUES (?1, ?2)",
+            params![id, serde_json::to_string(manifest)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_installed_skill_with_baseline(
+        &self,
+        skill: &Skill,
+        manifest: &std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction()?;
+        Self::save_skill_on_conn(&tx, skill)?;
+        tx.execute(
+            "INSERT OR REPLACE INTO skill_baselines VALUES (?1, ?2)",
+            params![skill.id, serde_json::to_string(manifest)?],
+        )?;
+        tx.execute(
+            "DELETE FROM skill_preparations WHERE skill_id=?1",
+            [&skill.id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_skill_baseline(
+        &self,
+        id: &str,
+    ) -> Result<Option<std::collections::BTreeMap<String, String>>> {
+        let json: Option<String> = self
+            .lock_conn_read()
+            .query_row(
+                "SELECT manifest FROM skill_baselines WHERE skill_id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        json.map(|j| serde_json::from_str(&j).map_err(Into::into))
+            .transpose()
+    }
+
+    /// Compare the installation identity atomically, never replace the row from a scan snapshot.
+    pub fn update_skill_scan_if_current(
+        &self,
+        snapshot: &Skill,
+        report: &SecurityReport,
+    ) -> Result<bool> {
+        self.update_skill_report_if_current(snapshot, report, true)
+    }
+
+    /// Association-only analysis must preserve the last full scan timestamp.
+    pub fn update_skill_associations_if_current(
+        &self,
+        snapshot: &Skill,
+        report: &SecurityReport,
+    ) -> Result<bool> {
+        self.update_skill_report_if_current(snapshot, report, false)
+    }
+
+    fn update_skill_report_if_current(
+        &self,
+        snapshot: &Skill,
+        report: &SecurityReport,
+        full_scan: bool,
+    ) -> Result<bool> {
+        let changed = self.lock_conn().execute(
+            "UPDATE skills SET security_score=?1, security_level=?2, security_issues=?3,
+             security_report=?4, scanned_at=CASE WHEN ?13 THEN ?5 ELSE scanned_at END
+             WHERE id=?6 AND installed=?12
+             AND local_path IS ?7 AND installed_at IS ?8 AND installed_commit_sha IS ?9
+             AND checksum IS ?10 AND local_paths IS ?11",
+            params![
+                report.score,
+                report.level.as_str(),
+                serde_json::to_string(&report.issues)?,
+                serde_json::to_string(report)?,
+                chrono::Utc::now().to_rfc3339(),
+                snapshot.id,
+                snapshot.local_path,
+                snapshot.installed_at.map(|d| d.to_rfc3339()),
+                snapshot.installed_commit_sha,
+                snapshot.checksum,
+                snapshot
+                    .local_paths
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
+                snapshot.installed as i32,
+                full_scan
+            ],
+        )?;
+        Ok(changed == 1)
     }
 
     /// 保存 skill
@@ -1829,5 +1971,52 @@ mod tests {
 
         assert_eq!(deleted, 0);
         assert!(db.get_local_cli_tool(&existing_cli).unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
+mod review_regressions {
+    use super::*;
+    #[test]
+    fn stale_scan_cannot_resurrect_uninstalled_or_updated_skill() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Database::new(temp.path().join("db")).unwrap();
+        let mut snapshot = Skill::new("test".into(), "local".into(), "test".into());
+        snapshot.installed = true;
+        snapshot.local_path = Some("old-path".into());
+        snapshot.installed_at = Some(chrono::Utc::now());
+        db.save_skill(&snapshot).unwrap();
+        let report =
+            crate::security::scan_file("Format text", "SKILL.md", "en", Default::default())
+                .unwrap();
+        assert!(db.update_skill_scan_if_current(&snapshot, &report).unwrap());
+        let mut updated = snapshot.clone();
+        updated.installed = false;
+        updated.local_path = None;
+        db.save_skill(&updated).unwrap();
+        assert!(!db.update_skill_scan_if_current(&snapshot, &report).unwrap());
+        assert!(!db.get_skills().unwrap()[0].installed);
+        updated.installed = true;
+        updated.local_path = snapshot.local_path.clone();
+        updated.installed_commit_sha = Some("new-sha".into());
+        db.save_skill(&updated).unwrap();
+        assert!(!db.update_skill_scan_if_current(&snapshot, &report).unwrap());
+        db.delete_skill(&snapshot.id).unwrap();
+        assert!(!db.update_skill_scan_if_current(&snapshot, &report).unwrap());
+        assert!(db.get_skills().unwrap().is_empty());
+    }
+    #[test]
+    fn reset_clears_cli_cache_but_keeps_migrations() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Database::new(temp.path().join("db")).unwrap();
+        db.mark_app_migration_completed("test-migration").unwrap();
+        db.lock_conn().execute("INSERT INTO local_cli_tools (id, detected_path, manager) VALUES ('test', '/test', 'npm')", []).unwrap();
+        db.reset_all_data().unwrap();
+        let count: usize = db
+            .lock_conn_read()
+            .query_row("SELECT COUNT(*) FROM local_cli_tools", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(db.is_app_migration_completed("test-migration").unwrap());
     }
 }

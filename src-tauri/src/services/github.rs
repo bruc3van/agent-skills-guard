@@ -437,16 +437,21 @@ impl GitHubService {
         }
 
         const MAX_FILE_BYTES: usize = 2 * 1024 * 1024; // 2 MiB，SKILL.md 等文件不应超过此限制
-        let bytes = response.bytes().await.context("读取文件内容失败")?;
-        if bytes.len() > MAX_FILE_BYTES {
-            anyhow::bail!(
-                "NETWORK_ERROR: 文件大小 {} 字节超过限制 {} 字节",
-                bytes.len(),
-                MAX_FILE_BYTES
-            );
+        let mut response = response;
+        if response
+            .content_length()
+            .is_some_and(|n| n > MAX_FILE_BYTES as u64)
+        {
+            anyhow::bail!("DOWNLOAD_SIZE_LIMIT");
         }
-
-        Ok(bytes.to_vec())
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.context("读取文件内容失败")? {
+            if bytes.len().saturating_add(chunk.len()) > MAX_FILE_BYTES {
+                anyhow::bail!("DOWNLOAD_SIZE_LIMIT");
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
     }
 
     /// 判断文件夹是否为 skill（包含 SKILL.md）
@@ -467,44 +472,40 @@ impl GitHubService {
     }
 
     /// 下载并解析 SKILL.md 的 frontmatter
+    pub async fn download_skill_markdown(
+        &self,
+        owner: &str,
+        repo: &str,
+        skill_path: &str,
+    ) -> Result<Vec<u8>> {
+        let default_branch = self.fetch_repository_default_branch(owner, repo).await?;
+        let path = skill_path.replace('\\', "/");
+        let mut last_error = None;
+        for branch in archive_branch_candidates(default_branch.as_deref()) {
+            let mut url = reqwest::Url::parse("https://raw.githubusercontent.com")?;
+            url.path_segments_mut()
+                .map_err(|_| anyhow::anyhow!("INVALID_URL"))?
+                .extend([owner, repo, branch.as_str()])
+                .extend(path.split('/').filter(|s| *s != "." && !s.is_empty()))
+                .push("SKILL.md");
+            match self.download_file(url.as_str()).await {
+                Ok(content) => return Ok(content),
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("SKILL_NOT_FOUND")))
+    }
+
     pub async fn fetch_skill_metadata(
         &self,
         owner: &str,
         repo: &str,
         skill_path: &str,
     ) -> Result<(String, Option<String>)> {
-        // 尝试多个分支获取 SKILL.md
-        let mut last_error = None;
-
-        for branch in DEFAULT_BRANCHES {
-            let download_url = format!(
-                "https://raw.githubusercontent.com/{}/{}/{}/{}/SKILL.md",
-                owner, repo, branch, skill_path
-            );
-
-            log::info!("尝试从分支 {} 获取 SKILL.md: {}", branch, download_url);
-
-            match self.download_file(&download_url).await {
-                Ok(content) => match String::from_utf8(content) {
-                    Ok(content_str) => {
-                        log::info!("成功从分支 {} 获取 SKILL.md", branch);
-                        return self.parse_skill_frontmatter(&content_str);
-                    }
-                    Err(e) => {
-                        last_error =
-                            Some(anyhow::anyhow!("Failed to decode SKILL.md as UTF-8: {}", e));
-                        continue;
-                    }
-                },
-                Err(e) => {
-                    log::info!("分支 {} 不存在或获取失败: {}", branch, e);
-                    last_error = Some(e);
-                    continue;
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支均无法获取 SKILL.md")))
+        let content = self
+            .download_skill_markdown(owner, repo, skill_path)
+            .await?;
+        self.parse_skill_frontmatter(std::str::from_utf8(&content)?)
     }
 
     /// 解析 SKILL.md 的 frontmatter
@@ -580,7 +581,13 @@ impl GitHubService {
             );
             log::info!("正在尝试下载仓库压缩包 (分支: {}): {}", branch, url);
 
-            match self.client.get(&url).send().await {
+            match self
+                .client
+                .get(&url)
+                .timeout(std::time::Duration::from_secs(600))
+                .send()
+                .await
+            {
                 Ok(resp) => {
                     // 检查API限流
                     if let Err(e) = self.check_rate_limit(&resp) {
@@ -622,25 +629,25 @@ impl GitHubService {
             }
         }
 
-        let archive_path = repo_cache_dir.join("archive.zip");
-        let bytes = response.bytes().await.context("读取压缩包内容失败")?;
-
-        if bytes.len() as u64 > MAX_ARCHIVE_BYTES {
-            return Err(anyhow::anyhow!(
-                "压缩包实际大小 ({:.1} MB) 超过安全上限 ({:.1} MB)",
-                bytes.len() as f64 / (1024.0 * 1024.0),
-                MAX_ARCHIVE_BYTES as f64 / (1024.0 * 1024.0)
-            ));
+        // NamedTempFile removes incomplete downloads on every error path.
+        let mut archive_file = tempfile::NamedTempFile::new_in(&repo_cache_dir)?;
+        let mut response = response;
+        let mut downloaded = 0u64;
+        loop {
+            let chunk = tokio::time::timeout(std::time::Duration::from_secs(30), response.chunk())
+                .await
+                .context("DOWNLOAD_STALLED")??;
+            let Some(chunk) = chunk else {
+                break;
+            };
+            downloaded = downloaded.saturating_add(chunk.len() as u64);
+            if downloaded > MAX_ARCHIVE_BYTES {
+                anyhow::bail!("DOWNLOAD_SIZE_LIMIT");
+            }
+            archive_file.write_all(&chunk).context("写入压缩包失败")?;
         }
-
-        let mut file = File::create(&archive_path).context("无法创建压缩包文件")?;
-        file.write_all(&bytes).context("写入压缩包失败")?;
-
-        log::info!(
-            "压缩包已保存: {:?}, 大小: {} bytes",
-            archive_path,
-            bytes.len()
-        );
+        archive_file.flush()?;
+        let archive_path = archive_file.path().to_path_buf();
 
         // 4. 解压到同一文件系统中的唯一临时目录。只有完整解压、预算校验和
         // commit SHA 提取全部成功后，才替换当前 extracted，避免新旧提交混用。
@@ -1017,7 +1024,7 @@ impl GitHubService {
             .strip_prefix(repo_root)
             .context("无法计算相对路径")?;
 
-        let mut file_path = relative_path.to_string_lossy().to_string();
+        let mut file_path = relative_path.to_string_lossy().replace('\\', "/");
 
         // 如果 file_path 为空（SKILL.md 在仓库根目录），设置为 "."
         if file_path.trim().is_empty() {
@@ -1061,7 +1068,12 @@ impl GitHubService {
         ref_sha: Option<&str>,
     ) -> Result<Option<String>> {
         let url = format!("{}/repos/{}/{}/commits", self.api_base, owner, repo);
-        let path_param = if skill_path == "." { "" } else { skill_path };
+        let normalized_path = skill_path.replace('\\', "/");
+        let path_param = if normalized_path == "." {
+            ""
+        } else {
+            normalized_path.as_str()
+        };
 
         // 用 reqwest 的 .query() 自动 percent-encode，避免 path/sha 含空格、`#` 等字符时拼接出错
         let mut query: Vec<(&str, &str)> = vec![("per_page", "1")];
@@ -1218,7 +1230,7 @@ const MIN_SHA_PREFIX_LEN: usize = 7;
 /// - 任一侧为空：false
 /// - 等长：要求完全相等
 /// - 不等长：取短侧作前缀；短侧短于 7 字符时拒绝匹配，避免脏数据被静默接受
-fn shas_match(a: &str, b: &str) -> bool {
+pub(crate) fn shas_match(a: &str, b: &str) -> bool {
     if a.is_empty() || b.is_empty() {
         return false;
     }
@@ -1420,5 +1432,118 @@ mod tests {
         let installed = "deadbee";
         let latest = "abcdef1234567890abcdef1234567890abcdef12";
         assert!(!shas_match(installed, latest));
+    }
+}
+
+#[cfg(test)]
+mod review_regressions {
+    use super::*;
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+    fn server(
+        responses: Vec<(String, Vec<u8>)>,
+    ) -> (String, Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let recorded = requests.clone();
+        let worker = std::thread::spawn(move || {
+            for (headers, body) in responses {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0];
+                while !request.ends_with(b"\r\n\r\n") {
+                    socket.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&request).into_owned());
+                let _ = write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\n{headers}\r\n"
+                );
+                let _ = socket.write_all(&body);
+            }
+        });
+        (base, requests, worker)
+    }
+    fn response(body: Vec<u8>) -> (String, Vec<u8>) {
+        (format!("Content-Length: {}\r\n", body.len()), body)
+    }
+    #[tokio::test]
+    async fn archive_uses_nonstandard_default_branch_and_short_sha_matches() {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(
+            "owner-repo-abcdef1/SKILL.md",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(b"---\nname: test\n---\nFormat text").unwrap();
+        let archive = zip.finish().unwrap().into_inner();
+        let (base, requests, worker) = server(vec![
+            response(br#"{"default_branch":"trunk"}"#.to_vec()),
+            response(archive),
+        ]);
+        let service = GitHubService {
+            client: Client::new(),
+            api_base: base,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let (extracted, sha) = service
+            .download_repository_archive("owner", "repo", temp.path())
+            .await
+            .unwrap();
+        assert!(extracted.join("owner-repo-abcdef1/SKILL.md").exists());
+        assert!(shas_match(
+            &sha,
+            "abcdef1234567890123456789012345678901234ab"
+        ));
+        worker.join().unwrap();
+        assert!(requests.lock().unwrap()[1].starts_with("GET /repos/owner/repo/zipball/trunk "));
+        assert!(!std::fs::read_dir(temp.path().join("owner_repo"))
+            .unwrap()
+            .any(|e| e.unwrap().file_type().unwrap().is_file()));
+    }
+    #[tokio::test]
+    async fn windows_repository_paths_are_sent_with_forward_slashes() {
+        let (base, requests, worker) = server(vec![response(b"[]".to_vec())]);
+        let service = GitHubService {
+            client: Client::new(),
+            api_base: base,
+        };
+        service
+            .fetch_latest_commit_sha_for_path("owner", "repo", r"skills\formatter", None)
+            .await
+            .unwrap();
+        worker.join().unwrap();
+        let requests = requests.lock().unwrap();
+        assert!(requests[0].contains("path=skills%2Fformatter"));
+        assert!(!requests[0].contains("%5C"));
+    }
+    #[tokio::test]
+    async fn missing_content_length_does_not_bypass_file_download_budget() {
+        let payload = vec![b'x'; 2 * 1024 * 1024 + 1];
+        let (base, _, worker) = server(vec![(String::new(), payload)]);
+        let service = GitHubService {
+            client: Client::new(),
+            api_base: base.clone(),
+        };
+        let error = service.download_file(&base).await.unwrap_err();
+        assert!(error.to_string().contains("DOWNLOAD_SIZE_LIMIT"));
+        worker.join().unwrap();
+    }
+    #[test]
+    fn cleanup_rejects_parent_traversal() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("repositories");
+        std::fs::create_dir(&base).unwrap();
+        std::fs::create_dir(temp.path().join("outside")).unwrap();
+        assert!(repository_cache_cleanup_target(&base.join("../outside"), &base).is_err());
+        assert!(repository_cache_cleanup_target(&base.join("."), &base).is_err());
     }
 }

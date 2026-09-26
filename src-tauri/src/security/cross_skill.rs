@@ -541,15 +541,41 @@ pub fn build_scan_context_from_skill_dir(
     description: String,
     dir_path: &std::path::Path,
 ) -> Option<SkillScanContext> {
+    build_scan_context_with_budget(
+        skill_id,
+        skill_name,
+        description,
+        dir_path,
+        64 * 1024 * 1024,
+    )
+    .0
+}
+
+pub(crate) fn build_scan_context_with_budget(
+    skill_id: String,
+    skill_name: String,
+    description: String,
+    dir_path: &std::path::Path,
+    budget: u64,
+) -> (Option<SkillScanContext>, bool) {
     use crate::security::policy::ScanPolicy;
     use crate::security::skill_context::SkillContext;
 
     if !dir_path.is_dir() {
-        return None;
+        return (None, true);
     }
 
-    let dir_str = dir_path.to_str()?;
-    let ctx = SkillContext::for_directory(dir_str, ScanPolicy::builtin_default().clone()).ok()?;
+    let Some(dir_str) = dir_path.to_str() else {
+        return (None, true);
+    };
+    if budget == 0 {
+        return (None, true);
+    }
+    let mut policy = ScanPolicy::builtin_default().clone();
+    policy.file_limits.max_total_scan_bytes = budget;
+    let Ok(ctx) = SkillContext::for_directory(dir_str, policy) else {
+        return (None, true);
+    };
 
     let mut file_contents = HashMap::new();
     for file in &ctx.files {
@@ -561,12 +587,15 @@ pub fn build_scan_context_from_skill_dir(
         }
     }
 
-    Some(SkillScanContext {
-        skill_id,
-        skill_name,
-        description,
-        file_contents,
-    })
+    (
+        Some(SkillScanContext {
+            skill_id,
+            skill_name,
+            description,
+            file_contents,
+        }),
+        ctx.read_incomplete.get() || ctx.file_inventory_truncated,
+    )
 }
 
 #[cfg(test)]

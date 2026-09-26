@@ -1,5 +1,18 @@
 {
   "errors": {
+    "INSTALL_TARGET_EXISTS": "目标目录已属于其他技能，请选择其他位置",
+    "LOCAL_MODIFICATIONS": "本地内容已修改或无法核实，请确认是否覆盖",
+    "SCAN_RESULT_STALE": "扫描期间内容或安装状态已变化，请重新扫描",
+    "PLUGIN_UPDATE_SOURCE_UNVERIFIED": "无法验证插件实际更新内容，已停止更新；目前仅支持可确认来源的本地市场",
+    "PLUGIN_UPDATE_SOURCE_CHANGED": "插件来源或安装内容发生变化，请重新检查",
+    "PLUGIN_UPDATE_FAILED_OR_SOURCE_CHANGED": "插件更新失败或来源发生变化，请重新检查",
+    "PLUGIN_SECURITY_BLOCKED": "插件安全检查发现高危操作，已阻止安装或更新",
+    "PLUGIN_PARTIAL_SCAN": "插件未被完整扫描，已停止安装或更新",
+    "DOWNLOAD_SIZE_LIMIT": "下载内容超过大小限制",
+    "DOWNLOAD_STALLED": "下载长时间没有收到数据，请重试",
+    "CONTENT_BYTE_LIMIT": "内容超过验证大小限制，操作已停止",
+    "CONTENT_INVENTORY_LIMIT": "文件数量或目录深度超过验证限制，操作已停止",
+    "UNAUTHORIZED_CACHE_REMOVAL": "缓存路径越界，已拒绝清理",
     "SKILL_NOT_FOUND": "未找到该技能",
     "SKILL_INSTALL_IN_PROGRESS": "该技能正在安装中",
     "REPOSITORY_ROOT_NOT_FOUND": "未找到仓库根目录",

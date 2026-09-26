@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::{cell::Cell, io::Read};
 
 use serde::{Deserialize, Serialize};
 
@@ -182,6 +183,8 @@ pub struct SkillContext {
     pub scan_policy: ScanPolicy,
     /// 内存中的文件内容（单文件扫描或无需落盘时使用，键为相对路径）
     pub file_contents: HashMap<String, String>,
+    read_bytes: Cell<u64>,
+    pub read_incomplete: Cell<bool>,
 }
 
 impl SkillContext {
@@ -201,21 +204,62 @@ impl SkillContext {
             asset_files: Vec::new(),
             scan_policy,
             file_contents: HashMap::new(),
+            read_bytes: Cell::new(0),
+            read_incomplete: Cell::new(false),
         }
     }
 
     /// 读取文件文本：优先使用 `file_contents`，否则从磁盘读取
     pub fn read_text_file(&self, file: &SkillFile) -> Option<String> {
-        let rel = file.relative_path.to_string_lossy().to_string();
-        if let Some(content) = self.file_contents.get(&rel) {
-            return Some(content.clone());
-        }
-        if let Some(abs) = file.absolute_path.to_str() {
-            if let Some(content) = self.file_contents.get(abs) {
-                return Some(content.clone());
+        let rel = file.relative_path.to_string_lossy();
+        let cached = self.file_contents.get(rel.as_ref()).or_else(|| {
+            file.absolute_path
+                .to_str()
+                .and_then(|p| self.file_contents.get(p))
+        });
+        let remaining = self
+            .scan_policy
+            .file_limits
+            .max_total_scan_bytes
+            .saturating_sub(self.read_bytes.get());
+        let limit = self
+            .scan_policy
+            .file_limits
+            .max_scan_file_size_bytes
+            .min(remaining);
+        let content = if let Some(content) = cached {
+            if content.len() as u64 > limit {
+                self.read_incomplete.set(true);
+                return None;
             }
-        }
-        std::fs::read_to_string(&file.absolute_path).ok()
+            content.clone()
+        } else {
+            let meta = std::fs::symlink_metadata(&file.absolute_path)
+                .map_err(|_| self.read_incomplete.set(true))
+                .ok()?;
+            if !meta.is_file() || meta.len() > limit {
+                self.read_incomplete.set(true);
+                return None;
+            }
+            let mut bytes = Vec::new();
+            std::fs::File::open(&file.absolute_path)
+                .map_err(|_| self.read_incomplete.set(true))
+                .ok()?
+                .take(limit.saturating_add(1))
+                .read_to_end(&mut bytes)
+                .map_err(|_| self.read_incomplete.set(true))
+                .ok()?;
+            if bytes.len() as u64 > limit {
+                self.read_incomplete.set(true);
+                return None;
+            }
+            String::from_utf8(bytes)
+                .map_err(|_| self.read_incomplete.set(true))
+                .ok()?
+        };
+        self.read_bytes
+            .set(self.read_bytes.get().saturating_add(content.len() as u64));
+        Some(content)
     }
 
     /// 从内容中解析 YAML frontmatter
@@ -294,6 +338,8 @@ impl SkillContext {
             asset_files: Vec::new(),
             scan_policy: policy,
             file_contents,
+            read_bytes: Cell::new(0),
+            read_incomplete: Cell::new(false),
         }
     }
 
@@ -368,7 +414,9 @@ impl SkillContext {
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
             let is_hidden = rel_path.split('/').any(|seg| seg.starts_with('.'));
 
-            let sample = if let Ok(mut f) = std::fs::File::open(&abs_path) {
+            let sample = if !entry.file_type().is_file() {
+                Vec::new()
+            } else if let Ok(mut f) = std::fs::File::open(&abs_path) {
                 let mut sample = [0u8; 512];
                 if let Ok(n) = std::io::Read::read(&mut f, &mut sample) {
                     sample[..n].to_vec()
@@ -402,13 +450,37 @@ impl SkillContext {
             file_count += 1;
         }
 
+        let mut manifest_incomplete = false;
         let (manifest, instruction_body) = if let Some(ref md_path) = skill_md_path {
-            match std::fs::read_to_string(md_path) {
-                Ok(content) => {
+            let limit = policy
+                .file_limits
+                .max_scan_file_size_bytes
+                .min(policy.file_limits.max_total_scan_bytes);
+            let content = (|| -> Option<String> {
+                let meta = std::fs::symlink_metadata(md_path).ok()?;
+                if !meta.is_file() || meta.len() > limit {
+                    return None;
+                }
+                let mut bytes = Vec::new();
+                std::fs::File::open(md_path)
+                    .ok()?
+                    .take(limit.saturating_add(1))
+                    .read_to_end(&mut bytes)
+                    .ok()?;
+                if bytes.len() as u64 > limit {
+                    return None;
+                }
+                String::from_utf8(bytes).ok()
+            })();
+            match content {
+                Some(content) => {
                     let (m, b) = Self::parse_frontmatter(&content);
                     (m, Some(b))
                 }
-                Err(_) => (None, None),
+                None => {
+                    manifest_incomplete = true;
+                    (None, None)
+                }
             }
         } else {
             (None, None)
@@ -436,6 +508,8 @@ impl SkillContext {
             asset_files,
             scan_policy: policy,
             file_contents: HashMap::new(),
+            read_bytes: Cell::new(0),
+            read_incomplete: Cell::new(manifest_incomplete),
         })
     }
 }
@@ -830,5 +904,28 @@ mod tests {
         assert!(!SkillFileType::Asset.is_script());
         assert!(!SkillFileType::Binary.is_script());
         assert!(!SkillFileType::Unknown.is_script());
+    }
+}
+
+#[cfg(test)]
+mod review_regressions {
+    use super::*;
+    #[test]
+    fn analyzer_reads_obey_file_and_aggregate_budgets() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("a.py"), "x".repeat(64)).unwrap();
+        std::fs::write(temp.path().join("b.py"), "y".repeat(64)).unwrap();
+        let mut policy = ScanPolicy::builtin_default().clone();
+        policy.file_limits.max_scan_file_size_bytes = 80;
+        policy.file_limits.max_total_scan_bytes = 100;
+        let ctx =
+            SkillContext::for_directory(temp.path().to_str().unwrap(), policy.clone()).unwrap();
+        assert!(ctx.read_text_file(&ctx.files[0]).is_some());
+        assert!(ctx.read_text_file(&ctx.files[1]).is_none());
+        assert!(ctx.read_incomplete.get());
+        policy.file_limits.max_scan_file_size_bytes = 32;
+        let ctx = SkillContext::for_directory(temp.path().to_str().unwrap(), policy).unwrap();
+        assert!(ctx.read_text_file(&ctx.files[0]).is_none());
+        assert!(ctx.read_incomplete.get());
     }
 }

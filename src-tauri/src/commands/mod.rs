@@ -125,7 +125,11 @@ fn merge_scanned_skill(existing: Option<&Skill>, scanned: Skill) -> Skill {
     merged.linked_tools = existing.linked_tools.clone();
     merged.is_local_only = existing.is_local_only;
 
-    if checksum_changed {
+    merged.staging_path = existing.staging_path.clone();
+    if existing.installed {
+        merged.checksum = existing.checksum.clone();
+    }
+    if checksum_changed && !existing.installed {
         // 文件已变化，清除旧安全数据，下次安装/更新时重新扫描
         merged.security_score = None;
         merged.security_issues = None;
@@ -180,6 +184,8 @@ pub async fn get_repositories(state: State<'_, AppState>) -> Result<Vec<Reposito
 /// 删除仓库（同时删除未安装的技能和清理缓存）
 #[tauri::command]
 pub async fn delete_repository(state: State<'_, AppState>, repo_id: String) -> Result<(), String> {
+    let _skills = state.skill_manager.lock().await;
+    let _plugins = state.plugin_manager.lock().await;
     // 1. 获取仓库信息
     let repo = state
         .db
@@ -309,7 +315,9 @@ pub async fn scan_repository(
                 .await
             {
                 Ok(Some(remote_sha)) => {
-                    if cached_sha == Some(remote_sha.as_str()) {
+                    if cached_sha
+                        .is_some_and(|sha| crate::services::github::shas_match(sha, &remote_sha))
+                    {
                         log::info!(
                             "缓存 SHA 匹配，复用缓存: {} (sha={})",
                             repo.name,
@@ -408,6 +416,7 @@ pub async fn scan_repository(
         .scan_cached_repository(&cache_path_for_scan, &repo.url, repo.scan_subdirs)
         .map_err(|e| format!("扫描缓存失败: {}", e))?;
 
+    let _manager_guard = state.skill_manager.lock().await;
     let existing_repo_skills: Vec<Skill> = state
         .db
         .get_skills()
@@ -608,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_scanned_skill_clears_security_when_checksum_changes() {
+    fn repository_refresh_preserves_installed_version_report() {
         let existing = make_existing_skill_with_security();
 
         let mut scanned = Skill::new(
@@ -623,14 +632,14 @@ mod tests {
 
         assert_eq!(merged.name, "Updated");
         assert_eq!(merged.description.as_deref(), Some("new description"));
-        assert_eq!(merged.checksum.as_deref(), Some("new-checksum"));
+        assert_eq!(merged.checksum.as_deref(), existing.checksum.as_deref());
         assert!(merged.installed);
         assert_eq!(merged.local_path.as_deref(), Some("/tmp/skill-a"));
-        // Security data should be cleared when checksum changes
-        assert_eq!(merged.security_score, None);
-        assert_eq!(merged.security_level, None);
-        assert!(merged.security_report.is_none());
-        assert_eq!(merged.scanned_at, None);
+        // Upstream metadata must not replace the report for installed files.
+        assert_eq!(merged.security_score, existing.security_score);
+        assert_eq!(merged.security_level, existing.security_level);
+        assert!(merged.security_report.is_some());
+        assert_eq!(merged.scanned_at, existing.scanned_at);
         // Non-security metadata should still be preserved
         assert_eq!(merged.installed_commit_sha.as_deref(), Some("abc1234"));
         assert_eq!(merged.version.as_deref(), Some("1.0.0"));
@@ -879,6 +888,7 @@ pub async fn uninstall_skill_path(
 /// 删除 skill 记录
 #[tauri::command]
 pub async fn delete_skill(state: State<'_, AppState>, skill_id: String) -> Result<(), String> {
+    let _guard = state.skill_manager.lock().await;
     state.db.delete_skill(&skill_id).map_err(|e| e.to_string())
 }
 
@@ -925,9 +935,17 @@ pub async fn clear_repository_cache(
         // 删除整个仓库缓存目录（包括archive.zip和extracted/）
         if let Some(parent) = cache_path_buf.parent() {
             // 安全检查：确保路径在预期的缓存目录中
-            if !parent.starts_with(&expected_cache_base) {
-                return Err("[INVALID_CACHE_PATH] 缓存路径无效".to_string());
-            }
+            let checked_parent = if parent.exists() {
+                Some(
+                    crate::services::github::repository_cache_cleanup_target(
+                        parent,
+                        &expected_cache_base,
+                    )
+                    .map_err(|e| e.to_string())?,
+                )
+            } else {
+                None
+            };
 
             // 先清除数据库中的缓存信息
             state
@@ -936,7 +954,7 @@ pub async fn clear_repository_cache(
                 .map_err(|e| e.to_string())?;
 
             // 然后删除文件（即使失败也不影响数据库一致性）
-            if parent.exists() {
+            if let Some(parent) = checked_parent.as_deref() {
                 if let Err(e) = std::fs::remove_dir_all(parent) {
                     log::warn!(
                         "删除缓存目录失败，但数据库已清理: {:?}，错误: {}",
@@ -999,12 +1017,22 @@ pub async fn clear_all_repository_caches(
             let cache_path_buf = std::path::PathBuf::from(cache_path);
 
             if let Some(parent) = cache_path_buf.parent() {
-                // 安全检查：确保路径在预期的缓存目录中
-                if !parent.starts_with(&cache_base_dir) {
-                    log::warn!("跳过无效的缓存路径: {:?}", parent);
-                    failed_count += 1;
-                    continue;
-                }
+                let checked_parent = if parent.exists() {
+                    match crate::services::github::repository_cache_cleanup_target(
+                        parent,
+                        &cache_base_dir,
+                    ) {
+                        Ok(path) => Some(path),
+                        Err(error) => {
+                            log::warn!("{error}");
+                            failed_count += 1;
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
+                let parent = checked_parent.as_deref().unwrap_or(parent);
 
                 // 计算目录大小（在删除前）
                 if parent.exists() {
@@ -1454,6 +1482,13 @@ pub async fn reset_app_data(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let _skills = state.skill_manager.lock().await;
+    let _plugins = state.plugin_manager.lock().await;
+    let _cli = state.local_cli_operation.lock().await;
+    *state
+        .cli_scan_cache
+        .write()
+        .unwrap_or_else(|e| e.into_inner()) = None;
     // 1) 清空数据库内容（保留表结构与迁移）
     state
         .db

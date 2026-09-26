@@ -169,6 +169,44 @@ fn ensure_staging_path_is_contained(path: &Path) -> Result<PathBuf> {
     Ok(canonical)
 }
 
+const UPDATE_SESSION_OWNER: &str = ".asg-update-owner";
+
+/// Only remove a whole repository session when its app-created owner marker matches.
+/// Legacy/shared staging paths retain the narrower per-skill cleanup behavior.
+fn cleanup_update_staging(path: &Path, skill_id: &str) -> Result<()> {
+    let staging_root = dirs::cache_dir()
+        .context("CACHE_DIR_UNAVAILABLE")?
+        .join("agent-skills-guard/staging");
+    if let Ok(root) = staging_root.canonicalize() {
+        for ancestor in path.ancestors() {
+            let Ok(session) = ancestor.canonicalize() else {
+                continue;
+            };
+            if session.parent() != Some(root.as_path())
+                || !session
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("update-"))
+            {
+                continue;
+            }
+            let marker = session.join(UPDATE_SESSION_OWNER);
+            if marker.exists() {
+                if !std::fs::symlink_metadata(&marker)?.is_file()
+                    || std::fs::read_to_string(&marker)? != skill_id
+                {
+                    anyhow::bail!("UPDATE_SESSION_OWNER_MISMATCH");
+                }
+                std::fs::remove_dir_all(session)?;
+                return Ok(());
+            }
+        }
+    }
+    if path.exists() {
+        std::fs::remove_dir_all(ensure_staging_path_is_contained(path)?)?;
+    }
+    Ok(())
+}
+
 fn normalize_path_for_compare(path: &Path) -> String {
     let mut normalized = path.to_string_lossy().replace('\\', "/");
     while normalized.len() > 1 && normalized.ends_with('/') {
@@ -363,9 +401,9 @@ fn install_base_conflicting_tool(install_base_dir: &Path) -> Option<AgentTool> {
 fn ensure_custom_install_target_is_owned(
     skill: &Skill,
     final_install_dir: &Path,
-    custom_install_base: bool,
+    _custom_install_base: bool,
 ) -> Result<()> {
-    if !custom_install_base || !final_install_dir.exists() {
+    if std::fs::symlink_metadata(final_install_dir).is_err() {
         return Ok(());
     }
 
@@ -393,6 +431,7 @@ fn ensure_custom_install_target_is_owned(
     Ok(())
 }
 
+#[cfg(test)]
 fn ensure_update_clear_has_backup(
     target_exists: bool,
     should_clear: bool,
@@ -622,22 +661,11 @@ impl SkillManager {
         })
     }
 
-    fn create_temp_install_dir(
-        &self,
-        install_base_dir: &Path,
-        skill_folder_name: &str,
-    ) -> Result<PathBuf> {
-        let temp_dir = install_base_dir.join(format!(
-            ".{}.tmp-{}",
-            skill_folder_name,
-            uuid::Uuid::new_v4()
-        ));
-        if temp_dir.exists() {
-            std::fs::remove_dir_all(&temp_dir)
-                .context("无法清理旧的临时安装目录，请检查文件权限")?;
-        }
-        std::fs::create_dir_all(&temp_dir).context("无法创建临时安装目录，请检查磁盘权限")?;
-        Ok(temp_dir)
+    fn create_temp_install_dir(&self, base: &Path, name: &str) -> Result<tempfile::TempDir> {
+        tempfile::Builder::new()
+            .prefix(&format!(".{name}.tmp-"))
+            .tempdir_in(base)
+            .context("无法创建临时安装目录")
     }
 
     fn replace_installation_directory(
@@ -777,57 +805,24 @@ impl SkillManager {
         &self,
         skill: &mut Skill,
     ) -> Result<(Vec<u8>, crate::models::SecurityReport)> {
-        // 构建下载 URL
         let (owner, repo) = crate::models::Repository::from_github_url(&skill.repository_url)?;
-
-        // 尝试多个分支下载 SKILL.md 文件
-        let mut content = None;
-        let mut last_error = None;
-
-        for branch in super::github::DEFAULT_BRANCHES {
-            let download_url = format!(
-                "https://raw.githubusercontent.com/{}/{}/{}/{}/SKILL.md",
-                owner, repo, branch, skill.file_path
-            );
-
-            log::info!("尝试从分支 {} 下载 SKILL.md: {}", branch, download_url);
-
-            match self.github.download_file(&download_url).await {
-                Ok(file_content) => {
-                    log::info!("成功从分支 {} 下载 SKILL.md", branch);
-                    content = Some(file_content);
-                    break;
-                }
-                Err(e) => {
-                    log::info!("分支 {} 下载失败: {}", branch, e);
-                    last_error = Some(e);
-                    continue;
-                }
-            }
-        }
-
-        let content = content.ok_or_else(|| {
-            last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支均无法下载 SKILL.md"))
-        })?;
-
-        // 解析 frontmatter 更新 skill 元数据
+        let content = self
+            .github
+            .download_skill_markdown(&owner, &repo, &skill.file_path)
+            .await?;
         let (name, description) = self
             .github
-            .fetch_skill_metadata(&owner, &repo, &skill.file_path)
-            .await?;
+            .parse_skill_frontmatter(std::str::from_utf8(&content)?)?;
         skill.name = name;
         skill.description = description;
-
-        // 安全扫描（SingleFile 预检：仅 hard_trigger 时写入 DB，避免结构类误报落库）
-        let content_str = String::from_utf8_lossy(&content);
         let locale = rust_i18n::locale();
-        let report = scan_file(&content_str, "SKILL.md", &locale, ScanOptions::default())?;
-
-        if report.blocked {
-            Self::apply_scan_report(skill, &report);
-        }
+        let report = scan_file(
+            &String::from_utf8_lossy(&content),
+            "SKILL.md",
+            &locale,
+            ScanOptions::default(),
+        )?;
         skill.checksum = Some(calculate_checksum(&content));
-
         Ok((content, report))
     }
 
@@ -862,7 +857,6 @@ impl SkillManager {
             .into_iter()
             .find(|s| s.id == skill_id)
             .context("SKILL_NOT_FOUND")?;
-        let (_skill_md_content, _report) = self.download_and_analyze(&mut skill).await?;
 
         // 获取仓库记录
         let repositories = self.db.get_repositories()?;
@@ -897,6 +891,11 @@ impl SkillManager {
             self.locate_skill_in_cache(PathBuf::from(&cache_path).as_path(), &skill.file_path)?;
 
         log::info!("在缓存中找到技能目录: {:?}", skill_cache_dir);
+        let content = std::fs::read_to_string(skill_cache_dir.join("SKILL.md"))?;
+        let (name, description) = self.github.parse_skill_frontmatter(&content)?;
+        skill.name = name;
+        skill.description = description;
+        skill.checksum = Some(calculate_checksum(content.as_bytes()));
 
         // 直接扫描缓存中的技能目录
         let scan_report = scan_directory(
@@ -923,7 +922,7 @@ impl SkillManager {
         // 解析路径感知的 installed_commit_sha：以「上次仓库下载时记录的 commit SHA」
         // （而非真实的当前远端 HEAD）为参考，查询最近触及该 skill 子目录的提交 SHA。
         // 子目录 skill 若直接记录仓库 HEAD，会与后续 check_skill_update 用的路径过滤结果
-        // 不一致，导致永远报告有更新。此处在 confirm 之前写入，confirm 时优先使用；
+        // 不一致，导致永远报告有更新。此处只写入候选记录，confirm 成功后才更新安装记录；
         // 不可用时回退到 cached_repo_sha 自身。
         let cached_repo_sha = {
             let repos = self.db.get_repositories()?;
@@ -939,8 +938,16 @@ impl SkillManager {
             skill.installed_commit_sha = Some(resolved);
         }
 
-        // 保存安全信息到数据库，但不标记为已安装
-        self.db.save_skill(&skill)?;
+        // Candidate metadata belongs to preparation, never to the active installed version.
+        self.db.save_skill_preparation(&skill)?;
+        let mut active = self
+            .db
+            .get_skills()?
+            .into_iter()
+            .find(|s| s.id == skill_id)
+            .context("SKILL_NOT_FOUND")?;
+        active.staging_path = skill.staging_path.clone();
+        self.db.save_skill(&active)?;
 
         // prepare 阶段必须把 partial_scan 报告返回给 UI，用户才能看到跳过文件并点击
         // “谨慎安装”。真正写入前的 confirm 会重新扫描，并要求显式 allow_partial_scan。
@@ -990,8 +997,7 @@ impl SkillManager {
     /// `ref_sha` 通常是「上次下载仓库时记录的 commit SHA」或刚刚下载得到的新 SHA，
     /// 不一定等于真实的当前远端 HEAD —— 故参数名不再叫 `head_sha`。
     ///
-    /// 这是 prepare/update 共用的单一事实源；blocking 包装见
-    /// [`resolve_path_aware_commit_sha_blocking`]。
+    /// 这是 prepare/update 共用的解析入口。
     async fn resolve_path_aware_commit_sha(
         &self,
         repository_url: &str,
@@ -1030,29 +1036,6 @@ impl SkillManager {
             }
             Err(e) => {
                 log::warn!("路径感知 SHA 查询失败，回退为 ref={}：{}", ref_sha, e);
-                ref_sha.to_string()
-            }
-        }
-    }
-
-    /// [`resolve_path_aware_commit_sha`] 的 blocking 包装。
-    ///
-    /// 仅可用于 spawn_blocking 线程：`Handle::block_on` 在 tokio 运行时的 worker 上会 panic。
-    /// 拿不到运行时句柄时静默回退为 `ref_sha`。
-    fn resolve_path_aware_commit_sha_blocking(
-        &self,
-        repository_url: &str,
-        file_path: &str,
-        ref_sha: &str,
-    ) -> String {
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.resolve_path_aware_commit_sha(
-                repository_url,
-                file_path,
-                ref_sha,
-            )),
-            Err(_) => {
-                log::warn!("无 tokio 运行时句柄，回退为 ref={}", ref_sha);
                 ref_sha.to_string()
             }
         }
@@ -1108,7 +1091,7 @@ impl SkillManager {
         let skill_cache_path = if skill_file_path == "." {
             repo_root.clone()
         } else {
-            repo_root.join(skill_file_path)
+            repo_root.join(skill_file_path.replace('\\', "/"))
         };
 
         if !skill_cache_path.exists() {
@@ -1198,6 +1181,7 @@ impl SkillManager {
         Ok(())
     }
 
+    #[cfg(test)]
     fn clear_update_staging_state_best_effort(&self, skill: &mut Skill) {
         if skill
             .local_path
@@ -1292,10 +1276,19 @@ impl SkillManager {
         // 旧路径与未经过 prepare 的极端情况）。
         let repositories = self.db.get_repositories()?;
         let repo = repositories.iter().find(|r| r.url == skill.repository_url);
-        let commit_sha = skill
-            .installed_commit_sha
-            .clone()
+        let candidate = self
+            .db
+            .get_skill_preparation(skill_id)?
+            .filter(|c| c.staging_path == skill.staging_path);
+        let commit_sha = candidate
+            .as_ref()
+            .and_then(|c| c.installed_commit_sha.clone())
             .or_else(|| repo.and_then(|r| r.cached_commit_sha.clone()));
+        if let Some(candidate) = &candidate {
+            skill.name = candidate.name.clone();
+            skill.description = candidate.description.clone();
+            skill.checksum = candidate.checksum.clone();
+        }
 
         // 确定最终安装路径
         let install_base_dir = if let Some(user_path) = &install_path {
@@ -1324,13 +1317,10 @@ impl SkillManager {
         std::fs::create_dir_all(&install_base_dir).context("无法创建目标目录")?;
 
         let skill_dir_name = skill_dir_name.to_string_lossy().to_string();
-        let prepared_dir = self.create_temp_install_dir(&install_base_dir, &skill_dir_name)?;
+        let prepared = self.create_temp_install_dir(&install_base_dir, &skill_dir_name)?;
+        let prepared_dir = prepared.path();
 
-        let scan_report = self.rescan_skill_directory_for_confirmation(
-            &cache_dir,
-            &skill.id,
-            allow_partial_scan,
-        )?;
+        self.rescan_skill_directory_for_confirmation(&cache_dir, &skill.id, allow_partial_scan)?;
 
         // 从缓存复制到目标路径
         log::info!(
@@ -1346,7 +1336,13 @@ impl SkillManager {
             files_copied
         );
 
-        self.replace_installation_directory(&prepared_dir, &final_install_dir)?;
+        let scan_report = self.rescan_skill_directory_for_confirmation(
+            prepared_dir,
+            &skill.id,
+            allow_partial_scan,
+        )?;
+        let baseline = super::content_manifest::manifest(prepared_dir)?;
+        self.replace_installation_directory(prepared_dir, &final_install_dir)?;
 
         // 更新源路径（~/.agents/skills/<name>）
         let source_path_str = final_install_dir.to_string_lossy().to_string();
@@ -1389,7 +1385,8 @@ impl SkillManager {
             skill.installed_commit_sha = commit_sha;
             skill.staging_path = None;
             Self::apply_scan_report(&mut skill, &scan_report);
-            self.db.save_skill(&skill)?;
+            self.db
+                .save_installed_skill_with_baseline(&skill, &baseline)?;
             super::skill_reports::refresh_cross_skill_reports(&self.db)?;
             self.invalidate_installed_cache();
             let detail = if link_failures.is_empty() {
@@ -1425,7 +1422,8 @@ impl SkillManager {
         skill.staging_path = None; // 清除临时缓存路径
         Self::apply_scan_report(&mut skill, &scan_report);
 
-        self.db.save_skill(&skill)?;
+        self.db
+            .save_installed_skill_with_baseline(&skill, &baseline)?;
         super::skill_reports::refresh_cross_skill_reports(&self.db)?;
 
         log::info!("Skill installation confirmed: {}", skill.name);
@@ -1458,15 +1456,9 @@ impl SkillManager {
         // 注意：不删除缓存中的文件，因为缓存是共享的仓库缓存
         // 只清除数据库中的准备阶段信息
 
-        // 清除数据库中的安全信息和本地路径
         let mut skill = skill;
-        skill.local_path = None;
         skill.staging_path = None;
-        skill.security_score = None;
-        skill.security_level = None;
-        skill.security_issues = None;
-        skill.security_report = None;
-        skill.scanned_at = None;
+        self.db.clear_skill_preparation(skill_id)?;
 
         self.db.save_skill(&skill)?;
 
@@ -2581,48 +2573,35 @@ impl SkillManager {
     }
 
     /// 检测本地文件是否被修改（与缓存中的版本比较）
+    #[cfg(test)]
     fn detect_local_modifications(
         &self,
         installed_dir: &PathBuf,
         cached_dir: &PathBuf,
     ) -> Result<Vec<String>> {
-        use std::fs;
+        Ok(super::content_manifest::changes(
+            &super::content_manifest::manifest(cached_dir)?,
+            &super::content_manifest::manifest(installed_dir)?,
+        ))
+    }
 
-        let mut modified_files = Vec::new();
-
-        // 遍历已安装目录中的所有文件
-        for entry in walkdir::WalkDir::new(installed_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            if entry.file_type().is_file() {
-                let installed_file = entry.path();
-
-                // 计算相对路径
-                let relative_path = installed_file
-                    .strip_prefix(installed_dir)
-                    .context("无法计算相对路径")?;
-
-                // 对应的缓存文件路径
-                let cached_file = cached_dir.join(relative_path);
-
-                // 如果缓存中没有该文件，说明是用户新增的
-                if !cached_file.exists() {
-                    modified_files.push(format!("新增: {}", relative_path.display()));
-                    continue;
-                }
-
-                // 比较文件内容
-                let installed_content = fs::read(installed_file)?;
-                let cached_content = fs::read(&cached_file)?;
-
-                if installed_content != cached_content {
-                    modified_files.push(format!("修改: {}", relative_path.display()));
-                }
-            }
+    fn installed_modifications(&self, skill: &Skill) -> Result<Vec<String>> {
+        let Some(path) = skill.local_path.as_deref() else {
+            return Ok(vec![
+                "Installed content is unavailable; changes cannot be verified.".into(),
+            ]);
+        };
+        let Some(baseline) = self.db.get_skill_baseline(&skill.id)? else {
+            return Ok(vec![
+                "Installed-version baseline is unavailable; changes cannot be verified.".into(),
+            ]);
+        };
+        match super::content_manifest::manifest(Path::new(path)) {
+            Ok(current) => Ok(super::content_manifest::changes(&baseline, &current)),
+            Err(_) => Ok(vec![
+                "Installed content could not be fully read; changes cannot be verified.".into(),
+            ]),
         }
-
-        Ok(modified_files)
     }
 
     /// 准备技能更新：下载最新版本到临时目录并扫描，检测本地修改
@@ -2649,7 +2628,7 @@ impl SkillManager {
 
         // 获取仓库记录
         let repositories = self.db.get_repositories()?;
-        let repo = repositories
+        let _repo = repositories
             .iter()
             .find(|r| r.url == skill.repository_url)
             .context("REPOSITORY_NOT_FOUND")?
@@ -2664,16 +2643,15 @@ impl SkillManager {
             .join("agent-skills-guard")
             .join("staging");
 
-        // 清理旧的 staging 目录（如果存在）
-        let staging_repo_dir = staging_base_dir.join(format!("{}_{}", owner, repo_name));
-        if staging_repo_dir.exists() {
-            std::fs::remove_dir_all(&staging_repo_dir)?;
-        }
-
+        std::fs::create_dir_all(&staging_base_dir)?;
+        let staging_session = tempfile::Builder::new()
+            .prefix("update-")
+            .tempdir_in(&staging_base_dir)?;
+        std::fs::write(staging_session.path().join(UPDATE_SESSION_OWNER), &skill.id)?;
         // 下载最新版本
         let (extract_dir, new_commit_sha) = self
             .github
-            .download_repository_archive(&owner, &repo_name, &staging_base_dir)
+            .download_repository_archive(&owner, &repo_name, staging_session.path())
             .await
             .context("下载最新版本失败")?;
 
@@ -2702,48 +2680,64 @@ impl SkillManager {
             scan_report.scanned_files.len()
         );
 
-        // 检测本地修改
-        let modified_files = if let Some(local_path) = &skill.local_path {
-            let installed_dir = PathBuf::from(local_path);
-            if installed_dir.exists() {
-                // 获取当前缓存中的版本（用于比较）
-                if let Some(cache_path) = &repo.cache_path {
-                    let cache_path_buf = PathBuf::from(cache_path);
-                    if cache_path_buf.exists() {
-                        match self.locate_skill_in_cache(cache_path_buf.as_path(), &skill.file_path)
-                        {
-                            Ok(cached_skill_dir) => {
-                                self.detect_local_modifications(&installed_dir, &cached_skill_dir)?
-                            }
-                            Err(e) => {
-                                log::warn!("无法定位缓存中的技能目录: {}", e);
-                                Vec::new()
-                            }
-                        }
-                    } else {
-                        Vec::new()
-                    }
-                } else {
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
+        let mut modified_files = self.installed_modifications(&skill)?;
+        if locale.starts_with("zh") {
+            for item in &mut modified_files {
+                *item = item
+                    .replace("Deleted: ", "删除: ")
+                    .replace("Modified: ", "修改: ")
+                    .replace("Added: ", "新增: ")
+                    .replace(
+                        "Installed-version baseline is unavailable; changes cannot be verified.",
+                        "缺少安装版本基线，无法确认本地修改。",
+                    )
+                    .replace(
+                        "Installed content is unavailable; changes cannot be verified.",
+                        "安装目录不可用，无法确认本地修改。",
+                    )
+                    .replace(
+                        "Installed content could not be fully read; changes cannot be verified.",
+                        "无法完整读取安装内容，无法确认本地修改。",
+                    );
             }
-        } else {
-            Vec::new()
-        };
-
-        log::info!("检测到 {} 个本地修改", modified_files.len());
-
-        // 保存 staging 信息到数据库（临时），不污染 local_path。
-        let mut skill_update = skill.clone();
-        Self::apply_scan_report(&mut skill_update, &scan_report);
-        skill_update.staging_path = Some(staging_skill_dir.to_string_lossy().to_string());
-
-        self.db.save_skill(&skill_update)?;
-        super::skill_reports::refresh_cross_skill_reports(&self.db)?;
+        }
+        let mut candidate = skill.clone();
+        Self::apply_scan_report(&mut candidate, &scan_report);
+        candidate.staging_path = Some(staging_skill_dir.to_string_lossy().to_string());
+        candidate.installed_commit_sha = Some(
+            self.resolve_path_aware_commit_sha(
+                &skill.repository_url,
+                &skill.file_path,
+                &new_commit_sha,
+            )
+            .await,
+        );
+        let content = std::fs::read_to_string(staging_skill_dir.join("SKILL.md"))?;
+        candidate.checksum = Some(calculate_checksum(content.as_bytes()));
+        self.persist_update_preparation(&skill, &candidate, staging_session)?;
 
         Ok((scan_report, modified_files))
+    }
+
+    fn persist_update_preparation(
+        &self,
+        active: &Skill,
+        candidate: &Skill,
+        session: tempfile::TempDir,
+    ) -> Result<()> {
+        self.db.save_skill_preparation(candidate)?;
+        let mut updated = active.clone();
+        updated.staging_path = candidate.staging_path.clone();
+        self.db.save_skill(&updated)?;
+        let _ = session.keep();
+        if let Some(old) = resolve_staging_dir(active) {
+            if active.staging_path != candidate.staging_path {
+                if let Err(error) = cleanup_update_staging(&old, &active.id) {
+                    log::warn!("新更新已准备，旧暂存清理失败: {error}");
+                }
+            }
+        }
+        Ok(())
     }
 
     /// 确认技能更新：从 staging 写入到安装目录，并在缓存目录保留备份
@@ -2753,322 +2747,111 @@ impl SkillManager {
         force_overwrite: bool,
         allow_partial_scan: bool,
     ) -> Result<()> {
-        use anyhow::Context;
-
-        // 即将改写技能目录，先失效 SKILL.md 校验和缓存
         invalidate_skill_md_checksum_cache();
-
-        log::info!("Confirming update for skill: {}", skill_id);
-
         let mut skill = self
             .db
             .get_skills()?
             .into_iter()
             .find(|s| s.id == skill_id)
             .context("SKILL_NOT_FOUND")?;
-
-        let staging_dir = resolve_staging_dir(&skill).context("技能尚未准备更新")?;
-
-        if !staging_dir.exists() {
-            anyhow::bail!("STAGING_DIR_NOT_FOUND");
+        if !skill.installed {
+            anyhow::bail!("SKILL_NOT_INSTALLED");
         }
-        let staging_dir = ensure_staging_path_is_contained(&staging_dir)?;
-
-        // 获取原安装路径（从 local_paths）
-        let install_paths = skill.local_paths.as_ref().context("无法获取安装路径")?;
-
-        if install_paths.is_empty() {
-            anyhow::bail!("SKILL_NO_INSTALL_PATH");
+        let staging = resolve_staging_dir(&skill).context("技能尚未准备更新")?;
+        let staging = ensure_staging_path_is_contained(&staging)?;
+        // No mutation of the active installation may precede the security gate.
+        self.rescan_skill_directory_for_confirmation(&staging, &skill.id, allow_partial_scan)?;
+        if !force_overwrite && !self.installed_modifications(&skill)?.is_empty() {
+            anyhow::bail!("LOCAL_MODIFICATIONS: 请确认覆盖本地修改或无法核实的旧版本");
         }
-
-        // 始终以当前活跃安装路径（local_path / local_paths 最后一个）为更新目标。
-        // 若该路径是软链接，解析为真实路径：更新真实目录后所有指向它的软链接自动生效。
-        let (display_install_dir, target_install_dir) = {
-            let raw = skill
-                .local_paths
-                .as_ref()
-                .and_then(|paths| paths.last())
-                .map(PathBuf::from)
-                .context("技能没有有效的活跃安装路径")?;
-
-            let (display, real) = resolve_update_install_paths(&raw);
-            if !paths_point_to_same_location(&display, &real) {
-                log::info!(
-                    "更新目标是目录链接，解析为真实路径: {:?} -> {:?}",
-                    display,
-                    real
-                );
-            }
-            (display, real)
-        };
-
-        #[derive(Debug)]
-        enum BackupDir {
-            Renamed(PathBuf),
-            Copied(PathBuf),
-        }
-
-        // 创建备份（如果目录存在）：优先移动到缓存目录；若移动失败则复制到缓存目录
-        let backup_dir = if target_install_dir.exists() {
-            let dir_name = target_install_dir
-                .file_name()
-                .context("无效的目录名")?
-                .to_string_lossy();
-            let backup_root = dirs::cache_dir()
-                .context("CACHE_DIR_UNAVAILABLE")?
-                .join("agent-skills-guard")
-                .join("skill-backups");
-
-            std::fs::create_dir_all(&backup_root)
-                .context(format!("无法创建备份缓存目录: {:?}", backup_root))?;
-
-            let mut backup_path = backup_root.join(format!("{}.bak", dir_name));
-
-            if backup_path.exists() {
-                match std::fs::remove_dir_all(&backup_path) {
-                    Ok(()) => {}
-                    Err(remove_err) => {
-                        if !force_overwrite {
-                            return Err(anyhow::anyhow!(format!(
-                                "无法删除旧备份目录（缓存目录）: {:?}\n错误: {}\n\n请检查该目录是否被其他程序占用",
-                                backup_path, remove_err
-                            )));
-                        }
-
-                        // 强制覆盖时，为了不中断流程，改用一个唯一的备份目录名
-                        let epoch_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis();
-                        backup_path = backup_root.join(format!("{}.bak-{}", dir_name, epoch_ms));
-                        let _ = std::fs::remove_dir_all(&backup_path);
-                    }
-                }
-            }
-
-            // 尝试移动：移动成功意味着我们可以“干净地”写入新版本（更接近原子替换）
-            match rename_with_retry(&target_install_dir, &backup_path) {
-                Ok(()) => {
-                    log::info!("创建备份(移动到缓存): {:?}", backup_path);
-                    Some(BackupDir::Renamed(backup_path))
-                }
-                Err(move_err) => {
-                    log::warn!(
-                        "无法移动技能目录到缓存备份（将改用复制备份 + 原地覆盖）: {}",
-                        move_err
-                    );
-
-                    match self.copy_dir_recursive(&target_install_dir, &backup_path, &mut 0) {
-                        Ok(()) => {
-                            log::info!("创建备份(复制到缓存): {:?}", backup_path);
-                            Some(BackupDir::Copied(backup_path))
-                        }
-                        Err(copy_err) => {
-                            if !force_overwrite {
-                                return Err(anyhow::anyhow!(format!(
-                                    "无法为更新创建备份（缓存目录）\n目标: {:?}\n备份: {:?}\n\n复制备份错误: {}\n\n提示：你可以关闭正在使用该技能的程序后重试；或勾选“强制覆盖本地修改”继续（将无法保证可回滚）。",
-                                    target_install_dir, backup_path, copy_err
-                                )));
-                            }
-
-                            log::warn!(
-                                "创建备份(复制到缓存)失败，将在无备份情况下继续: {}",
-                                copy_err
-                            );
-                            None
-                        }
-                    }
-                }
-            }
-        } else {
-            None
-        };
-
-        // 确保目标父目录存在
-        std::fs::create_dir_all(&target_install_dir.parent().context("无效的安装路径")?)?;
-
-        let scan_report = self.rescan_skill_directory_for_confirmation(
-            &staging_dir,
+        let raw = skill
+            .local_path
+            .as_deref()
+            .filter(|p| !p.starts_with(STAGING_LOCAL_PATH_PREFIX))
+            .map(PathBuf::from)
+            .or_else(|| {
+                skill
+                    .local_paths
+                    .as_ref()
+                    .and_then(|p| p.last())
+                    .map(PathBuf::from)
+            })
+            .context("SKILL_NO_INSTALL_PATH")?;
+        let (display, target) = resolve_update_install_paths(&raw);
+        let parent = target.parent().context("INVALID_INSTALL_PATH")?;
+        std::fs::create_dir_all(parent)?;
+        let name = target
+            .file_name()
+            .context("INVALID_SKILL_DIR_NAME")?
+            .to_string_lossy();
+        let prepared = self.create_temp_install_dir(parent, &name)?;
+        self.copy_dir_recursive(&staging, prepared.path(), &mut 0)?;
+        let report = self.rescan_skill_directory_for_confirmation(
+            prepared.path(),
             &skill.id,
             allow_partial_scan,
         )?;
-
-        // 确保目标目录干净：
-        //   - rename备份成功：目标已不存在，创建新空目录
-        //   - copy备份成功：备份已完成，安全清空原目录后重建
-        //   - force_overwrite：仅在已有可用备份时强制清空；无备份不得破坏目标
-        let should_clear = matches!(backup_dir, Some(BackupDir::Copied(_))) || force_overwrite;
-        ensure_update_clear_has_backup(
-            target_install_dir.exists(),
-            should_clear,
-            backup_dir.is_some(),
-        )?;
-        if !target_install_dir.exists() {
-            std::fs::create_dir_all(&target_install_dir)
-                .context(format!("无法创建目标目录: {:?}", target_install_dir))?;
-        } else if should_clear {
-            if let Err(clear_err) = std::fs::remove_dir_all(&target_install_dir) {
-                // 绝不能把 staging 合并写入未清空的旧目录，否则安全报告描述的是
-                // staging，而实际执行目录还可能保留本次未扫描的旧文件。
-                let Some(BackupDir::Copied(backup_path)) = &backup_dir else {
-                    anyhow::bail!(
-                        "无法清空旧技能目录: {}；备份状态异常，staging 已保留",
-                        clear_err
-                    );
-                };
-                let restore_error = self
-                    .copy_dir_recursive(backup_path, &target_install_dir, &mut 0)
-                    .err();
-                if let Some(restore_error) = restore_error {
-                    anyhow::bail!(
-                        "无法清空旧技能目录: {}；同时无法从复制备份恢复: {}；staging 已保留",
-                        clear_err,
-                        restore_error
-                    );
+        let baseline = super::content_manifest::manifest(prepared.path())?;
+        let candidate = self
+            .db
+            .get_skill_preparation(skill_id)?
+            .filter(|c| c.staging_path == skill.staging_path);
+        let identity = hash_bytes(skill.id.as_bytes());
+        let batch = uuid::Uuid::new_v4().to_string();
+        let backup = parent.join(format!(".{name}.backup-{}-{batch}", &identity[..16]));
+        let had_old = target.exists();
+        if had_old {
+            rename_with_retry(&target, &backup).context("无法备份旧技能目录")?;
+        }
+        let result = (|| -> Result<()> {
+            rename_with_retry(prepared.path(), &target).context("无法写入新技能目录")?;
+            skill.local_path = Some(display.to_string_lossy().to_string());
+            skill.staging_path = None;
+            skill.installed_at = Some(Utc::now());
+            if let Some(candidate) = candidate {
+                skill.installed_commit_sha = candidate.installed_commit_sha;
+                skill.checksum = candidate.checksum;
+            }
+            Self::apply_scan_report(&mut skill, &report);
+            self.db
+                .save_installed_skill_with_baseline(&skill, &baseline)?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            if had_old {
+                restore_installation_backup(&backup, &target).with_context(|| {
+                    format!(
+                        "更新失败: {error}; 回滚失败，备份保留在 {}",
+                        backup.display()
+                    )
+                })?;
+            } else if target.exists() {
+                std::fs::remove_dir_all(&target).context("更新失败且无法清理新目录")?;
+            }
+            return Err(error);
+        }
+        // Keep an identity- and batch-specific recovery copy. If the cache is on another
+        // volume, preserve the same-volume backup instead of risking a lossy copy.
+        if had_old {
+            if let Some(cache) = dirs::cache_dir() {
+                let root = cache
+                    .join("agent-skills-guard/skill-backups")
+                    .join(&identity);
+                if std::fs::create_dir_all(&root).is_err()
+                    || std::fs::rename(&backup, root.join(&batch)).is_err()
+                {
+                    log::warn!("备份保留在 {}", backup.display());
                 }
-                self.clear_update_staging_state_best_effort(&mut skill);
-                anyhow::bail!("无法清空旧技能目录，已停止更新并保留旧版本: {}", clear_err);
-            } else {
-                std::fs::create_dir_all(&target_install_dir)
-                    .context(format!("无法重建目标目录: {:?}", target_install_dir))?;
             }
         }
-
-        match self.copy_dir_recursive(&staging_dir, &target_install_dir, &mut 0) {
-            Ok(_) => {
-                log::info!("成功更新技能到: {:?}", target_install_dir);
-
-                // 备份保留在缓存目录，便于必要时人工回滚；下一次更新会覆盖旧备份
-
-                // 更新数据库：恢复 local_path，更新 installed_commit_sha
-                skill.local_path = Some(display_install_dir.to_string_lossy().to_string());
-                skill.staging_path = None;
-                Self::apply_scan_report(&mut skill, &scan_report);
-
-                // 从 staging 路径推导出 extracted 目录并提取 commit SHA
-                // - staging_dir 指向 skill 目录（可能是仓库根目录或其子目录）
-                // - extracted_dir 是 {cache}/.../extracted/，其下第一层目录名为 {owner}-{repo}-{sha}
-                let extract_dir = {
-                    let mut repo_root = staging_dir.clone();
-                    if skill.file_path != "." {
-                        let components_count = std::path::Path::new(&skill.file_path)
-                            .components()
-                            .filter(|c| matches!(c, std::path::Component::Normal(_)))
-                            .count();
-
-                        for _ in 0..components_count {
-                            repo_root = repo_root
-                                .parent()
-                                .context("无效的 staging 路径：无法定位仓库根目录")?
-                                .to_path_buf();
-                        }
-                    }
-
-                    repo_root
-                        .parent()
-                        .context("无效的 staging 路径：无法定位 extracted 目录")?
-                        .to_path_buf()
-                };
-
-                match self.github.extract_commit_sha_from_cache(&extract_dir) {
-                    Ok(new_sha) => {
-                        // 将仓库 HEAD SHA 转换为「路径感知」SHA，避免子目录 skill 长期误报更新。
-                        // helper 内部已在失败时回退为 head_sha（read 侧 check_skill_update 仍能容错）。
-                        let recorded_sha = self.resolve_path_aware_commit_sha_blocking(
-                            &skill.repository_url,
-                            &skill.file_path,
-                            &new_sha,
-                        );
-
-                        skill.installed_commit_sha = Some(recorded_sha);
-                        log::info!("更新 installed_commit_sha");
-
-                        // 将 staging 下载的版本提升为“仓库缓存基线”，避免后续把已更新内容误判为“本地修改”
-                        if let Ok((owner, repo_name)) =
-                            crate::models::Repository::from_github_url(&skill.repository_url)
-                        {
-                            if let Some(cache_base_dir) = dirs::cache_dir() {
-                                let repositories_base_dir = cache_base_dir
-                                    .join("agent-skills-guard")
-                                    .join("repositories");
-                                let repo_cache_dir =
-                                    repositories_base_dir.join(format!("{}_{}", owner, repo_name));
-                                let extracted_dest = repo_cache_dir.join("extracted");
-
-                                if let Err(e) = std::fs::create_dir_all(&repo_cache_dir) {
-                                    log::warn!("无法创建仓库缓存目录，将跳过缓存同步: {}", e);
-                                } else {
-                                    let sync_result = (|| -> Result<()> {
-                                        let temp = tempfile::Builder::new()
-                                            .prefix(".cache-sync-")
-                                            .tempdir_in(&repo_cache_dir)?;
-                                        let prepared = temp.path().join("extracted");
-                                        self.copy_dir_recursive(&extract_dir, &prepared, &mut 0)?;
-                                        super::github::promote_prepared_directory(
-                                            &prepared,
-                                            &extracted_dest,
-                                        )
-                                    })();
-                                    if let Err(error) = &sync_result {
-                                        log::warn!("仓库缓存同步失败，保留旧缓存: {}", error);
-                                    }
-                                    if sync_result.is_ok() {
-                                        if let Ok(repositories) = self.db.get_repositories() {
-                                            if let Some(repo) = repositories
-                                                .iter()
-                                                .find(|r| r.url == skill.repository_url)
-                                            {
-                                                let cache_path_str =
-                                                    extracted_dest.to_string_lossy().to_string();
-                                                if let Err(e) = self.db.update_repository_cache(
-                                                    &repo.id,
-                                                    &cache_path_str,
-                                                    Utc::now(),
-                                                    Some(&new_sha),
-                                                ) {
-                                                    log::warn!("更新仓库缓存信息失败: {}", e);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("无法提取新的 commit SHA: {}", e);
-                    }
-                }
-
-                skill.installed_at = Some(Utc::now());
-                self.db.save_skill(&skill)?;
-                super::skill_reports::refresh_cross_skill_reports(&self.db)?;
-
-                log::info!("技能更新确认完成: {}", skill.name);
-                Ok(())
-            }
-            Err(e) => {
-                // 恢复备份
-                if let Some(backup) = backup_dir {
-                    if target_install_dir.exists() {
-                        let _ = std::fs::remove_dir_all(&target_install_dir);
-                    }
-
-                    match backup {
-                        BackupDir::Renamed(p) => {
-                            let _ = std::fs::rename(&p, &target_install_dir);
-                            log::warn!("更新失败，已恢复备份(重命名): {:?}", p);
-                        }
-                        BackupDir::Copied(p) => {
-                            let _ = self.copy_dir_recursive(&p, &target_install_dir, &mut 0);
-                            log::warn!("更新失败，已恢复备份(复制): {:?}", p);
-                        }
-                    }
-                }
-                self.clear_update_staging_state_best_effort(&mut skill);
-                Err(e)
-            }
+        if let Err(error) = cleanup_update_staging(&staging, &skill.id) {
+            log::warn!("更新已完成，暂存清理失败: {error}");
         }
+        self.invalidate_installed_cache();
+        if let Err(error) = super::skill_reports::refresh_cross_skill_reports(&self.db) {
+            log::warn!("更新已完成，关联报告刷新失败: {error}");
+        }
+        Ok(())
     }
 
     /// 取消技能更新：清理 staging 目录
@@ -3085,21 +2868,12 @@ impl SkillManager {
             .context("SKILL_NOT_FOUND")?;
 
         let Some(staging_dir) = resolve_staging_dir(&skill) else {
+            self.db.clear_skill_preparation(skill_id)?;
             log::warn!("技能没有处于更新准备状态");
             return Ok(());
         };
 
-        // 只删除该 skill 自身的 staging 目录，不上溯到父/祖父目录，
-        // 避免误删同一仓库其他 skill 的 staging 数据。
-        if staging_dir.exists() {
-            let staging_dir = ensure_staging_path_is_contained(&staging_dir)?;
-            std::fs::remove_dir_all(&staging_dir)?;
-            log::info!("已删除 staging 目录: {:?}", staging_dir);
-        } else {
-            // 目录可能已被用户、清理任务或崩溃恢复流程移除。取消操作仍需幂等地
-            // 清除数据库状态，否则 skill 会一直显示为“已准备更新”。
-            log::warn!("staging 目录已不存在，继续清理更新状态: {:?}", staging_dir);
-        }
+        cleanup_update_staging(&staging_dir, skill_id)?;
 
         // 新流程下 local_path 已是真实安装路径；旧 __staging__: 记录才需要恢复。
         let is_legacy_staging = skill
@@ -3114,6 +2888,7 @@ impl SkillManager {
                 .and_then(|paths| paths.last().cloned());
         }
         skill.staging_path = None;
+        self.db.clear_skill_preparation(skill_id)?;
 
         self.db.save_skill(&skill)?;
 
@@ -3152,23 +2927,60 @@ impl SkillManager {
             if already_in_common_dir {
                 log::info!("本地技能已位于通用目录，无需复制: {:?}", common_dir);
             } else {
-                // 复制到通用目录
+                if std::fs::symlink_metadata(&common_dir).is_ok() {
+                    anyhow::bail!(
+                        "INSTALL_TARGET_EXISTS: 同名通用技能目录已存在: {}",
+                        common_dir.display()
+                    );
+                }
+                let temp =
+                    self.create_temp_install_dir(&self.skills_dir, &dir_name.to_string_lossy())?;
                 let mut files_copied = 0;
-                self.copy_dir_recursive(&original, &common_dir, &mut files_copied)?;
+                let original_identity = super::content_manifest::manifest(&original)?;
+                self.copy_dir_recursive(&original, temp.path(), &mut files_copied)?;
+                if super::content_manifest::manifest(temp.path())? != original_identity
+                    || super::content_manifest::manifest(&original)? != original_identity
+                {
+                    anyhow::bail!(
+                        "SYNC_SOURCE_CHANGED: source changed or could not be copied completely"
+                    );
+                }
+                rename_with_retry(temp.path(), &common_dir)?;
                 log::info!(
                     "已将本地技能复制到通用目录: {:?} ({} 个文件)",
                     common_dir,
                     files_copied
                 );
 
-                // 删除原目录，替换为指向通用目录的 Junction
-                if link_fs::is_dir_link(&original) {
-                    link_fs::remove_dir_link(&original)?;
-                } else {
-                    std::fs::remove_dir_all(&original).context("无法删除原技能目录")?;
+                let original_backup = original.with_file_name(format!(
+                    ".{}.sync-backup-{}",
+                    dir_name.to_string_lossy(),
+                    uuid::Uuid::new_v4()
+                ));
+                if let Err(error) = rename_with_retry(&original, &original_backup) {
+                    let _ = std::fs::remove_dir_all(&common_dir);
+                    return Err(error).context("无法备份原技能目录");
                 }
-                link_fs::create_dir_link(&common_dir, &original)
-                    .context("无法将原位置替换为链接")?;
+                if let Err(error) = link_fs::create_dir_link(&common_dir, &original) {
+                    restore_installation_backup(&original_backup, &original).with_context(
+                        || {
+                            format!(
+                                "同步失败: {error}; 恢复失败，备份在 {}",
+                                original_backup.display()
+                            )
+                        },
+                    )?;
+                    let _ = std::fs::remove_dir_all(&common_dir);
+                    return Err(error).context("无法将原位置替换为链接，原内容已恢复");
+                }
+                let cleanup = if link_fs::is_dir_link(&original_backup) {
+                    link_fs::remove_dir_link(&original_backup)
+                } else {
+                    std::fs::remove_dir_all(&original_backup).map_err(Into::into)
+                };
+                if let Err(error) = cleanup {
+                    log::warn!("同步成功，备份清理失败: {error}");
+                }
             }
 
             // 更新技能记录
@@ -4597,5 +4409,263 @@ mod tests {
         assert_eq!(persisted.local_path.as_deref(), Some(path.as_str()));
         assert_eq!(persisted.local_paths.as_deref(), Some(&[path.clone()][..]));
         assert_eq!(persisted.source_path.as_deref(), Some(path.as_str()));
+    }
+}
+
+#[cfg(test)]
+mod review_regressions {
+    use super::*;
+    fn clean(path: &Path, text: &str) {
+        std::fs::create_dir_all(path).unwrap();
+        std::fs::write(path.join("SKILL.md"), format!("---\nname: formatter\ndescription: Format local documents when requested.\nlicense: MIT\n---\n{text}\n")).unwrap();
+    }
+    fn fixture() -> (tempfile::TempDir, Arc<Database>, SkillManager, Skill) {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(temp.path().join("db.sqlite")).unwrap());
+        let mut manager = SkillManager::new(db.clone());
+        manager.skills_dir = temp.path().join("common");
+        let mut skill = Skill::new(
+            "formatter".into(),
+            "https://github.com/example/repo".into(),
+            "formatter".into(),
+        );
+        skill.id = uuid::Uuid::new_v4().to_string();
+        db.save_skill(&skill).unwrap();
+        (temp, db, manager, skill)
+    }
+    fn update_session(id: &str) -> (tempfile::TempDir, PathBuf) {
+        let root = dirs::cache_dir()
+            .unwrap()
+            .join("agent-skills-guard/staging");
+        std::fs::create_dir_all(&root).unwrap();
+        let session = tempfile::Builder::new()
+            .prefix("update-")
+            .tempdir_in(root)
+            .unwrap();
+        std::fs::write(session.path().join(UPDATE_SESSION_OWNER), id).unwrap();
+        let skill = session.path().join("repo/skills/formatter");
+        clean(&skill, "Format text.");
+        clean(
+            &session.path().join("repo/other-skill"),
+            "Other repository content.",
+        );
+        (session, skill)
+    }
+
+    #[test]
+    fn update_sessions_clean_entire_repository_on_retry_cancel_and_success() {
+        let (temp, db, manager, mut skill) = fixture();
+        let installed = temp.path().join("installed");
+        clean(&installed, "Original.");
+        skill.installed = true;
+        skill.local_path = Some(installed.to_string_lossy().into());
+        db.save_skill(&skill).unwrap();
+        let (first, first_skill) = update_session(&skill.id);
+        let first_root = first.path().to_path_buf();
+        let mut candidate = skill.clone();
+        candidate.staging_path = Some(first_skill.to_string_lossy().into());
+        manager
+            .persist_update_preparation(&skill, &candidate, first)
+            .unwrap();
+        let active = db.get_skills().unwrap().remove(0);
+        let (second, second_skill) = update_session(&skill.id);
+        let second_root = second.path().to_path_buf();
+        candidate.staging_path = Some(second_skill.to_string_lossy().into());
+        manager
+            .persist_update_preparation(&active, &candidate, second)
+            .unwrap();
+        assert!(!first_root.exists());
+        assert!(second_root.join("repo/other-skill").exists());
+        manager.cancel_skill_update(&skill.id).unwrap();
+        assert!(!second_root.exists());
+        let active = db.get_skills().unwrap().remove(0);
+        let (third, third_skill) = update_session(&skill.id);
+        let third_root = third.path().to_path_buf();
+        candidate.staging_path = Some(third_skill.to_string_lossy().into());
+        manager
+            .persist_update_preparation(&active, &candidate, third)
+            .unwrap();
+        manager.confirm_skill_update(&skill.id, true, true).unwrap();
+        assert!(!third_root.exists());
+        assert!(installed.join("SKILL.md").exists());
+        let backup_root = dirs::cache_dir()
+            .unwrap()
+            .join("agent-skills-guard/skill-backups")
+            .join(hash_bytes(skill.id.as_bytes()));
+        std::fs::remove_dir_all(backup_root).unwrap();
+    }
+
+    #[test]
+    fn update_session_cleanup_checks_owner_and_preserves_shared_siblings() {
+        let (_temp, _db, _manager, skill) = fixture();
+        let (session, path) = update_session(&skill.id);
+        assert!(cleanup_update_staging(&path, "different-skill").is_err());
+        assert!(path.exists());
+        std::fs::remove_file(session.path().join(UPDATE_SESSION_OWNER)).unwrap();
+        cleanup_update_staging(&path, &skill.id).unwrap();
+        assert!(!path.exists());
+        assert!(session.path().join("repo/other-skill").exists());
+    }
+
+    #[test]
+    fn default_install_and_sync_refuse_unrelated_same_name_directory() {
+        let (temp, db, manager, mut skill) = fixture();
+        let target = manager.skills_dir.join("formatter");
+        clean(&target, "Keep existing content.");
+        let stage = temp.path().join("stage/formatter");
+        clean(&stage, "New content.");
+        let before = super::super::content_manifest::manifest(&target).unwrap();
+        skill.staging_path = Some(stage.to_string_lossy().into_owned());
+        db.save_skill(&skill).unwrap();
+        assert!(manager
+            .confirm_skill_installation(&skill.id, None, false, vec![])
+            .unwrap_err()
+            .to_string()
+            .contains("INSTALL_TARGET_EXISTS"));
+        skill.installed = true;
+        skill.is_local_only = true;
+        skill.local_path = Some(stage.to_string_lossy().into_owned());
+        db.save_skill(&skill).unwrap();
+        assert!(manager.sync_skill_to_tools(&skill.id, vec![]).is_err());
+        assert_eq!(
+            super::super::content_manifest::manifest(&target).unwrap(),
+            before
+        );
+        assert!(stage.is_dir() && !stage.symlink_metadata().unwrap().file_type().is_symlink());
+    }
+    #[test]
+    fn rejected_update_keeps_live_files_and_failed_install_cleans_temp() {
+        let (temp, db, manager, mut skill) = fixture();
+        let live = temp.path().join("live/formatter");
+        let stage = temp.path().join("stage/formatter");
+        clean(&live, "Keep existing content.");
+        clean(&stage, "New content.");
+        std::fs::write(stage.join("payload.sh"), "rm -rf /\n").unwrap();
+        skill.installed = true;
+        skill.local_path = Some(live.to_string_lossy().into_owned());
+        skill.local_paths = Some(vec![live.to_string_lossy().into_owned()]);
+        skill.staging_path = Some(stage.to_string_lossy().into_owned());
+        db.save_skill(&skill).unwrap();
+        let before = super::super::content_manifest::manifest(&live).unwrap();
+        assert!(manager
+            .confirm_skill_update(&skill.id, true, false)
+            .unwrap_err()
+            .to_string()
+            .contains("SECURITY_CHECK_BLOCKED"));
+        assert_eq!(
+            before,
+            super::super::content_manifest::manifest(&live).unwrap()
+        );
+        assert!(manager
+            .confirm_skill_installation(&skill.id, None, false, vec![])
+            .is_err());
+        assert_eq!(std::fs::read_dir(&manager.skills_dir).unwrap().count(), 0);
+    }
+    #[test]
+    fn cancel_installation_preserves_active_version_and_candidate_is_separate() {
+        let (temp, db, manager, mut skill) = fixture();
+        let live = temp.path().join("live");
+        clean(&live, "Old content.");
+        skill.installed = true;
+        skill.local_path = Some(live.to_string_lossy().into_owned());
+        skill.installed_commit_sha = Some("old-sha".into());
+        skill.security_score = Some(73);
+        skill.staging_path = Some(temp.path().join("stage").to_string_lossy().into_owned());
+        db.save_skill(&skill).unwrap();
+        let mut candidate = skill.clone();
+        candidate.installed_commit_sha = Some("new-sha".into());
+        candidate.security_score = Some(100);
+        db.save_skill_preparation(&candidate).unwrap();
+        manager.cancel_skill_installation(&skill.id).unwrap();
+        let saved = db.get_skills().unwrap().remove(0);
+        assert!(saved.installed);
+        assert_eq!(saved.local_path, skill.local_path);
+        assert_eq!(saved.installed_commit_sha, skill.installed_commit_sha);
+        assert_eq!(saved.security_score, Some(73));
+        assert!(db.get_skill_preparation(&skill.id).unwrap().is_none());
+    }
+    #[test]
+    fn baseline_detects_deletions_and_survives_unrelated_cache_refresh() {
+        let (temp, db, manager, mut skill) = fixture();
+        let live = temp.path().join("live");
+        clean(&live, "Installed content.");
+        std::fs::write(live.join("optional.py"), "print('local')").unwrap();
+        skill.local_path = Some(live.to_string_lossy().into_owned());
+        let baseline = super::super::content_manifest::manifest(&live).unwrap();
+        db.save_skill_baseline(&skill.id, &baseline).unwrap();
+        let cache = temp.path().join("cache");
+        clean(&cache, "Changed upstream content.");
+        assert!(manager.installed_modifications(&skill).unwrap().is_empty());
+        std::fs::remove_file(live.join("optional.py")).unwrap();
+        assert_eq!(
+            manager.installed_modifications(&skill).unwrap(),
+            vec!["Deleted: optional.py"]
+        );
+        assert!(manager
+            .detect_local_modifications(&live, &cache)
+            .unwrap()
+            .iter()
+            .any(|p| p.contains("SKILL.md")));
+        skill.id = "legacy-with-no-baseline".into();
+        assert!(!manager.installed_modifications(&skill).unwrap().is_empty());
+    }
+    #[test]
+    fn database_commit_failure_rolls_back_updated_files() {
+        let (temp, db, manager, mut skill) = fixture();
+        let live = temp.path().join("live/formatter");
+        let stage = temp.path().join("stage/formatter");
+        clean(&live, "Old content.");
+        clean(&stage, "New content.");
+        skill.installed = true;
+        skill.local_path = Some(live.to_string_lossy().into_owned());
+        skill.local_paths = Some(vec![live.to_string_lossy().into_owned()]);
+        skill.staging_path = Some(stage.to_string_lossy().into_owned());
+        db.save_skill(&skill).unwrap();
+        let before = super::super::content_manifest::manifest(&live).unwrap();
+        let conn = rusqlite::Connection::open(temp.path().join("db.sqlite")).unwrap();
+        conn.execute_batch("CREATE TRIGGER fail_update BEFORE INSERT ON skills BEGIN SELECT RAISE(ABORT, 'injected write failure'); END;").unwrap();
+        assert!(manager
+            .confirm_skill_update(&skill.id, true, false)
+            .is_err());
+        assert_eq!(
+            super::super::content_manifest::manifest(&live).unwrap(),
+            before
+        );
+        assert_eq!(db.get_skills().unwrap()[0].staging_path, skill.staging_path);
+    }
+    #[test]
+    fn same_named_skills_keep_distinct_recovery_backups() {
+        let (temp, db, manager, mut first) = fixture();
+        let mut second = first.clone();
+        second.id = uuid::Uuid::new_v4().to_string();
+        for (index, skill) in [&mut first, &mut second].into_iter().enumerate() {
+            let live = temp.path().join(format!("live-{index}/formatter"));
+            let stage = temp.path().join(format!("stage-{index}/formatter"));
+            clean(&live, &format!("Old content {index}."));
+            clean(&stage, "New content.");
+            skill.installed = true;
+            skill.local_path = Some(live.to_string_lossy().into_owned());
+            skill.local_paths = Some(vec![live.to_string_lossy().into_owned()]);
+            skill.staging_path = Some(stage.to_string_lossy().into_owned());
+            db.save_skill(skill).unwrap();
+            manager
+                .confirm_skill_update(&skill.id, true, false)
+                .unwrap();
+            let backup_root = dirs::cache_dir()
+                .unwrap()
+                .join("agent-skills-guard/skill-backups")
+                .join(hash_bytes(skill.id.as_bytes()));
+            let backup = std::fs::read_dir(&backup_root)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path();
+            assert!(std::fs::read_to_string(backup.join("SKILL.md"))
+                .unwrap()
+                .contains(&format!("Old content {index}")));
+            std::fs::remove_dir_all(backup_root).unwrap();
+            assert!(db.get_skill_baseline(&skill.id).unwrap().is_some());
+        }
     }
 }

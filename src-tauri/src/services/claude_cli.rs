@@ -116,7 +116,7 @@ impl ClaudeCli {
             .context("无法读取 PTY 输出")?;
         let writer = pair.master.take_writer().context("无法写入 PTY")?;
 
-        let (tx, rx) = mpsc::channel::<String>();
+        let (tx, rx) = mpsc::sync_channel::<String>(64);
         let reader_handle = thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
@@ -137,6 +137,7 @@ impl ClaudeCli {
             read_until_exit_with_prompts(&rx, child.as_mut(), command.timeout)?;
 
         drop(writer);
+        drop(rx); // unblock a bounded sender before joining the reader
         let _ = child.kill();
 
         let wait_start = Instant::now();
@@ -226,6 +227,16 @@ fn apply_env_remove_prefixes(cmd: &mut CommandBuilder, prefixes: &[String]) {
     }
 }
 
+const MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+fn append_output(buffer: &mut String, chunk: &str) -> bool {
+    if buffer.len().saturating_add(chunk.len()) > MAX_OUTPUT_BYTES {
+        buffer.push_str("\n[CLI_OUTPUT_LIMIT: command stopped]\n");
+        return false;
+    }
+    buffer.push_str(chunk);
+    true
+}
+
 fn read_until_exit_with_prompts(
     rx: &mpsc::Receiver<String>,
     child: &mut dyn portable_pty::Child,
@@ -234,6 +245,7 @@ fn read_until_exit_with_prompts(
     let start = Instant::now();
     let mut buffer = String::new();
     let mut exit_success = false;
+    let mut prompt_window = String::new();
 
     loop {
         if start.elapsed() >= timeout {
@@ -242,9 +254,18 @@ fn read_until_exit_with_prompts(
 
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(chunk) => {
-                buffer.push_str(&chunk);
-
-                if is_unsupported_interactive_prompt(&buffer) {
+                if !append_output(&mut buffer, &chunk) {
+                    return Ok((buffer, false));
+                }
+                prompt_window.push_str(&chunk);
+                if prompt_window.len() > 8192 {
+                    let mut start = prompt_window.len() - 8192;
+                    while !prompt_window.is_char_boundary(start) {
+                        start += 1;
+                    }
+                    prompt_window.drain(..start);
+                }
+                if is_unsupported_interactive_prompt(&prompt_window) {
                     buffer.push_str(
                         "\nUnsupported interactive prompt detected. If Claude asks you to trust the workspace, open Claude in this folder, review and confirm the trust prompt manually, then retry this operation. Other interactive prompts must also be completed in a terminal.\n",
                     );
@@ -258,10 +279,19 @@ fn read_until_exit_with_prompts(
                 }
             }
             Err(RecvTimeoutError::Disconnected) => {
-                if let Ok(Some(status)) = child.try_wait() {
-                    exit_success = status.success();
+                // EOF can precede process reaping. Keep polling within the command
+                // timeout instead of treating an unavailable exit status as failure.
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        exit_success = status.success();
+                        break;
+                    }
+                    Ok(None) => {
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(_) => break,
                 }
-                break;
             }
         }
 
@@ -274,7 +304,12 @@ fn read_until_exit_with_prompts(
     let drain_start = Instant::now();
     while drain_start.elapsed() < Duration::from_millis(300) {
         match rx.recv_timeout(Duration::from_millis(50)) {
-            Ok(chunk) => buffer.push_str(&chunk),
+            Ok(chunk) => {
+                if !append_output(&mut buffer, &chunk) {
+                    exit_success = false;
+                    break;
+                }
+            }
             Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => break,
         }
     }
@@ -293,10 +328,6 @@ fn is_unsupported_interactive_prompt(output: &str) -> bool {
     is_workspace_trust_prompt_lowercase(&text)
         || text.contains("password:")
         || text.contains("[sudo] password")
-        || text.contains("administrator permission")
-        || text.contains("administrator privileges")
-        || text.contains("run as administrator")
-        || text.contains("permission denied")
 }
 
 #[cfg(test)]
@@ -338,12 +369,87 @@ mod tests {
             "[sudo] password for user:"
         ));
         assert!(is_unsupported_interactive_prompt("Password:"));
-        assert!(is_unsupported_interactive_prompt(
+        assert!(!is_unsupported_interactive_prompt(
             "Run as administrator to continue"
+        ));
+        assert!(!is_unsupported_interactive_prompt(
+            "warning: permission denied for optional file; continuing"
         ));
         assert!(is_unsupported_interactive_prompt(
             "Quick safety check: Trust this folder? Enter to confirm"
         ));
         assert!(!is_unsupported_interactive_prompt("updated 1 package"));
+    }
+}
+
+#[cfg(test)]
+mod review_regressions {
+    use super::*;
+    #[test]
+    fn logs_are_bounded_and_ordinary_errors_are_not_prompts() {
+        assert!(!is_unsupported_interactive_prompt(
+            "permission denied: optional cache; retrying"
+        ));
+        let mut text = "x".repeat(MAX_OUTPUT_BYTES);
+        assert!(!append_output(&mut text, "excess"));
+        assert!(text.len() < MAX_OUTPUT_BYTES + 100);
+    }
+}
+
+#[cfg(test)]
+mod exit_race_regression {
+    use super::*;
+    use portable_pty::{Child, ChildKiller, ExitStatus};
+    #[derive(Debug, Clone)]
+    struct DelayedExit {
+        polls: usize,
+        ready_after: usize,
+    }
+    impl ChildKiller for DelayedExit {
+        fn kill(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+            Box::new(self.clone())
+        }
+    }
+    impl Child for DelayedExit {
+        fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+            self.polls += 1;
+            Ok((self.polls >= self.ready_after).then(|| ExitStatus::with_exit_code(0)))
+        }
+        fn wait(&mut self) -> std::io::Result<ExitStatus> {
+            panic!("must not block")
+        }
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
+        #[cfg(windows)]
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
+    }
+    #[test]
+    fn output_eof_waits_for_exit_status_but_respects_timeout() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        drop(tx);
+        let mut child = DelayedExit {
+            polls: 0,
+            ready_after: 3,
+        };
+        assert!(
+            read_until_exit_with_prompts(&rx, &mut child, Duration::from_secs(1))
+                .unwrap()
+                .1
+        );
+        let mut running = DelayedExit {
+            polls: 0,
+            ready_after: usize::MAX,
+        };
+        assert!(
+            !read_until_exit_with_prompts(&rx, &mut running, Duration::from_millis(30))
+                .unwrap()
+                .1
+        );
     }
 }

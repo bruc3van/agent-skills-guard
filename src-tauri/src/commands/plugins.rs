@@ -138,11 +138,17 @@ pub async fn confirm_plugin_installation(
     state: State<'_, AppState>,
     plugin_id: String,
     claude_command: Option<String>,
+    locale: Option<String>,
 ) -> Result<PluginInstallResult, String> {
+    let locale = locale.unwrap_or_else(|| rust_i18n::locale().to_string());
     with_plugin_manager_async_blocking(&state, move |manager| {
         Box::pin(async move {
             manager
-                .confirm_plugin_installation(&plugin_id, claude_command)
+                .confirm_plugin_installation_in_locale(
+                    &plugin_id,
+                    claude_command,
+                    validate_locale(&locale),
+                )
                 .await
                 .map_err(|e| e.to_string())
         })
@@ -340,7 +346,9 @@ pub async fn scan_all_installed_plugins(
     // 否则会阻塞其他 IPC 请求（扫描期间界面整体卡顿）。
     // `get_plugins()` 是全表读 + 每条记录的 security_report 反序列化，
     // 同样属于重活，一并放进来（与 skills 扫描路径保持对称）。
+    let manager = Arc::clone(&state.plugin_manager);
     tokio::task::spawn_blocking(move || {
+        let _guard = manager.blocking_lock();
         scan_installed_plugins_blocking(db, locale_owned, parallelism)
     })
     .await
@@ -441,9 +449,13 @@ pub async fn scan_installed_plugin(
 
     let db = state.db.clone();
 
-    tokio::task::spawn_blocking(move || scan_installed_plugin_blocking(db, &plugin_id, &locale))
-        .await
-        .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))?
+    let manager = Arc::clone(&state.plugin_manager);
+    tokio::task::spawn_blocking(move || {
+        let _guard = manager.blocking_lock();
+        scan_installed_plugin_blocking(db, &plugin_id, &locale)
+    })
+    .await
+    .map_err(|e| format!("[TASK_JOIN_ERROR] {e}"))?
 }
 
 /// `scan_installed_plugin` 的同步主体，必须在阻塞线程上运行。

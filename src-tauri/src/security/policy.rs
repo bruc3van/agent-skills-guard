@@ -91,6 +91,9 @@ pub struct FileLimitsPolicy {
     /// 单文件最大扫描字节数
     #[serde(default = "default_max_scan_file_size_bytes")]
     pub max_scan_file_size_bytes: u64,
+    /// Cumulative bytes read/delivered to analyzers in one scan context.
+    #[serde(default = "default_max_total_scan_bytes")]
+    pub max_total_scan_bytes: u64,
 }
 
 impl Default for FileLimitsPolicy {
@@ -99,6 +102,7 @@ impl Default for FileLimitsPolicy {
             max_files: default_max_files(),
             max_depth: default_max_depth(),
             max_scan_file_size_bytes: default_max_scan_file_size_bytes(),
+            max_total_scan_bytes: default_max_total_scan_bytes(),
         }
     }
 }
@@ -208,6 +212,9 @@ fn default_max_files() -> usize {
 }
 fn default_max_depth() -> usize {
     20
+}
+fn default_max_total_scan_bytes() -> u64 {
+    64 * 1024 * 1024
 }
 fn default_max_scan_file_size_bytes() -> u64 {
     2 * 1024 * 1024 // 2 MiB

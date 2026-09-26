@@ -68,10 +68,7 @@ export const api = {
     );
   },
 
-  async prepareSkillInstallation(
-    skillId: string,
-    locale: string
-  ): Promise<SecurityReport> {
+  async prepareSkillInstallation(skillId: string, locale: string): Promise<SecurityReport> {
     return safeInvokeValidated(
       invoke<unknown>("prepare_skill_installation", {
         skillId,
@@ -250,11 +247,13 @@ export const api = {
 
   async confirmPluginInstallation(
     pluginId: string,
-    claudeCommand?: string
+    claudeCommand?: string,
+    locale?: string
   ): Promise<PluginInstallResult> {
     return safeInvoke(
       invoke<PluginInstallResult>("confirm_plugin_installation", {
         pluginId,
+        locale: locale ?? null,
         claudeCommand: claudeCommand || null,
       })
     );
